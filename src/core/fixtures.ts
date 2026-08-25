@@ -103,6 +103,14 @@ export const syntheticSnapshot: MobileSnapshot = {
   },
   approvals: [
     {
+      session: {
+        coordinate: {
+          authority: 'automonique',
+          kind: 'session',
+          id: 'session-synthetic-001',
+        },
+        revision: decimalRevision('12'),
+      },
       target: {
         coordinate: {
           authority: 'automonique',

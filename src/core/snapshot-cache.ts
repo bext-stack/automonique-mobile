@@ -134,7 +134,7 @@ function event(value: unknown): void {
       ]);
       if (
         !boundedString(candidate.name, 256) ||
-        !['started', 'updated', 'completed'].includes(
+        !['pending', 'in_progress', 'completed', 'error'].includes(
           String(candidate.state),
         ) ||
         (candidate.publicText !== null &&
@@ -281,6 +281,7 @@ function admitSnapshot(value: unknown): MobileSnapshot {
   for (const approvalValue of snapshot.approvals) {
     const approval = record(approvalValue);
     exactKeys(approval, [
+      'session',
       'target',
       'approvalType',
       'title',
@@ -289,11 +290,16 @@ function admitSnapshot(value: unknown): MobileSnapshot {
       'requester',
       'expiresAt',
     ]);
+    target(approval.session);
     target(approval.target);
+    const approvalSessionCoordinate = record(
+      record(approval.session).coordinate,
+    );
     const approvalCoordinate = record(record(approval.target).coordinate);
     const approvalId = approvalCoordinate.id as string;
     if (
       approvalCoordinate.kind !== 'approval' ||
+      approvalSessionCoordinate.kind !== 'session' ||
       approvalIds.has(approvalId) ||
       !['automonique', 'provider'].includes(String(approval.approvalType)) ||
       !boundedString(approval.title) ||

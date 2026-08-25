@@ -76,7 +76,7 @@ export type SessionEvent =
   | (EventBase & {
       readonly kind: 'tool';
       readonly name: string;
-      readonly state: 'started' | 'updated' | 'completed';
+      readonly state: 'pending' | 'in_progress' | 'completed' | 'error';
       readonly publicText: string | null;
     })
   | (EventBase & {
@@ -96,6 +96,7 @@ export interface SessionPage {
 }
 
 export interface ApprovalSummary {
+  readonly session: VersionedTarget;
   readonly target: VersionedTarget;
   readonly approvalType: 'automonique' | 'provider';
   readonly title: string;
@@ -139,12 +140,14 @@ export interface FollowUpCommand {
 }
 
 export interface ApprovalCommand {
+  readonly session: VersionedTarget;
   readonly approval: VersionedTarget;
   readonly decision: 'grant' | 'deny';
   readonly idempotencyKey: string;
 }
 
 export interface StopRunCommand {
+  readonly session: VersionedTarget;
   readonly run: VersionedTarget;
   readonly idempotencyKey: string;
 }
@@ -154,6 +157,13 @@ export interface AttachmentHandle {
   readonly cursor: string | null;
   readonly sequence: DecimalRevision | null;
   events(signal?: AbortSignal): AsyncIterable<SessionPage>;
+}
+
+export interface ReceiptReconciliationRequest {
+  readonly action: Receipt['action'];
+  readonly idempotencyKey: string;
+  readonly session: VersionedTarget;
+  readonly target: VersionedTarget;
 }
 
 export interface MobileAutomoniqueGateway {
@@ -169,5 +179,8 @@ export interface MobileAutomoniqueGateway {
     signal?: AbortSignal,
   ): Promise<Receipt>;
   stopRun(command: StopRunCommand, signal?: AbortSignal): Promise<Receipt>;
-  reconcile(idempotencyKey: string, signal?: AbortSignal): Promise<Receipt>;
+  reconcile(
+    request: ReceiptReconciliationRequest,
+    signal?: AbortSignal,
+  ): Promise<Receipt>;
 }

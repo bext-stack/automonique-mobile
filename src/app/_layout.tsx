@@ -1,15 +1,25 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-import { Stack } from 'expo-router';
+import { Redirect, Stack, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 
-import { MobileProvider } from '@/providers/mobile-provider';
+import {
+  ProductionMobileProvider,
+  useMobileLifecycle,
+} from '@/providers/production-mobile-provider';
 import { useReducedMotion } from '@/core/accessibility';
+import { admitsOperationalNavigation } from '@/core/navigation-policy';
 import { usePalette } from '@/theme/palette';
 
 function Navigation() {
   const palette = usePalette();
   const reducedMotion = useReducedMotion();
+  const { state } = useMobileLifecycle();
+  const segments = useSegments();
+  if (state.phase === 'loading') return <StatusBar style="auto" />;
+  if (!admitsOperationalNavigation(state.phase) && segments[0] !== 'settings') {
+    return <Redirect href="/settings" />;
+  }
   return (
     <>
       <StatusBar style="auto" />
@@ -34,8 +44,8 @@ function Navigation() {
 
 export default function RootLayout() {
   return (
-    <MobileProvider>
+    <ProductionMobileProvider>
       <Navigation />
-    </MobileProvider>
+    </ProductionMobileProvider>
   );
 }

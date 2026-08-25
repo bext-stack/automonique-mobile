@@ -1,24 +1,34 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { MobileHttpsOrigin } from '@automonique/sdk';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { Screen } from '@/components/screen';
 import { MAX_ENDPOINT_BYTES, normalizeEndpoint } from '@/core/network-policy';
+import {
+  decodePairingOfferText,
+  MAX_PAIRING_OFFER_BYTES,
+} from '@/core/pairing-offer';
 import { AUTOMONIQUE_SDK_METADATA } from '@/core/sdk-metadata';
 import { useMobile } from '@/providers/mobile-provider';
+import { useMobileLifecycle } from '@/providers/production-mobile-provider';
 import { usePalette } from '@/theme/palette';
 
 const ENDPOINT_DRAFT_KEY = 'automonique.mobile.endpoint-draft.v1';
 
 export default function SettingsScreen() {
   const { snapshot } = useMobile();
+  const { state, pair, refreshCredential, revokeCredential } =
+    useMobileLifecycle();
   const palette = usePalette();
   const [endpoint, setEndpoint] = useState('https://');
   const [message, setMessage] = useState(
-    'Production connection is unavailable until scoped mobile authorization is implemented server-side.',
+    'Enter the exact HTTPS server origin used by a one-time pairing offer.',
   );
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
+  const [pairingOffer, setPairingOffer] = useState('');
   const transportLabel = snapshot.connection.synthetic
     ? 'Synthetic fixture through the mobile gateway'
     : `${snapshot.connection.phase === 'live' ? 'Live' : 'Read-only'} ${AUTOMONIQUE_SDK_METADATA.packageName} transport`;
@@ -33,7 +43,7 @@ export default function SettingsScreen() {
       }
       if (value === null) return;
       try {
-        setEndpoint(normalizeEndpoint(value, false));
+        setEndpoint(MobileHttpsOrigin(normalizeEndpoint(value, false)));
       } catch {
         await AsyncStorage.removeItem(ENDPOINT_DRAFT_KEY).catch(
           () => undefined,
@@ -44,16 +54,64 @@ export default function SettingsScreen() {
 
   function validateDraft() {
     try {
-      const normalized = normalizeEndpoint(endpoint, false);
+      const normalized = MobileHttpsOrigin(normalizeEndpoint(endpoint, false));
       void AsyncStorage.setItem(ENDPOINT_DRAFT_KEY, normalized).catch(
         () => undefined,
       );
       setEndpoint(normalized);
       setMessage(
-        'Endpoint policy passed. No credential was requested and no network call was made.',
+        'Origin policy passed. No credential was requested and no network call was made.',
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'invalid_url');
+    }
+  }
+
+  async function refreshAccess() {
+    setLifecycleBusy(true);
+    try {
+      await refreshCredential();
+      setMessage('Credential rotation completed and was committed securely.');
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : 'credential_refresh_failed',
+      );
+    } finally {
+      setLifecycleBusy(false);
+    }
+  }
+
+  async function exchangePairingOffer() {
+    const rawOffer = pairingOffer;
+    setPairingOffer('');
+    setLifecycleBusy(true);
+    try {
+      const offer = decodePairingOfferText(rawOffer);
+      await pair(offer);
+      setEndpoint(offer.origin);
+      setMessage('Pairing completed. The one-time proof was cleared.');
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : 'mobile_pairing_failed',
+      );
+    } finally {
+      setLifecycleBusy(false);
+    }
+  }
+
+  async function revokeAccess() {
+    setLifecycleBusy(true);
+    try {
+      await revokeCredential();
+      setMessage(
+        'Credential revoked on the server and removed from this device.',
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : 'credential_revoke_failed',
+      );
+    } finally {
+      setLifecycleBusy(false);
     }
   }
 
@@ -66,9 +124,9 @@ export default function SettingsScreen() {
         Connection
       </Text>
       <Text style={[styles.copy, { color: palette.textMuted }]}>
-        The first baseline is intentionally synthetic. A future live connection
-        must negotiate server identity, actor-scoped actions, limits, expiry,
-        refresh, and revocation before navigation.
+        Live navigation requires an origin-pinned, one-time pairing exchange.
+        Access is scoped to the server-issued actor, sessions, actions, limits,
+        and expiry shown below.
       </Text>
       <View
         accessibilityLabel="Automonique SDK protocol metadata"
@@ -94,6 +152,98 @@ export default function SettingsScreen() {
           {AUTOMONIQUE_SDK_METADATA.schemaDigest}
         </Text>
       </View>
+      {(state.phase === 'unpaired' || state.phase === 'recovery_required') && (
+        <View
+          style={[
+            styles.card,
+            { backgroundColor: palette.surface, borderColor: palette.border },
+          ]}
+        >
+          <Text style={[styles.label, { color: palette.text }]}>
+            One-time pairing offer
+          </Text>
+          <Text style={[styles.copy, { color: palette.textMuted }]}>
+            Paste the exact canonical JSON created by the server operator. It
+            expires after five minutes and is never saved as a draft.
+          </Text>
+          <TextInput
+            accessibilityLabel="One-time pairing offer"
+            autoCapitalize="none"
+            autoCorrect={false}
+            maxLength={MAX_PAIRING_OFFER_BYTES}
+            multiline
+            onChangeText={setPairingOffer}
+            style={[
+              styles.pairingInput,
+              { color: palette.text, borderColor: palette.border },
+            ]}
+            value={pairingOffer}
+          />
+          <Pressable
+            accessibilityRole="button"
+            disabled={lifecycleBusy || pairingOffer.trim().length === 0}
+            onPress={() => void exchangePairingOffer()}
+            style={[styles.button, { backgroundColor: palette.accent }]}
+          >
+            <Text style={{ color: palette.accentText, fontWeight: '800' }}>
+              Exchange once and connect
+            </Text>
+          </Pressable>
+        </View>
+      )}
+      <View
+        accessibilityLabel="Mobile credential lifecycle"
+        style={[
+          styles.card,
+          { backgroundColor: palette.surface, borderColor: palette.border },
+        ]}
+      >
+        <Text style={[styles.label, { color: palette.text }]}>Credential</Text>
+        <Text style={[styles.copy, { color: palette.textMuted }]}>
+          State: {state.phase}
+        </Text>
+        {state.profile !== null && (
+          <>
+            <Text selectable style={[styles.metadata, { color: palette.text }]}>
+              {state.profile.actor} · {state.profile.credentialId}
+            </Text>
+            <Text
+              selectable
+              style={[styles.digest, { color: palette.textMuted }]}
+            >
+              {state.profile.serverIdentity}
+            </Text>
+            <Text style={[styles.status, { color: palette.textMuted }]}>
+              Access expires{' '}
+              {new Date(Number(state.profile.accessExpiresAtMs)).toISOString()}
+            </Text>
+          </>
+        )}
+        {state.phase === 'refresh_required' && (
+          <Pressable
+            accessibilityRole="button"
+            disabled={lifecycleBusy}
+            onPress={() => void refreshAccess()}
+            style={[styles.button, { backgroundColor: palette.accent }]}
+          >
+            <Text style={{ color: palette.accentText, fontWeight: '800' }}>
+              Rotate credential
+            </Text>
+          </Pressable>
+        )}
+        {state.profile !== null && state.phase !== 'recovery_required' && (
+          <Pressable
+            accessibilityRole="button"
+            disabled={lifecycleBusy}
+            onPress={() => void revokeAccess()}
+            style={[styles.secondaryButton, { borderColor: palette.border }]}
+          >
+            <Text style={{ color: palette.text, fontWeight: '800' }}>
+              Revoke this device
+            </Text>
+          </Pressable>
+        )}
+      </View>
       <View
         style={[
           styles.card,
@@ -101,7 +251,7 @@ export default function SettingsScreen() {
         ]}
       >
         <Text style={[styles.label, { color: palette.text }]}>
-          HTTPS endpoint draft
+          HTTPS server origin
         </Text>
         <TextInput
           accessibilityLabel="Automonique HTTPS endpoint"
@@ -122,7 +272,7 @@ export default function SettingsScreen() {
           style={[styles.button, { backgroundColor: palette.accent }]}
         >
           <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-            Validate without connecting
+            Validate origin without connecting
           </Text>
         </Pressable>
         <Text
@@ -165,8 +315,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     fontSize: 16,
   },
+  pairingInput: {
+    minHeight: 112,
+    maxHeight: 220,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 13,
+    fontFamily: 'monospace',
+    textAlignVertical: 'top',
+  },
   button: {
     minHeight: 48,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryButton: {
+    minHeight: 48,
+    borderWidth: 1,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',

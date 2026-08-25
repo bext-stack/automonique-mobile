@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import {
-  ClientId,
-  CursorTopic,
   HttpsPlatformTransport,
-  IdempotencyKey,
+  MobileSessionClient,
+  MobileServerIdentity,
   PlatformClient,
-  PlatformParameter,
-  PlatformRevision,
   ResourceId,
-  decodeResourceAuthority,
+  SessionHistoryResyncError,
+  mobilePlatformClientId,
   type ActionReceipt,
   type PlatformClientResponse,
   type PlatformCursor,
   type PlatformMethod,
   type ResourceCoordinate,
   type ResourceRecord,
+  type SessionCommandState,
+  type SessionHistoryEvent as SdkSessionHistoryEvent,
+  type SessionHistoryPage as SdkSessionHistoryPage,
 } from '@automonique/sdk';
 
 import {
@@ -48,13 +49,14 @@ export class MobileGatewayError extends Error {
 export interface SdkGatewayOptions {
   readonly authorization: MobileAuthorization;
   readonly client: PlatformClient;
-  readonly clientId: string;
+  readonly sessionClient: MobileSessionClient;
   readonly expectedServerIdentity: string;
+  readonly now?: number;
 }
 
 export interface AuthorizedHttpsGatewayOptions extends Omit<
   SdkGatewayOptions,
-  'client'
+  'client' | 'sessionClient'
 > {
   readonly endpoint: string;
   readonly fetcher?: typeof fetch;
@@ -89,29 +91,32 @@ function cursorToken(cursor: PlatformCursor): string {
   ]);
 }
 
-function parseCursorToken(value: string): PlatformCursor {
+function historyCursorToken(sessionId: string, cursor: bigint): string {
+  return JSON.stringify(['history', sessionId, cursor.toString()]);
+}
+
+function parseHistoryCursorToken(value: string, sessionId: string): bigint {
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new MobileGatewayError('cursor_invalid');
+    throw new MobileGatewayError('history_cursor_invalid');
   }
   if (
     !Array.isArray(parsed) ||
     parsed.length !== 3 ||
-    parsed.some((entry) => typeof entry !== 'string')
+    parsed[0] !== 'history' ||
+    parsed[1] !== sessionId ||
+    typeof parsed[2] !== 'string' ||
+    !/^(0|[1-9][0-9]*)$/.test(parsed[2])
   ) {
-    throw new MobileGatewayError('cursor_invalid');
+    throw new MobileGatewayError('history_cursor_invalid');
   }
-  try {
-    return {
-      authority: decodeResourceAuthority(parsed[0] as string),
-      topic: CursorTopic(parsed[1] as string),
-      sequence: PlatformRevision(BigInt(parsed[2] as string)),
-    };
-  } catch {
-    throw new MobileGatewayError('cursor_invalid');
+  const cursor = BigInt(parsed[2]);
+  if (cursor > 9_223_372_036_854_775_807n) {
+    throw new MobileGatewayError('history_cursor_invalid');
   }
+  return cursor;
 }
 
 function observedAt(value: bigint): string {
@@ -123,6 +128,64 @@ function observedAt(value: bigint): string {
     return new Date(number).toISOString();
   }
   return value.toString();
+}
+
+function historyEvent(
+  sessionId: string,
+  event: SdkSessionHistoryEvent,
+): SessionEvent {
+  const base = {
+    id: `history:${sessionId}:${event.cursor}`,
+    cursor: historyCursorToken(sessionId, event.cursor),
+    sequence: decimalRevision(event.cursor.toString()),
+    createdAt: observedAt(event.at),
+  } as const;
+  switch (event.kind) {
+    case 'message':
+      return {
+        ...base,
+        provenance: event.evidence,
+        kind: 'message',
+        role: event.role,
+        text: event.text,
+      };
+    case 'tool_state':
+      return {
+        ...base,
+        provenance: event.evidence,
+        kind: 'tool',
+        name: event.label ?? 'Tool activity',
+        state: event.state,
+        publicText: null,
+      };
+    case 'run_state':
+      return {
+        ...base,
+        provenance: 'authoritative',
+        kind: 'run_state',
+        state: event.state,
+      };
+    case 'unknown':
+      return {
+        ...base,
+        provenance: 'authoritative',
+        kind: 'unknown',
+        eventType: event.source,
+      };
+  }
+}
+
+function requireHistoryPage(
+  page: SdkSessionHistoryPage,
+  session: Coordinate,
+): void {
+  if (
+    !sameCoordinate(page.session, session) ||
+    page.applied_limit > page.requested_limit ||
+    page.events.length > Number(page.applied_limit)
+  ) {
+    throw new MobileGatewayError('sdk_history_page_invalid');
+  }
 }
 
 function versionedResource(record: ResourceRecord): VersionedTarget {
@@ -157,38 +220,23 @@ function projectReceipt(value: ActionReceipt, idempotencyKey: string): Receipt {
   };
 }
 
-function refusedReceipt(
-  response: Extract<PlatformClientResponse, { readonly kind: 'refused' }>,
-  action: Receipt['action'],
-  target: VersionedTarget,
-  idempotencyKey: string,
-): Receipt {
-  return {
-    id: null,
-    idempotencyKey,
-    action,
-    target: target.coordinate,
-    revision: target.revision,
-    outcome: response.outcome,
-    explanation: response.explanation,
-  };
-}
-
 function requiredMethods(
   actions: readonly MobileAction[],
 ): Set<PlatformMethod> {
-  const methods = new Set<PlatformMethod>([
-    'capabilities',
-    'list_sessions',
-    'snapshot',
-  ]);
+  const methods = new Set<PlatformMethod>(['capabilities', 'list_sessions']);
   if (actions.includes('attach')) {
     methods.add('attach');
-    methods.add('subscribe');
+    methods.add('session_history_page');
+    methods.add('session_history_snapshot');
   }
   if (actions.some((action) => action !== 'attach')) {
-    methods.add('execute');
+    methods.add('session_command_state');
     methods.add('get_receipt');
+  }
+  if (actions.includes('follow_up')) methods.add('session_follow_up');
+  if (actions.includes('stop_run')) methods.add('session_run_stop');
+  if (actions.includes('decide_approval')) {
+    methods.add('session_approval_decision');
   }
   return methods;
 }
@@ -215,50 +263,36 @@ function coordinateKey(value: ResourceCoordinate): string {
   return `${value.authority}\u0000${value.kind}\u0000${value.id}`;
 }
 
+function versionedCommandTarget(
+  value: NonNullable<SessionCommandState['run']>,
+): VersionedTarget {
+  return {
+    coordinate: mobileCoordinate(value.target),
+    revision: decimalRevision(value.revision.toString()),
+  };
+}
+
 export function createSdkMobileGateway(
   options: SdkGatewayOptions,
 ): MobileAutomoniqueGateway {
   const authorization = admitMobileAuthorization(
     options.authorization,
     options.expectedServerIdentity,
+    options.now,
   );
-  const clientId = ClientId(options.clientId);
+  const clientId = mobilePlatformClientId(authorization);
+  const sessionScope = new Set<string>(authorization.session_scope);
 
   function requireAction(action: MobileAction): void {
-    if (!authorization.allowedActions.includes(action)) {
+    if (!authorization.actions.includes(action)) {
       throw new MobileGatewayError('mobile_action_unauthorized');
     }
   }
 
-  async function mutate(
-    action: Receipt['action'],
-    target: VersionedTarget,
-    idempotencyKey: string,
-    parameter: string | null,
-    signal?: AbortSignal,
-  ): Promise<Receipt> {
-    requireMutationTarget(action, target);
-    const response = await options.client.execute(
-      {
-        action,
-        expected_revision: PlatformRevision(BigInt(target.revision)),
-        idempotency_key: IdempotencyKey(idempotencyKey),
-        parameter: parameter === null ? null : PlatformParameter(parameter),
-        target: sdkCoordinate(target.coordinate),
-      },
-      signal,
-    );
-    if (response.kind === 'refused') {
-      return refusedReceipt(response, action, target, idempotencyKey);
+  function requireSessionScope(sessionId: string): void {
+    if (!sessionScope.has(sessionId)) {
+      throw new MobileGatewayError('mobile_session_unauthorized');
     }
-    const receipt = readValue(response, 'receipt').value;
-    if (
-      receipt.action !== action ||
-      !sameCoordinate(receipt.target, target.coordinate)
-    ) {
-      throw new MobileGatewayError('sdk_receipt_target_mismatch');
-    }
-    return projectReceipt(receipt, idempotencyKey);
   }
 
   return {
@@ -269,10 +303,10 @@ export function createSdkMobileGateway(
       ).value;
       const advertised = new Set(capabilityResponse.methods);
       if (
-        capabilityResponse.protocol !== authorization.protocol ||
-        capabilityResponse.schema !== authorization.schema ||
+        capabilityResponse.protocol !== 'automonique.platform' ||
+        capabilityResponse.schema !== 'automonique.platform/v1' ||
         !capabilityResponse.transports.includes('remote_https') ||
-        [...requiredMethods(authorization.allowedActions)].some(
+        [...requiredMethods(authorization.actions)].some(
           (method) => !advertised.has(method),
         )
       ) {
@@ -280,19 +314,15 @@ export function createSdkMobileGateway(
       }
 
       const sessionsResult = readValue(
-        await options.client.listSessions(
-          authorization.sessionAuthority,
-          null,
-          signal,
-        ),
+        await options.client.listSessions('automonique', null, signal),
         'sessions',
       ).value;
       const sessionIds = new Set<string>();
       for (const session of sessionsResult.sessions) {
         if (
-          session.session.resource.authority !==
-            authorization.sessionAuthority ||
+          session.session.resource.authority !== 'automonique' ||
           session.session.resource.kind !== 'session' ||
+          !sessionScope.has(session.session.resource.id) ||
           sessionIds.has(session.session.resource.id) ||
           (session.run !== null && session.run.kind !== 'run')
         ) {
@@ -300,49 +330,62 @@ export function createSdkMobileGateway(
         }
         sessionIds.add(session.session.resource.id);
       }
-      const runCoordinates = sessionsResult.sessions.flatMap((session) =>
-        session.run === null ? [] : [session.run],
+      const mutationsAllowed = authorization.actions.some(
+        (action) => action !== 'attach',
       );
-      const runRecords = new Map<string, ResourceRecord>();
-      if (runCoordinates.length > 0) {
-        const snapshot = readValue(
-          await options.client.snapshot(runCoordinates, signal),
-          'snapshot',
-        ).value;
-        for (const record of snapshot.resources) {
-          const key = coordinateKey(record.resource);
-          if (runRecords.has(key)) {
-            throw new MobileGatewayError('sdk_snapshot_duplicate_resource');
-          }
-          runRecords.set(key, record);
-        }
-        if (
-          runCoordinates.some(
-            (coordinate) => !runRecords.has(coordinateKey(coordinate)),
+      const commandStates = mutationsAllowed
+        ? await Promise.all(
+            sessionsResult.sessions.map((session) =>
+              options.sessionClient.commandState(
+                session.session.resource,
+                signal,
+              ),
+            ),
           )
-        ) {
-          throw new MobileGatewayError('sdk_snapshot_incomplete');
+        : sessionsResult.sessions.map(() => null);
+      const approvals: MobileSnapshot['approvals'][number][] = [];
+      const approvalTargets = new Set<string>();
+      const sessions = sessionsResult.sessions.map((session, index) => {
+        const commandState = commandStates[index] ?? null;
+        const sessionRecord = commandState?.session ?? session.session;
+        if (!sameCoordinate(sessionRecord.resource, session.session.resource)) {
+          throw new MobileGatewayError('sdk_command_state_session_mismatch');
         }
-      }
-
-      const sessions = sessionsResult.sessions.map((session) => {
-        const runRecord =
-          session.run === null
-            ? undefined
-            : runRecords.get(coordinateKey(session.run));
+        const target = versionedResource(sessionRecord);
+        if (commandState) {
+          for (const pending of commandState.pending_approvals) {
+            const key = coordinateKey(pending.target);
+            if (approvalTargets.has(key)) {
+              throw new MobileGatewayError('sdk_approval_target_duplicate');
+            }
+            approvalTargets.add(key);
+            approvals.push({
+              session: target,
+              target: versionedCommandTarget(pending),
+              approvalType: 'automonique',
+              title: 'Approval required',
+              detail: 'Review this pending session approval before deciding.',
+              impact: 'The effect is determined by the authoritative session.',
+              requester: authorization.actor,
+              expiresAt: null,
+            });
+          }
+        }
         return {
-          target: versionedResource(session.session),
-          title: session.session.summary,
-          run: runRecord === undefined ? null : versionedResource(runRecord),
+          target,
+          title: sessionRecord.summary,
+          run:
+            commandState?.run === null || commandState === null
+              ? null
+              : versionedCommandTarget(commandState.run),
           state:
-            session.session.freshness.state === 'fresh'
+            sessionRecord.freshness.state === 'fresh'
               ? ('active' as const)
               : ('lost' as const),
           attachable: session.attachable,
           followUpAllowed:
-            session.controllable &&
-            authorization.allowedActions.includes('follow_up'),
-          observedAt: observedAt(session.session.freshness.observed_at),
+            session.controllable && authorization.actions.includes('follow_up'),
+          observedAt: observedAt(sessionRecord.freshness.observed_at),
           lastCursor: cursorToken(sessionsResult.cursor),
         };
       });
@@ -351,23 +394,25 @@ export function createSdkMobileGateway(
         schema: 'automonique.mobile-snapshot/v1',
         connection: {
           phase: 'live',
-          label: `${authorization.actor} · ${authorization.serverIdentity}`,
-          mutationsAllowed: authorization.allowedActions.some(
-            (action) => action !== 'attach',
-          ),
+          label: `${authorization.actor} · ${authorization.server_identity}`,
+          mutationsAllowed,
           synthetic: false,
-          allowedActions: authorization.allowedActions,
-          limits: authorization.limits,
+          allowedActions: authorization.actions,
+          limits: {
+            maxPageEvents: Number(authorization.limits.max_page_events),
+            maxFollowUpBytes: Number(authorization.limits.max_follow_up_bytes),
+          },
         },
         sessions,
         timelines: {},
-        approvals: [],
+        approvals,
         receipts: [],
       } satisfies MobileSnapshot;
     },
 
     async attach(session, cursor, signal): Promise<AttachmentHandle> {
       requireAction('attach');
+      requireSessionScope(session.coordinate.id);
       const attached = readValue(
         await options.client.attach(
           sdkCoordinate(session.coordinate),
@@ -382,92 +427,161 @@ export function createSdkMobileGateway(
       ) {
         throw new MobileGatewayError('sdk_attachment_target_mismatch');
       }
-      const initialCursor =
-        cursor === null ? attached.cursor : parseCursorToken(cursor);
-      if (
-        initialCursor.authority !== attached.cursor.authority ||
-        initialCursor.topic !== attached.cursor.topic ||
-        initialCursor.sequence > attached.cursor.sequence
-      ) {
-        throw new MobileGatewayError('sdk_cursor_scope_mismatch');
+      let prefetched: SdkSessionHistoryPage | null = null;
+      let initialHistoryCursor: bigint;
+      try {
+        if (cursor === null) {
+          prefetched = await options.client.sessionHistorySnapshot(
+            sdkCoordinate(session.coordinate),
+            authorization.limits.max_page_events,
+            signal,
+          );
+          requireHistoryPage(prefetched, session.coordinate);
+          initialHistoryCursor = prefetched.from_cursor;
+        } else {
+          initialHistoryCursor = parseHistoryCursorToken(
+            cursor,
+            session.coordinate.id,
+          );
+        }
+      } catch (error) {
+        if (error instanceof SessionHistoryResyncError) {
+          throw new MobileGatewayError(
+            'session_history_resync_required',
+            'resync_required',
+          );
+        }
+        throw error;
       }
+      const initialCursor = historyCursorToken(
+        session.coordinate.id,
+        initialHistoryCursor,
+      );
       return {
         session,
-        cursor: cursorToken(initialCursor),
-        sequence: decimalRevision(initialCursor.sequence.toString()),
+        cursor: initialCursor,
+        sequence:
+          initialHistoryCursor === 0n
+            ? null
+            : decimalRevision(initialHistoryCursor.toString()),
         async *events(eventSignal) {
-          const page = readValue(
-            await options.client.subscribe(initialCursor, eventSignal),
-            'subscription',
-          ).value;
-          const events: SessionEvent[] = page.events.map((event, index) => ({
-            id: `${event.resource.resource.authority}:${event.resource.resource.id}:${event.cursor.sequence}:${index}`,
-            cursor: cursorToken(event.cursor),
-            sequence: decimalRevision(event.cursor.sequence.toString()),
-            createdAt: observedAt(event.resource.freshness.observed_at),
-            provenance: 'authoritative',
-            kind: 'unknown',
-            eventType: `resource_update:${event.resource.resource.kind}`,
-          }));
-          yield {
-            sessionId: session.coordinate.id,
-            afterCursor: cursorToken(initialCursor),
-            cursor: cursorToken(page.cursor),
-            events,
-          };
+          let page = prefetched;
+          let after = initialHistoryCursor;
+          for (;;) {
+            try {
+              page ??= await options.client.sessionHistoryPage(
+                sdkCoordinate(session.coordinate),
+                after,
+                authorization.limits.max_page_events,
+                eventSignal,
+              );
+            } catch (error) {
+              if (error instanceof SessionHistoryResyncError) {
+                throw new MobileGatewayError(
+                  'session_history_resync_required',
+                  'resync_required',
+                );
+              }
+              throw error;
+            }
+            requireHistoryPage(page, session.coordinate);
+            if (page.from_cursor !== after) {
+              throw new MobileGatewayError('sdk_history_cursor_mismatch');
+            }
+            yield {
+              sessionId: session.coordinate.id,
+              afterCursor: historyCursorToken(
+                session.coordinate.id,
+                page.from_cursor,
+              ),
+              cursor: historyCursorToken(
+                session.coordinate.id,
+                page.terminal_cursor,
+              ),
+              events: page.events.map((event) =>
+                historyEvent(session.coordinate.id, event),
+              ),
+            };
+            if (!page.has_more) break;
+            after = page.terminal_cursor;
+            page = null;
+          }
         },
       };
     },
 
     async followUp(command, signal) {
       requireAction('follow_up');
+      requireSessionScope(command.session.coordinate.id);
       if (!command.text.trim()) throw new MobileGatewayError('follow_up_empty');
       if (
         new TextEncoder().encode(command.text).byteLength >
-        authorization.limits.maxFollowUpBytes
+        authorization.limits.max_follow_up_bytes
       ) {
         throw new MobileGatewayError('follow_up_too_large');
       }
-      return mutate(
-        'follow_up',
-        command.session,
-        command.idempotencyKey,
-        command.text,
+      requireMutationTarget('follow_up', command.session);
+      const receipt = await options.sessionClient.followUp(
+        {
+          session: sdkCoordinate(command.session.coordinate),
+          expectedSessionRevision: BigInt(command.session.revision),
+          idempotencyKey: command.idempotencyKey,
+          text: command.text,
+        },
         signal,
       );
+      return projectReceipt(receipt, command.idempotencyKey);
     },
 
-    decideApproval(command, signal) {
+    async decideApproval(command, signal) {
       requireAction('decide_approval');
-      return mutate(
-        'decide_approval',
-        command.approval,
-        command.idempotencyKey,
-        command.decision,
+      requireSessionScope(command.session.coordinate.id);
+      requireMutationTarget('decide_approval', command.approval);
+      const receipt = await options.sessionClient.decideApproval(
+        {
+          session: sdkCoordinate(command.session.coordinate),
+          expectedSessionRevision: BigInt(command.session.revision),
+          approval: sdkCoordinate(command.approval.coordinate),
+          expectedApprovalRevision: BigInt(command.approval.revision),
+          idempotencyKey: command.idempotencyKey,
+          decision: command.decision,
+        },
         signal,
       );
+      return projectReceipt(receipt, command.idempotencyKey);
     },
 
-    stopRun(command, signal) {
+    async stopRun(command, signal) {
       requireAction('stop_run');
-      return mutate(
-        'stop_run',
-        command.run,
-        command.idempotencyKey,
-        null,
+      requireSessionScope(command.session.coordinate.id);
+      requireMutationTarget('stop_run', command.run);
+      const receipt = await options.sessionClient.stopRun(
+        {
+          session: sdkCoordinate(command.session.coordinate),
+          expectedSessionRevision: BigInt(command.session.revision),
+          run: sdkCoordinate(command.run.coordinate),
+          expectedRunRevision: BigInt(command.run.revision),
+          idempotencyKey: command.idempotencyKey,
+        },
         signal,
       );
+      return projectReceipt(receipt, command.idempotencyKey);
     },
 
-    async reconcile(idempotencyKey, signal) {
-      const response = await options.client.getReceipt(
-        { id: null, idempotency_key: IdempotencyKey(idempotencyKey) },
+    async reconcile(request, signal) {
+      requireAction(request.action);
+      requireSessionScope(request.session.coordinate.id);
+      requireMutationTarget(request.action, request.target);
+      const receipt = await options.sessionClient.reconcileReceipt(
+        {
+          session: sdkCoordinate(request.session.coordinate),
+          expectedAction: request.action,
+          expectedTarget: sdkCoordinate(request.target.coordinate),
+          idempotencyKey: request.idempotencyKey,
+        },
         signal,
       );
-      return projectReceipt(
-        readValue(response, 'receipt').value,
-        idempotencyKey,
-      );
+      return projectReceipt(receipt, request.idempotencyKey);
     },
   };
 }
@@ -484,5 +598,11 @@ export function createAuthorizedHttpsGateway(
   return createSdkMobileGateway({
     ...options,
     client: new PlatformClient(transport),
+    sessionClient: new MobileSessionClient(
+      transport,
+      options.authorization,
+      MobileServerIdentity(options.expectedServerIdentity),
+      () => options.now ?? Date.now(),
+    ),
   });
 }

@@ -44,6 +44,7 @@ const target = syntheticSnapshot.sessions[0]!.target;
 const handle: PendingMutationHandle = {
   action: 'follow_up',
   idempotencyKey: 'reconcile-key',
+  session: target,
   target,
 };
 const completed: Receipt = {
@@ -72,7 +73,7 @@ test('ambiguous transport failure reconciles by key without replay', async () =>
     executeWithReconciliation(gateway(reconcile), store, handle, operation),
   ).resolves.toEqual(completed);
   expect(operation).toHaveBeenCalledTimes(1);
-  expect(reconcile).toHaveBeenCalledWith(handle.idempotencyKey);
+  expect(reconcile).toHaveBeenCalledWith(handle);
   expect(store.values.size).toBe(0);
 });
 

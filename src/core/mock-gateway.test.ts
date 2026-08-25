@@ -13,7 +13,12 @@ test('ambiguous follow-up reconciliation is idempotent and never resubmits', asy
   };
   const first = await gateway.followUp(command);
   const retry = await gateway.followUp(command);
-  const reconciled = await gateway.reconcile('same-key');
+  const reconciled = await gateway.reconcile({
+    action: 'follow_up',
+    idempotencyKey: 'same-key',
+    session: session.target,
+    target: session.target,
+  });
   expect(retry).toEqual(first);
   expect(reconciled).toEqual(first);
 });
@@ -23,6 +28,7 @@ test('approval decision fails closed on a stale exact revision', async () => {
   const approval = syntheticSnapshot.approvals[0]!;
   await expect(
     gateway.decideApproval({
+      session: approval.session,
       approval: {
         ...approval.target,
         revision: '2' as typeof approval.target.revision,
@@ -81,6 +87,7 @@ test('approval and run commands require their exact authority-qualified target',
   const approval = syntheticSnapshot.approvals[0]!;
   await expect(
     gateway.decideApproval({
+      session: approval.session,
       approval: {
         ...approval.target,
         coordinate: { ...approval.target.coordinate, authority: 'provider' },
@@ -91,8 +98,16 @@ test('approval and run commands require their exact authority-qualified target',
   ).rejects.toThrow('approval_revision_conflict');
 
   const session = syntheticSnapshot.sessions[0]!;
-  await gateway.stopRun({ run: session.run!, idempotencyKey: 'stop-1' });
+  await gateway.stopRun({
+    session: session.target,
+    run: session.run!,
+    idempotencyKey: 'stop-1',
+  });
   await expect(
-    gateway.stopRun({ run: session.run!, idempotencyKey: 'stop-2' }),
+    gateway.stopRun({
+      session: session.target,
+      run: session.run!,
+      idempotencyKey: 'stop-2',
+    }),
   ).rejects.toThrow('run_revision_conflict');
 });

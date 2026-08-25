@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import {
+  MOBILE_AUTH_MEDIA_TYPE,
+  MOBILE_AUTH_PROTOCOL,
+  MOBILE_AUTH_SCHEMA_V1,
   PLATFORM_MEDIA_TYPE,
   PLATFORM_PROTOCOL,
   PLATFORM_PROTOCOL_VERSION,
@@ -17,4 +20,9 @@ export const AUTOMONIQUE_SDK_METADATA = Object.freeze({
   schema: PLATFORM_SCHEMA_V1,
   schemaDigest: `${SCHEMA_DIGEST_ALGORITHM}:${SCHEMA_DIGEST}`,
   mediaType: PLATFORM_MEDIA_TYPE,
+  mobileAuth: Object.freeze({
+    protocol: MOBILE_AUTH_PROTOCOL,
+    schema: MOBILE_AUTH_SCHEMA_V1,
+    mediaType: MOBILE_AUTH_MEDIA_TYPE,
+  }),
 });

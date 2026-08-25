@@ -15,13 +15,14 @@ import type {
 } from './types';
 import { decimalRevision } from './types';
 
-const PENDING_KEY = 'automonique.mobile.pending-reconciliation.v1';
+const PENDING_KEY = 'automonique.mobile.pending-reconciliation.v2';
 const MAX_PENDING_HANDLES = 20;
 const MAX_PENDING_BYTES = 16 * 1024;
 
 export interface PendingMutationHandle {
   readonly action: Receipt['action'];
   readonly idempotencyKey: string;
+  readonly session: VersionedTarget;
   readonly target: VersionedTarget;
 }
 
@@ -42,8 +43,8 @@ function admitHandles(value: unknown): readonly PendingMutationHandle[] {
     if (entry === null || typeof entry !== 'object') return false;
     const candidate = entry as Partial<PendingMutationHandle>;
     if (!(
-      Object.keys(entry).length === 3 &&
-      ['action', 'idempotencyKey', 'target'].every((key) =>
+      Object.keys(entry).length === 4 &&
+      ['action', 'idempotencyKey', 'session', 'target'].every((key) =>
         Object.hasOwn(entry, key),
       ) &&
       ['follow_up', 'decide_approval', 'stop_run'].includes(
@@ -52,33 +53,58 @@ function admitHandles(value: unknown): readonly PendingMutationHandle[] {
       typeof candidate.idempotencyKey === 'string' &&
       candidate.idempotencyKey.length > 0 &&
       candidate.idempotencyKey.length <= 256 &&
+      candidate.session !== undefined &&
       candidate.target !== undefined
     )) {
       return false;
     }
     try {
-      const target = candidate.target as Partial<VersionedTarget>;
-      const coordinate = target.coordinate as
-        Partial<VersionedTarget['coordinate']> | undefined;
+      const validTarget = (
+        value: Partial<VersionedTarget>,
+        requiredKind?: VersionedTarget['coordinate']['kind'],
+      ): boolean => {
+        const coordinate = value.coordinate as
+          Partial<VersionedTarget['coordinate']> | undefined;
+        return (
+          Object.keys(value).length === 2 &&
+          ['coordinate', 'revision'].every((key) =>
+            Object.hasOwn(value, key),
+          ) &&
+          typeof value.revision === 'string' &&
+          decimalRevision(value.revision) === value.revision &&
+          coordinate !== undefined &&
+          Object.keys(coordinate).length === 3 &&
+          ['authority', 'kind', 'id'].every((key) =>
+            Object.hasOwn(coordinate, key),
+          ) &&
+          ResourceAuthority_VALUES.includes(
+            coordinate.authority as (typeof ResourceAuthority_VALUES)[number],
+          ) &&
+          ResourceKind_VALUES.includes(
+            coordinate.kind as (typeof ResourceKind_VALUES)[number],
+          ) &&
+          (requiredKind === undefined || coordinate.kind === requiredKind) &&
+          typeof coordinate.id === 'string' &&
+          ResourceId(coordinate.id) === coordinate.id
+        );
+      };
+      const session = candidate.session as VersionedTarget;
+      const target = candidate.target as VersionedTarget;
+      const expectedTargetKind =
+        candidate.action === 'follow_up'
+          ? 'session'
+          : candidate.action === 'stop_run'
+            ? 'run'
+            : 'approval';
       return (
-        Object.keys(target).length === 2 &&
-        ['coordinate', 'revision'].every((key) => Object.hasOwn(target, key)) &&
-        typeof target.revision === 'string' &&
-        decimalRevision(target.revision) === target.revision &&
         IdempotencyKey(candidate.idempotencyKey) === candidate.idempotencyKey &&
-        coordinate !== undefined &&
-        Object.keys(coordinate).length === 3 &&
-        ['authority', 'kind', 'id'].every((key) =>
-          Object.hasOwn(coordinate, key),
-        ) &&
-        ResourceAuthority_VALUES.includes(
-          coordinate.authority as (typeof ResourceAuthority_VALUES)[number],
-        ) &&
-        ResourceKind_VALUES.includes(
-          coordinate.kind as (typeof ResourceKind_VALUES)[number],
-        ) &&
-        typeof coordinate.id === 'string' &&
-        ResourceId(coordinate.id) === coordinate.id
+        validTarget(session, 'session') &&
+        validTarget(target, expectedTargetKind) &&
+        session.coordinate.authority === 'automonique' &&
+        target.coordinate.authority === 'automonique' &&
+        (candidate.action !== 'follow_up' ||
+          (session.revision === target.revision &&
+            session.coordinate.id === target.coordinate.id))
       );
     } catch {
       return false;
@@ -86,9 +112,13 @@ function admitHandles(value: unknown): readonly PendingMutationHandle[] {
   });
 }
 
-export function createPendingMutationStore(): PendingMutationStore {
+export function createPendingMutationStore(
+  scope?: string,
+): PendingMutationStore {
+  const storageKey =
+    scope === undefined ? PENDING_KEY : `${PENDING_KEY}.${scope}`;
   async function list(): Promise<readonly PendingMutationHandle[]> {
-    const encoded = await AsyncStorage.getItem(PENDING_KEY);
+    const encoded = await AsyncStorage.getItem(storageKey);
     if (
       encoded === null ||
       new TextEncoder().encode(encoded).byteLength > MAX_PENDING_BYTES
@@ -108,7 +138,7 @@ export function createPendingMutationStore(): PendingMutationStore {
     if (new TextEncoder().encode(encoded).byteLength > MAX_PENDING_BYTES) {
       throw new Error('pending_reconciliation_store_too_large');
     }
-    await AsyncStorage.setItem(PENDING_KEY, encoded);
+    await AsyncStorage.setItem(storageKey, encoded);
   }
 
   return {
@@ -153,11 +183,22 @@ function admitReceiptForHandle(
   return receipt;
 }
 
+function reconcile(
+  gateway: MobileAutomoniqueGateway,
+  handle: PendingMutationHandle,
+  signal?: AbortSignal,
+): Promise<Receipt> {
+  return signal === undefined
+    ? gateway.reconcile(handle)
+    : gateway.reconcile(handle, signal);
+}
+
 export async function executeWithReconciliation(
   gateway: MobileAutomoniqueGateway,
   store: PendingMutationStore,
   handle: PendingMutationHandle,
   operation: () => Promise<Receipt>,
+  signal?: AbortSignal,
 ): Promise<Receipt> {
   await store.put(handle);
   let receipt: Receipt;
@@ -168,7 +209,7 @@ export async function executeWithReconciliation(
     try {
       receipt = admitReceiptForHandle(
         handle,
-        await gateway.reconcile(handle.idempotencyKey),
+        await reconcile(gateway, handle, signal),
       );
       reconciledAfterError = true;
     } catch {
@@ -183,7 +224,7 @@ export async function executeWithReconciliation(
     try {
       receipt = admitReceiptForHandle(
         handle,
-        await gateway.reconcile(handle.idempotencyKey),
+        await reconcile(gateway, handle, signal),
       );
     } catch {
       return receipt;
@@ -196,17 +237,20 @@ export async function executeWithReconciliation(
 export async function recoverPendingReceipts(
   gateway: MobileAutomoniqueGateway,
   store: PendingMutationStore,
+  signal?: AbortSignal,
 ): Promise<readonly RecoveredReceipt[]> {
   const recovered: RecoveredReceipt[] = [];
   for (const handle of await store.list()) {
+    if (signal?.aborted) throw signal.reason;
     try {
       const receipt = admitReceiptForHandle(
         handle,
-        await gateway.reconcile(handle.idempotencyKey),
+        await reconcile(gateway, handle, signal),
       );
       recovered.push({ handle, receipt });
       if (settled(receipt)) await store.remove(handle.idempotencyKey);
     } catch {
+      if (signal?.aborted) throw signal.reason;
       // A handle is not a mutation outbox. Keep it for later reconciliation;
       // never replay the original command because it is deliberately absent.
     }

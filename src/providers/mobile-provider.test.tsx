@@ -32,8 +32,11 @@ function Probe() {
     setConnectionPhase,
     stopRun,
   } = useMobile();
-  const session = snapshot.sessions[0]!;
-  const events = snapshot.timelines[session.target.coordinate.id] ?? [];
+  const session = snapshot.sessions[0];
+  const events =
+    session === undefined
+      ? []
+      : (snapshot.timelines[session.target.coordinate.id] ?? []);
   const approval = snapshot.approvals[0];
   return (
     <>
@@ -42,7 +45,7 @@ function Probe() {
       <Text>{`events:${events.length}`}</Text>
       <Text>{`receipts:${snapshot.receipts.length}`}</Text>
       <Text>{`approvals:${snapshot.approvals.length}`}</Text>
-      <Text>{`run:${session.run?.coordinate.id ?? 'none'}`}</Text>
+      <Text>{`run:${session?.run?.coordinate.id ?? 'none'}`}</Text>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Test refresh"
@@ -50,13 +53,15 @@ function Probe() {
       >
         <Text>Refresh</Text>
       </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Test follow-up"
-        onPress={() => void sendFollowUp(session, 'Continue safely')}
-      >
-        <Text>Follow up</Text>
-      </Pressable>
+      {session && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Test follow-up"
+          onPress={() => void sendFollowUp(session, 'Continue safely')}
+        >
+          <Text>Follow up</Text>
+        </Pressable>
+      )}
       {approval && (
         <Pressable
           accessibilityRole="button"
@@ -66,13 +71,15 @@ function Probe() {
           <Text>Approve</Text>
         </Pressable>
       )}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Test stop"
-        onPress={() => void stopRun(session)}
-      >
-        <Text>Stop</Text>
-      </Pressable>
+      {session && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Test stop"
+          onPress={() => void stopRun(session)}
+        >
+          <Text>Stop</Text>
+        </Pressable>
+      )}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Test pause"
@@ -279,17 +286,20 @@ test('a completed stop receipt clears the exact run association', async () => {
 });
 
 test('recovered old receipts cannot mutate newer same-coordinate projections', async () => {
+  const ownerSession = syntheticSnapshot.sessions[0]!.target;
   const oldRun = syntheticSnapshot.sessions[0]!.run!;
   const oldApproval = syntheticSnapshot.approvals[0]!.target;
   const store = createPendingMutationStore();
   await store.put({
     action: 'stop_run',
     idempotencyKey: 'old-stop',
+    session: ownerSession,
     target: oldRun,
   });
   await store.put({
     action: 'decide_approval',
     idempotencyKey: 'old-approval',
+    session: ownerSession,
     target: oldApproval,
   });
   const base = createMockGateway();
@@ -313,11 +323,11 @@ test('recovered old receipts cannot mutate newer same-coordinate projections', a
         })),
       };
     },
-    async reconcile(idempotencyKey) {
-      const approval = idempotencyKey === 'old-approval';
+    async reconcile(request) {
+      const approval = request.idempotencyKey === 'old-approval';
       return {
-        id: `receipt-${idempotencyKey}`,
-        idempotencyKey,
+        id: `receipt-${request.idempotencyKey}`,
+        idempotencyKey: request.idempotencyKey,
         action: approval ? 'decide_approval' : 'stop_run',
         target: approval ? oldApproval.coordinate : oldRun.coordinate,
         revision: approval ? oldApproval.revision : oldRun.revision,
@@ -366,4 +376,88 @@ test('cache persistence failure forces the live projection read only', async () 
   expect(AsyncStorage.removeItem).toHaveBeenCalled();
   await fireEvent.press(view.getByLabelText('Test resume'));
   expect(view.queryByText('live:true')).toBeNull();
+});
+
+test('replacing a gateway aborts the previous generation bootstrap', async () => {
+  const base = createMockGateway();
+  let capturedSignal: AbortSignal | undefined;
+  const firstGateway: MobileAutomoniqueGateway = {
+    ...base,
+    async bootstrap(signal) {
+      capturedSignal = signal;
+      await new Promise<void>(() => undefined);
+      return base.bootstrap(signal);
+    },
+  };
+  const view = await render(
+    <MobileProvider gateway={firstGateway} storageScope="scope-one">
+      <Probe />
+    </MobileProvider>,
+  );
+  await waitFor(() => expect(capturedSignal).toBeDefined());
+  await view.rerender(
+    <MobileProvider gateway={base} storageScope="scope-two">
+      <Probe />
+    </MobileProvider>,
+  );
+  await waitFor(() => expect(capturedSignal?.aborted).toBe(true));
+});
+
+test('unmount aborts an already-started mutation from the replaced generation', async () => {
+  const base = createMockGateway();
+  let capturedSignal: AbortSignal | undefined;
+  const gateway: MobileAutomoniqueGateway = {
+    ...base,
+    async followUp(_command, signal) {
+      capturedSignal = signal;
+      return await new Promise<Receipt>(() => undefined);
+    },
+  };
+  const view = await render(
+    <MobileProvider gateway={gateway} storageScope="mutation-generation">
+      <Probe />
+    </MobileProvider>,
+  );
+  await waitFor(() => expect(view.getByText('live:true')).toBeTruthy());
+  await fireEvent.press(view.getByLabelText('Test follow-up'));
+  await waitFor(() => expect(capturedSignal).toBeDefined());
+
+  await view.unmount();
+
+  expect(capturedSignal?.aborted).toBe(true);
+});
+
+test('a changed authorization storage scope cannot load the prior projection', async () => {
+  const first = await render(
+    <MobileProvider
+      gateway={createMockGateway()}
+      storageScope="auth-revision-1"
+    >
+      <Probe />
+    </MobileProvider>,
+  );
+  await waitFor(() => expect(first.getByText('events:3')).toBeTruthy());
+  await waitFor(async () =>
+    expect(
+      await AsyncStorage.getItem(
+        'automonique.mobile.snapshot.v1.auth-revision-1',
+      ),
+    ).not.toBeNull(),
+  );
+  await first.unmount();
+
+  const blocked = createMockGateway();
+  blocked.bootstrap = jest.fn(async () => {
+    throw new Error('offline');
+  });
+  const second = await render(
+    <MobileProvider gateway={blocked} storageScope="auth-revision-2">
+      <Probe />
+    </MobileProvider>,
+  );
+  await waitFor(() =>
+    expect(second.getByText('projection-ready:true')).toBeTruthy(),
+  );
+  expect(second.getByText('events:0')).toBeTruthy();
+  expect(second.getByText('receipts:0')).toBeTruthy();
 });

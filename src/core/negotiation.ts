@@ -1,52 +1,27 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import {
-  ResourceAuthority_VALUES,
-  type ResourceAuthority,
+  MOBILE_AUTH_SCHEMA_V1,
+  type MobileAuthorization,
 } from '@automonique/sdk';
 
-import type { MobileAction } from './types';
+export type { MobileAuthorization };
 
-export interface MobileAuthorization {
-  readonly protocol: 'automonique.platform';
-  readonly schema: 'automonique.platform/v1';
-  readonly serverIdentity: string;
-  readonly actor: string;
-  readonly sessionAuthority: ResourceAuthority;
-  readonly allowedActions: readonly MobileAction[];
-  readonly limits: {
-    readonly maxPageEvents: number;
-    readonly maxFollowUpBytes: number;
-  };
-}
-
-const MOBILE_ACTIONS: readonly MobileAction[] = [
-  'attach',
-  'follow_up',
-  'decide_approval',
-  'stop_run',
-];
-
+/** Recheck time and identity at the point the descriptor enters the gateway. */
 export function admitMobileAuthorization(
   value: MobileAuthorization,
   expectedIdentity: string,
+  now = Date.now(),
 ): MobileAuthorization {
   if (
-    value.protocol !== 'automonique.platform' ||
-    value.schema !== 'automonique.platform/v1' ||
-    value.serverIdentity !== expectedIdentity ||
-    !/^[\x21-\x7e]{1,256}$/.test(value.actor) ||
-    !/^[\x21-\x7e]{1,256}$/.test(value.serverIdentity) ||
-    !ResourceAuthority_VALUES.includes(value.sessionAuthority) ||
-    !Array.isArray(value.allowedActions) ||
-    new Set(value.allowedActions).size !== value.allowedActions.length ||
-    value.allowedActions.some((action) => !MOBILE_ACTIONS.includes(action)) ||
-    !Number.isInteger(value.limits.maxPageEvents) ||
-    value.limits.maxPageEvents < 1 ||
-    value.limits.maxPageEvents > 512 ||
-    !Number.isInteger(value.limits.maxFollowUpBytes) ||
-    value.limits.maxFollowUpBytes < 1 ||
-    value.limits.maxFollowUpBytes > 65_536
+    value.schema !== MOBILE_AUTH_SCHEMA_V1 ||
+    value.server_identity !== expectedIdentity ||
+    value.issued_at_ms > BigInt(now) ||
+    value.issued_at_ms >= value.expires_at_ms ||
+    value.expires_at_ms <= BigInt(now) ||
+    value.actions.length === 0 ||
+    new Set(value.actions).size !== value.actions.length ||
+    new Set(value.session_scope).size !== value.session_scope.length
   ) {
     throw new Error('mobile_capabilities_incompatible');
   }

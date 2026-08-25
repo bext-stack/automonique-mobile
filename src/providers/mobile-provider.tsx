@@ -11,8 +11,6 @@ import {
   type PropsWithChildren,
 } from 'react';
 
-import { syntheticSnapshot } from '@/core/fixtures';
-import { createMockGateway } from '@/core/mock-gateway';
 import { nextSequence } from '@/core/projection';
 import {
   createPendingMutationStore,
@@ -39,6 +37,7 @@ import { bootstrapVerticalSlice } from '@/core/vertical-slice';
 
 interface MobileContextValue {
   readonly snapshot: MobileSnapshot;
+  readonly storageScope: string | null;
   readonly busyAction: string | null;
   readonly projectionReady: boolean;
   readonly sendFollowUp: (
@@ -57,7 +56,8 @@ interface MobileContextValue {
 }
 
 interface MobileProviderProps extends PropsWithChildren {
-  readonly gateway?: MobileAutomoniqueGateway;
+  readonly gateway: MobileAutomoniqueGateway;
+  readonly storageScope?: string;
 }
 
 const MobileContext = createContext<MobileContextValue | null>(null);
@@ -65,13 +65,19 @@ const SNAPSHOT_CACHE_KEY = 'automonique.mobile.snapshot.v1';
 
 function initialReadOnlySnapshot(): MobileSnapshot {
   return {
-    ...syntheticSnapshot,
+    schema: 'automonique.mobile-snapshot/v1',
     connection: {
-      ...syntheticSnapshot.connection,
       phase: 'stale',
       label: 'Initializing projection — read only',
       mutationsAllowed: false,
+      synthetic: false,
+      allowedActions: [],
+      limits: { maxPageEvents: 512, maxFollowUpBytes: 65_536 },
     },
+    sessions: [],
+    timelines: {},
+    approvals: [],
+    receipts: [],
   };
 }
 
@@ -92,18 +98,27 @@ function applyRecoveredReceipts(
   recovered: readonly RecoveredReceipt[],
 ): MobileSnapshot {
   return recovered.reduce((current, { handle, receipt }) => {
-    const sameTarget = (candidate: VersionedTarget | null): boolean =>
+    const sameVersioned = (
+      candidate: VersionedTarget | null,
+      expected: VersionedTarget,
+    ): boolean =>
       candidate !== null &&
-      candidate.revision === handle.target.revision &&
-      candidate.coordinate.authority === handle.target.coordinate.authority &&
-      candidate.coordinate.kind === handle.target.coordinate.kind &&
-      candidate.coordinate.id === handle.target.coordinate.id;
+      candidate.revision === expected.revision &&
+      candidate.coordinate.authority === expected.coordinate.authority &&
+      candidate.coordinate.kind === expected.coordinate.kind &&
+      candidate.coordinate.id === expected.coordinate.id;
+    const sameTarget = (candidate: VersionedTarget | null): boolean =>
+      sameVersioned(candidate, handle.target);
+    const ownerSessionIsCurrent = current.sessions.some((session) =>
+      sameVersioned(session.target, handle.session),
+    );
     const targetIsCurrent =
-      handle.action === 'decide_approval'
+      ownerSessionIsCurrent &&
+      (handle.action === 'decide_approval'
         ? current.approvals.some((approval) => sameTarget(approval.target))
         : handle.action === 'stop_run'
           ? current.sessions.some((session) => sameTarget(session.run))
-          : current.sessions.some((session) => sameTarget(session.target));
+          : current.sessions.some((session) => sameTarget(session.target)));
     let next = {
       ...current,
       receipts: upsertReceipt(current.receipts, receipt),
@@ -154,11 +169,17 @@ function applyRecoveredReceipts(
 
 function recoveredReceipt(
   action: Receipt['action'],
+  session: VersionedTarget,
   target: VersionedTarget,
   receipt: Receipt,
 ): RecoveredReceipt {
   return {
-    handle: { action, idempotencyKey: receipt.idempotencyKey, target },
+    handle: {
+      action,
+      idempotencyKey: receipt.idempotencyKey,
+      session,
+      target,
+    },
     receipt,
   };
 }
@@ -174,10 +195,16 @@ function isResyncError(error: unknown): boolean {
 
 export function MobileProvider({
   children,
-  gateway: providedGateway,
+  gateway,
+  storageScope,
 }: MobileProviderProps) {
-  const [gateway] = useState(() => providedGateway ?? createMockGateway());
-  const [pendingStore] = useState(createPendingMutationStore);
+  const [pendingStore] = useState(() =>
+    createPendingMutationStore(storageScope),
+  );
+  const snapshotCacheKey =
+    storageScope === undefined
+      ? SNAPSHOT_CACHE_KEY
+      : `${SNAPSHOT_CACHE_KEY}.${storageScope}`;
   const [snapshot, setSnapshot] = useState<MobileSnapshot>(
     initialReadOnlySnapshot,
   );
@@ -185,10 +212,14 @@ export function MobileProvider({
   const [syntheticReady, setSyntheticReady] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const operationInFlight = useRef(false);
+  const operationController = useRef<AbortController | null>(null);
 
   async function refreshProjection(): Promise<void> {
     if (operationInFlight.current) return;
     operationInFlight.current = true;
+    const controller = new AbortController();
+    operationController.current?.abort();
+    operationController.current = controller;
     setBusyAction('refresh-projection');
     setSyntheticReady(false);
     setSnapshot((current) => ({
@@ -203,18 +234,34 @@ export function MobileProvider({
     try {
       let fresh: MobileSnapshot;
       try {
-        fresh = await bootstrapVerticalSlice(gateway, snapshot);
+        fresh = await bootstrapVerticalSlice(
+          gateway,
+          snapshot,
+          controller.signal,
+        );
       } catch (error) {
         if (!isResyncError(error)) throw error;
-        fresh = await bootstrapVerticalSlice(gateway);
+        fresh = await bootstrapVerticalSlice(
+          gateway,
+          undefined,
+          controller.signal,
+        );
       }
       if (
         fresh.connection.phase === 'stale' &&
         fresh.connection.label === 'Cursor resynchronization required'
       ) {
-        fresh = await bootstrapVerticalSlice(gateway);
+        fresh = await bootstrapVerticalSlice(
+          gateway,
+          undefined,
+          controller.signal,
+        );
       }
-      const recovered = await recoverPendingReceipts(gateway, pendingStore);
+      const recovered = await recoverPendingReceipts(
+        gateway,
+        pendingStore,
+        controller.signal,
+      );
       const withReceiptHistory = {
         ...fresh,
         receipts: snapshot.receipts.reduce(upsertReceipt, fresh.receipts),
@@ -238,28 +285,39 @@ export function MobileProvider({
     } finally {
       setBusyAction(null);
       operationInFlight.current = false;
+      if (operationController.current === controller) {
+        operationController.current = null;
+      }
     }
   }
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
+    operationController.current = controller;
     void (async () => {
       let cachedSnapshot: MobileSnapshot | undefined;
       try {
-        const cached = await AsyncStorage.getItem(SNAPSHOT_CACHE_KEY);
+        const cached = await AsyncStorage.getItem(snapshotCacheKey);
         if (cached !== null) {
           cachedSnapshot = decodeCachedSnapshot(cached);
           if (active) setSnapshot(cachedSnapshot);
         }
       } catch {
-        await AsyncStorage.removeItem(SNAPSHOT_CACHE_KEY).catch(
-          () => undefined,
-        );
+        await AsyncStorage.removeItem(snapshotCacheKey).catch(() => undefined);
       }
 
       try {
-        const fresh = await bootstrapVerticalSlice(gateway, cachedSnapshot);
-        const recovered = await recoverPendingReceipts(gateway, pendingStore);
+        const fresh = await bootstrapVerticalSlice(
+          gateway,
+          cachedSnapshot,
+          controller.signal,
+        );
+        const recovered = await recoverPendingReceipts(
+          gateway,
+          pendingStore,
+          controller.signal,
+        );
         if (active) {
           const withReceiptHistory =
             cachedSnapshot === undefined
@@ -295,8 +353,11 @@ export function MobileProvider({
     })();
     return () => {
       active = false;
+      controller.abort();
+      operationController.current?.abort();
+      operationController.current = null;
     };
-  }, [gateway, pendingStore]);
+  }, [gateway, pendingStore, snapshotCacheKey]);
 
   useEffect(() => {
     if (!cacheReady) return;
@@ -304,11 +365,9 @@ export function MobileProvider({
     void (async () => {
       try {
         const encoded = encodeCachedSnapshot(snapshot);
-        await AsyncStorage.setItem(SNAPSHOT_CACHE_KEY, encoded);
+        await AsyncStorage.setItem(snapshotCacheKey, encoded);
       } catch {
-        await AsyncStorage.removeItem(SNAPSHOT_CACHE_KEY).catch(
-          () => undefined,
-        );
+        await AsyncStorage.removeItem(snapshotCacheKey).catch(() => undefined);
         if (!active) return;
         setSyntheticReady(false);
         setSnapshot((current) =>
@@ -330,7 +389,7 @@ export function MobileProvider({
     return () => {
       active = false;
     };
-  }, [cacheReady, snapshot]);
+  }, [cacheReady, snapshot, snapshotCacheKey]);
 
   function requireAction(action: MobileAction): void {
     if (
@@ -343,23 +402,34 @@ export function MobileProvider({
 
   async function runMutation(
     action: Receipt['action'],
+    session: SessionSummary['target'],
     target: SessionSummary['target'],
-    operation: (idempotencyKey: string) => Promise<Receipt>,
+    operation: (
+      idempotencyKey: string,
+      signal: AbortSignal,
+    ) => Promise<Receipt>,
   ): Promise<Receipt> {
     if (operationInFlight.current) throw new Error('operation_in_progress');
     operationInFlight.current = true;
+    const controller = new AbortController();
+    operationController.current?.abort();
+    operationController.current = controller;
     const idempotencyKey = Crypto.randomUUID();
     setBusyAction(idempotencyKey);
     try {
       return await executeWithReconciliation(
         gateway,
         pendingStore,
-        { action, idempotencyKey, target },
-        () => operation(idempotencyKey),
+        { action, idempotencyKey, session, target },
+        () => operation(idempotencyKey, controller.signal),
+        controller.signal,
       );
     } finally {
       setBusyAction(null);
       operationInFlight.current = false;
+      if (operationController.current === controller) {
+        operationController.current = null;
+      }
     }
   }
 
@@ -375,16 +445,20 @@ export function MobileProvider({
     const receipt = await runMutation(
       'follow_up',
       session.target,
-      (idempotencyKey) =>
-        gateway.followUp({
-          session: session.target,
-          text,
-          idempotencyKey,
-        }),
+      session.target,
+      (idempotencyKey, signal) =>
+        gateway.followUp(
+          {
+            session: session.target,
+            text,
+            idempotencyKey,
+          },
+          signal,
+        ),
     );
     setSnapshot((current) => {
       let next = applyRecoveredReceipts(current, [
-        recoveredReceipt('follow_up', session.target, receipt),
+        recoveredReceipt('follow_up', session.target, session.target, receipt),
       ]);
       const exactSession = current.sessions.find(
         (candidate) =>
@@ -429,17 +503,27 @@ export function MobileProvider({
     }
     const receipt = await runMutation(
       'decide_approval',
+      approval.session,
       approval.target,
-      (idempotencyKey) =>
-        gateway.decideApproval({
-          approval: approval.target,
-          decision,
-          idempotencyKey,
-        }),
+      (idempotencyKey, signal) =>
+        gateway.decideApproval(
+          {
+            session: approval.session,
+            approval: approval.target,
+            decision,
+            idempotencyKey,
+          },
+          signal,
+        ),
     );
     setSnapshot((current) =>
       applyRecoveredReceipts(current, [
-        recoveredReceipt('decide_approval', approval.target, receipt),
+        recoveredReceipt(
+          'decide_approval',
+          approval.session,
+          approval.target,
+          receipt,
+        ),
       ]),
     );
     return receipt;
@@ -450,13 +534,21 @@ export function MobileProvider({
     if (!session.run) throw new Error('session_run_missing');
     const receipt = await runMutation(
       'stop_run',
+      session.target,
       session.run,
-      (idempotencyKey) =>
-        gateway.stopRun({ run: session.run!, idempotencyKey }),
+      (idempotencyKey, signal) =>
+        gateway.stopRun(
+          {
+            session: session.target,
+            run: session.run!,
+            idempotencyKey,
+          },
+          signal,
+        ),
     );
     setSnapshot((current) =>
       applyRecoveredReceipts(current, [
-        recoveredReceipt('stop_run', session.run!, receipt),
+        recoveredReceipt('stop_run', session.target, session.run!, receipt),
       ]),
     );
     return receipt;
@@ -506,6 +598,7 @@ export function MobileProvider({
     <MobileContext.Provider
       value={{
         snapshot,
+        storageScope: storageScope ?? null,
         busyAction,
         projectionReady: cacheReady,
         sendFollowUp,

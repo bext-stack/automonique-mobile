@@ -2,12 +2,29 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+import {
+  MOBILE_AUTH_SCHEMA_V1,
+  MobileAccessToken,
+  MobileActor,
+  MobileCredentialId,
+  MobileEpochMillis,
+  MobileFollowUpBytes,
+  MobileHttpsOrigin,
+  MobilePageEvents,
+  MobilePlatformEndpoint,
+  MobileProtocolVersion,
+  MobileRefreshToken,
+  MobileRevision,
+  MobileServerIdentity,
+  MobileSessionId,
+  type IssuedMobileCredentials,
+  type MobileDiscovery,
+} from '@automonique/sdk';
 
 import {
-  loadScopedConnection,
+  loadStoredConnection,
   revokeLocalCredential,
-  saveConnectionProfile,
-  type ConnectionProfile,
+  saveIssuedConnection,
 } from './credential-store';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
@@ -25,13 +42,55 @@ jest.mock('expo-secure-store', () => ({
 
 const secureStore = jest.mocked(SecureStore);
 const storage = jest.mocked(AsyncStorage);
-const NOW = Date.parse('2026-08-25T09:00:00.000Z');
-const PROFILE: ConnectionProfile = {
-  endpoint: 'https://ops.example.test/api/platform?discard=yes#fragment',
-  actor: 'operator-1',
-  credentialExpiresAt: '2026-08-25T10:00:00Z',
-  serverIdentity: 'server-1',
+const NOW = 1_777_000_000_000;
+const IDENTITY = MobileServerIdentity(`sha256:${'a'.repeat(64)}`);
+const CREDENTIAL_ID = MobileCredentialId(`mc_${'b'.repeat(43)}`);
+const DISCOVERY: MobileDiscovery = {
+  credential_inventory_endpoint:
+    'https://ops.example.test/api/mobile/credentials/list' as MobileDiscovery['credential_inventory_endpoint'],
+  credential_revoke_endpoint:
+    'https://ops.example.test/api/mobile/credentials/revoke' as MobileDiscovery['credential_revoke_endpoint'],
+  operator_provision_endpoint:
+    'https://ops.example.test/api/mobile/operator-provision' as MobileDiscovery['operator_provision_endpoint'],
+  origin: MobileHttpsOrigin('https://ops.example.test'),
+  pairing_create_endpoint:
+    'https://ops.example.test/api/mobile/pairings' as MobileDiscovery['pairing_create_endpoint'],
+  pairing_exchange_endpoint:
+    'https://ops.example.test/api/mobile/pairings/exchange' as MobileDiscovery['pairing_exchange_endpoint'],
+  platform_endpoint: MobilePlatformEndpoint(
+    'https://ops.example.test/api/platform',
+  ),
+  protocol: 'automonique.mobile-auth',
+  schema: MOBILE_AUTH_SCHEMA_V1,
+  server_identity: IDENTITY,
+  supported_versions: [MobileProtocolVersion(1n)],
 };
+
+function issued(
+  expiresAt = NOW + 900_000,
+  revision = 1n,
+): IssuedMobileCredentials {
+  return {
+    access_token: MobileAccessToken(`ma_${'c'.repeat(43)}`),
+    refresh_token: MobileRefreshToken(`mr_${'d'.repeat(43)}`),
+    authorization: {
+      schema: MOBILE_AUTH_SCHEMA_V1,
+      actions: ['attach', 'follow_up'],
+      actor: MobileActor('operator-1'),
+      authorization_revision: MobileRevision(1n),
+      credential_id: CREDENTIAL_ID,
+      credential_revision: MobileRevision(revision),
+      expires_at_ms: MobileEpochMillis(BigInt(expiresAt)),
+      issued_at_ms: MobileEpochMillis(BigInt(NOW)),
+      limits: {
+        max_follow_up_bytes: MobileFollowUpBytes(4096n),
+        max_page_events: MobilePageEvents(100n),
+      },
+      server_identity: IDENTITY,
+      session_scope: [MobileSessionId('session-1')],
+    },
+  };
+}
 
 let secureValue: string | null;
 
@@ -49,136 +108,179 @@ beforeEach(async () => {
   });
 });
 
-test('stores and loads one normalized, SDK-compatible scoped pair', async () => {
-  await saveConnectionProfile(PROFILE, 'token-._~+/=', NOW);
-
-  await expect(loadScopedConnection(NOW)).resolves.toEqual({
-    profile: {
-      ...PROFILE,
-      endpoint: 'https://ops.example.test/api/platform',
-      credentialExpiresAt: '2026-08-25T10:00:00.000Z',
+test('stores both rotating tokens only inside the secure generation', async () => {
+  await saveIssuedConnection(DISCOVERY, issued(), NOW);
+  await expect(loadStoredConnection(NOW)).resolves.toMatchObject({
+    kind: 'active',
+    connection: {
+      accessToken: `ma_${'c'.repeat(43)}`,
+      refreshToken: `mr_${'d'.repeat(43)}`,
+      profile: { credentialId: CREDENTIAL_ID, credentialRevision: '1' },
     },
-    credential: 'token-._~+/=',
   });
+  const publicValue = await AsyncStorage.getItem(
+    'automonique.mobile.connection-profile.v3',
+  );
+  expect(publicValue).not.toContain('ma_');
+  expect(publicValue).not.toContain('mr_');
   expect(secureStore.setItemAsync).toHaveBeenCalledWith(
-    'automonique.mobile.scoped-credential.v1',
-    expect.stringContaining('"credential":"token-._~+/="'),
+    'automonique.mobile.scoped-credential.v3',
+    expect.stringContaining(`\"refreshToken\":\"mr_${'d'.repeat(43)}\"`),
     { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY },
   );
-  expect(
-    await AsyncStorage.getItem('automonique.mobile.connection-profile.v1'),
-  ).not.toContain('token-._~+/=');
 });
 
-test.each(['', 'contains space', 'nul\0byte', 'café', 'line\nfeed'])(
-  'rejects a bearer token the canonical SDK would reject: %p',
-  async (credential) => {
-    await expect(
-      saveConnectionProfile(PROFILE, credential, NOW),
-    ).rejects.toThrow('credential_invalid');
-    expect(secureStore.setItemAsync).not.toHaveBeenCalled();
-  },
-);
-
-test('rejects expired credentials before touching storage', async () => {
-  await expect(
-    saveConnectionProfile(
-      { ...PROFILE, credentialExpiresAt: '2026-08-25T09:00:00Z' },
-      'token',
-      NOW,
-    ),
-  ).rejects.toThrow('credential_expired');
-  expect(storage.removeItem).not.toHaveBeenCalled();
-  expect(secureStore.setItemAsync).not.toHaveBeenCalled();
-});
-
-test('rejects impossible expiry dates and malformed identity Unicode', async () => {
-  await expect(
-    saveConnectionProfile(
-      { ...PROFILE, credentialExpiresAt: '2026-02-30T10:00:00Z' },
-      'token',
-      NOW,
-    ),
-  ).rejects.toThrow('credential_expired');
-  await expect(
-    saveConnectionProfile(
-      { ...PROFILE, actor: 'operator-\ud800' },
-      'token',
-      NOW,
-    ),
-  ).rejects.toThrow('connection_profile_invalid');
-  expect(secureStore.setItemAsync).not.toHaveBeenCalled();
-});
-
-test('cleans the private half when the public commit fails', async () => {
-  storage.setItem.mockRejectedValueOnce(new Error('profile_write_failed'));
-
-  await expect(saveConnectionProfile(PROFILE, 'token', NOW)).rejects.toThrow(
-    'profile_write_failed',
-  );
-  expect(secureStore.deleteItemAsync).toHaveBeenCalled();
-  expect(secureValue).toBeNull();
-});
-
-test('cleans both halves when the secure write reports failure', async () => {
-  secureStore.setItemAsync.mockImplementationOnce(async (_key, value) => {
-    secureValue = value;
-    throw new Error('credential_write_failed');
+test('retains an expired access generation for refresh', async () => {
+  await saveIssuedConnection(DISCOVERY, issued(NOW + 1), NOW);
+  await expect(loadStoredConnection(NOW + 1)).resolves.toMatchObject({
+    kind: 'refresh_required',
+    connection: { profile: { credentialId: CREDENTIAL_ID } },
   });
+  expect(secureValue).not.toBeNull();
+});
 
-  await expect(saveConnectionProfile(PROFILE, 'token', NOW)).rejects.toThrow(
-    'credential_write_failed',
+test('rotation requires the same credential and commits its new revision', async () => {
+  const previous = await saveIssuedConnection(DISCOVERY, issued(), NOW);
+  await saveIssuedConnection(
+    DISCOVERY,
+    issued(NOW + 900_000, 2n),
+    NOW,
+    previous,
   );
-  expect(secureStore.deleteItemAsync).toHaveBeenCalled();
-  expect(secureValue).toBeNull();
+  await expect(loadStoredConnection(NOW)).resolves.toMatchObject({
+    connection: { profile: { credentialRevision: '2' } },
+  });
+  await expect(
+    saveIssuedConnection(
+      DISCOVERY,
+      {
+        ...issued(NOW + 900_000, 3n),
+        authorization: {
+          ...issued().authorization,
+          credential_id: MobileCredentialId(`mc_${'e'.repeat(43)}`),
+          credential_revision: MobileRevision(3n),
+        },
+      },
+      NOW,
+      previous,
+    ),
+  ).rejects.toThrow('issued_connection_mismatch');
 });
 
-test('rejects and removes profile-token mismatches', async () => {
-  await saveConnectionProfile(PROFILE, 'token', NOW);
-  const key = 'automonique.mobile.connection-profile.v1';
-  const persisted = JSON.parse((await AsyncStorage.getItem(key))!) as {
-    profile: ConnectionProfile;
+test('rotation rejects revision reuse, authorization rollback, and silent scope drift', async () => {
+  const previous = await saveIssuedConnection(DISCOVERY, issued(), NOW);
+  await expect(
+    saveIssuedConnection(DISCOVERY, issued(NOW + 900_000, 1n), NOW, previous),
+  ).rejects.toThrow('issued_connection_mismatch');
+
+  const authorizationRevisionTwo = {
+    ...issued(NOW + 900_000, 2n),
+    authorization: {
+      ...issued().authorization,
+      authorization_revision: MobileRevision(2n),
+      credential_revision: MobileRevision(2n),
+    },
   };
-  persisted.profile = { ...persisted.profile, actor: 'different-operator' };
-  await AsyncStorage.setItem(key, JSON.stringify(persisted));
-
-  await expect(loadScopedConnection(NOW)).resolves.toBeNull();
-  expect(await AsyncStorage.getItem(key)).toBeNull();
-  expect(secureValue).toBeNull();
-});
-
-test('rejects and removes a pair once it expires', async () => {
-  await saveConnectionProfile(PROFILE, 'token', NOW);
+  const revisionTwo = await saveIssuedConnection(
+    DISCOVERY,
+    authorizationRevisionTwo,
+    NOW,
+    previous,
+  );
+  await expect(
+    saveIssuedConnection(
+      DISCOVERY,
+      issued(NOW + 900_000, 3n),
+      NOW,
+      revisionTwo,
+    ),
+  ).rejects.toThrow('issued_connection_mismatch');
 
   await expect(
-    loadScopedConnection(Date.parse('2026-08-25T10:00:00.000Z')),
-  ).resolves.toBeNull();
-  expect(secureValue).toBeNull();
+    saveIssuedConnection(
+      DISCOVERY,
+      {
+        ...authorizationRevisionTwo,
+        authorization: {
+          ...authorizationRevisionTwo.authorization,
+          credential_revision: MobileRevision(3n),
+          session_scope: [MobileSessionId('session-2')],
+        },
+      },
+      NOW,
+      revisionTwo,
+    ),
+  ).rejects.toThrow('issued_connection_mismatch');
 });
 
-test('a missing half never admits the remaining half', async () => {
-  await saveConnectionProfile(PROFILE, 'token', NOW);
-  secureValue = null;
+test('identity mismatch and already expired issuance fail before persistence', async () => {
+  await expect(
+    saveIssuedConnection(
+      {
+        ...DISCOVERY,
+        server_identity: MobileServerIdentity(`sha256:${'f'.repeat(64)}`),
+      },
+      issued(),
+      NOW,
+    ),
+  ).rejects.toThrow('issued_connection_mismatch');
+  await expect(
+    saveIssuedConnection(DISCOVERY, issued(NOW), NOW),
+  ).rejects.toThrow('issued_connection_mismatch');
+  expect(secureStore.setItemAsync).not.toHaveBeenCalled();
+});
 
-  await expect(loadScopedConnection(NOW)).resolves.toBeNull();
-  expect(
-    await AsyncStorage.getItem('automonique.mobile.connection-profile.v1'),
-  ).toBeNull();
+test('keeps the secure generation when the public mirror commit fails', async () => {
+  storage.setItem.mockRejectedValueOnce(new Error('profile_write_failed'));
+  await expect(
+    saveIssuedConnection(DISCOVERY, issued(), NOW),
+  ).resolves.toMatchObject({
+    profile: { credentialId: CREDENTIAL_ID },
+  });
+  expect(secureStore.deleteItemAsync).not.toHaveBeenCalled();
+  expect(secureValue).not.toBeNull();
+  await expect(loadStoredConnection(NOW)).resolves.toMatchObject({
+    kind: 'active',
+  });
+});
+
+test('repairs a stale public mirror from the authoritative secure generation', async () => {
+  await saveIssuedConnection(DISCOVERY, issued(), NOW);
+  const key = 'automonique.mobile.connection-profile.v3';
+  const persisted = JSON.parse((await AsyncStorage.getItem(key))!) as {
+    profile: { actor: string };
+  };
+  persisted.profile.actor = 'different-operator';
+  await AsyncStorage.setItem(key, JSON.stringify(persisted));
+  await expect(loadStoredConnection(NOW)).resolves.toMatchObject({
+    kind: 'active',
+    connection: { profile: { actor: 'operator-1' } },
+  });
+  expect(await AsyncStorage.getItem(key)).toContain('operator-1');
+  expect(secureValue).not.toBeNull();
+});
+
+test('reconstructs a missing public mirror after a post-rotation crash', async () => {
+  await saveIssuedConnection(DISCOVERY, issued(), NOW);
+  const key = 'automonique.mobile.connection-profile.v3';
+  await AsyncStorage.removeItem(key);
+  await expect(loadStoredConnection(NOW)).resolves.toMatchObject({
+    kind: 'active',
+  });
+  expect(await AsyncStorage.getItem(key)).toContain(CREDENTIAL_ID);
 });
 
 test('unavailable secure storage disables and removes the public profile', async () => {
-  await saveConnectionProfile(PROFILE, 'token', NOW);
+  await saveIssuedConnection(DISCOVERY, issued(), NOW);
   secureStore.isAvailableAsync.mockResolvedValue(false);
-
-  await expect(loadScopedConnection(NOW)).resolves.toBeNull();
+  await expect(loadStoredConnection(NOW)).resolves.toBeNull();
   expect(
-    await AsyncStorage.getItem('automonique.mobile.connection-profile.v1'),
+    await AsyncStorage.getItem('automonique.mobile.connection-profile.v3'),
   ).toBeNull();
 });
 
 test('revocation attempts both stores even when one removal fails', async () => {
   storage.removeItem.mockRejectedValueOnce(new Error('profile_delete_failed'));
-
   await expect(revokeLocalCredential()).rejects.toThrow(
     'profile_delete_failed',
   );
