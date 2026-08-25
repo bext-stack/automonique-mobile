@@ -43,6 +43,7 @@ const CONFIG = Object.freeze({
     'apkanalyzer manifest print automonique-mobile-0.1.0-preview.1.apk',
     'apkanalyzer files list automonique-mobile-0.1.0-preview.1.apk',
     'apksigner verify --verbose --print-certs automonique-mobile-0.1.0-preview.1.apk',
+    'emulator -avd automonique-preview -accel on -gpu software -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -no-metrics -camera-back none -memory 4096 -cores 4',
     'adb install --no-streaming -r automonique-mobile-0.1.0-preview.1.apk',
     'adb shell am start -W dev.bext.automonique/.MainActivity',
   ],
