@@ -32,20 +32,25 @@ artifact, signed device build, app-store release, or production deployment is
 claimed. Those steps require separately authorized endpoint, account, build,
 device, and release evidence.
 
-## Preview APK — publication pending
+## Public Android preview
 
-Immutable `automonique.fr` download URL: pending publication.
+Download the immutable
+[Automonique Mobile 0.1.0-preview.1 APK](https://www.automonique.fr/downloads/android/0.1.0-preview.1/42a0f924bc865075c19f54f437e91836215950ee5035664e819dfd24f4b7ce8f/automonique-mobile-0.1.0-preview.1.apk).
 
-SHA-256: pending build and packaged-artifact verification.
+SHA-256: `42a0f924bc865075c19f54f437e91836215950ee5035664e819dfd24f4b7ce8f`
 
-The link is intentionally unavailable until the APK is built from reviewed
-protected `main`, its manifest, signing state, dependency notices, provenance,
-and digest pass the [preview publication gates](docs/release-governance.md#authorized-android-preview-publication),
-and publication controls are enabled. This will be a credential-free,
-public non-production Android preview for evaluation. Its universal package
-must contain both `arm64-v8a` and `x86_64`; that packaging evidence is not
-evidence of an authorized live Automonique connection, physical-device testing,
-production signing, app-store readiness, or deployment.
+The adjacent [publication record](https://www.automonique.fr/downloads/android/0.1.0-preview.1/42a0f924bc865075c19f54f437e91836215950ee5035664e819dfd24f4b7ce8f/publication.json) connects these
+exact bytes to protected `main`, retained GitHub Actions run
+[`32872218139`](https://github.com/bext-stack/automonique-mobile/actions/runs/32872218139),
+the GitHub artifact attestation, packaged manifest, ABIs, debug-only signer,
+toolchains, and dependency notices.
+
+This is a public, credential-free, non-production Android preview for
+evaluation. Its universal package contains at least `arm64-v8a` and `x86_64`.
+It is not evidence of an authorized live Automonique connection,
+physical-device support, production signing, app-store readiness, or deployment
+of Automonique itself. See the
+[preview publication gates](docs/release-governance.md#authorized-android-preview-publication).
 
 ## Requirements
 
