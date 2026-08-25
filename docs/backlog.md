@@ -21,7 +21,7 @@ Remaining tracked work is grouped in the
       formatting, Expo Doctor, all-platform export, dependency review, and secret
       history scanning run on GitHub.
 
-## Now — verify the synthetic vertical slice
+## Completed — verified synthetic vertical slice
 
 - [x] **MOB-010 — Exercise the gateway and projection end to end.**
   - Dependency: none.
@@ -68,21 +68,23 @@ Remaining tracked work is grouped in the
     is green on the pushed commit; documentation matches the implementation;
     parent #112 receives a concise evidence comment. Do not close #112.
 
-## Next — production connection, blocked on server contracts
+## Implemented — production connection boundary
 
-- [ ] **[MOB-100 — Add scoped mobile credential lifecycle and server identity](https://github.com/bext-stack/automonique-mobile/issues/2).**
-  - Blocked by: Automonique #112 server-owned issuance, refresh, expiry,
-    revocation, endpoint discovery, and stable identity contracts.
+- [x] **[MOB-100 — Add scoped mobile credential lifecycle and server identity](https://github.com/bext-stack/automonique-mobile/issues/2).**
+  - Delivered with the canonical server pairing and lifecycle contracts and the
+    production-only mobile composition root.
   - Acceptance: credentials are stored only in OS Secure Store; connection
     profiles contain no secret; identity mismatch, expiry, refresh failure, and
     revocation all become read-only before navigation.
-- [ ] **[MOB-101 — Consume actor-authorized capabilities and limits](https://github.com/bext-stack/automonique-mobile/issues/3).**
-  - Blocked by: Automonique #112 actor authorization contract.
+- [x] **[MOB-101 — Consume actor-authorized capabilities and limits](https://github.com/bext-stack/automonique-mobile/issues/3).**
+  - Delivered with server-enforced actor/session/action authorization and
+    client-side admission before operational navigation.
   - Acceptance: the signed-in actor, server identity, actions, and limits are
     negotiated and admitted before a live projection is exposed; method
     presence alone grants nothing.
-- [ ] **[MOB-102 — Consume sanitized remotely resumable history](https://github.com/bext-stack/automonique-mobile/issues/4).**
-  - Blocked by: Automonique #112 bounded session history/progress contract.
+- [x] **[MOB-102 — Consume sanitized remotely resumable history](https://github.com/bext-stack/automonique-mobile/issues/4).**
+  - Delivered with bounded history snapshot/page APIs, typed resync, and the
+    canonical high-level mobile session client.
   - Acceptance: attach resumes from the acknowledged cursor, cursor expiry
     requests a snapshot, raw provider/tool output never enters mobile, and all
     pages observe negotiated ceilings.
@@ -92,6 +94,8 @@ Remaining tracked work is grouped in the
     follow-up, approval, stop, reconnect, conflict, and ambiguous receipt
     recovery pass against a live authorized installation with no production
     data or deployment claim.
+  - External evidence gate: provide an approved non-production HTTPS origin,
+    an operator-authorized one-time pairing offer, and bounded test data.
 
 ## Native release readiness
 
@@ -117,7 +121,10 @@ Remaining tracked work is grouped in the
       rollback before any release.
   - [x] Add CODEOWNERS, PR policy, immutable workflow references, generated npm
         notices, release/signing/rollback guidance, and CI enforcement.
-  - [ ] Activate repository rules and independent approval once a second
+  - [x] Activate strict branch checks, administrator enforcement, linear
+        history, resolved conversations, force-push/deletion protection, and
+        immutable release-tag rules.
+  - [ ] Require an independent approval and CODEOWNERS review once a second
         qualified organization reviewer exists.
 
 ## Later
