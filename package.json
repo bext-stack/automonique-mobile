@@ -43,6 +43,7 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
+    "postinstall": "node scripts/harden-xcode-uuid.mjs",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
@@ -57,12 +58,18 @@
     "notices:generate": "node scripts/generate-third-party-notices.mjs",
     "notices:check": "node scripts/generate-third-party-notices.mjs --check",
     "native:verify": "node scripts/verify-native-policy.mjs",
+    "security:verify": "node scripts/harden-xcode-uuid.mjs --check",
     "production:verify": "node scripts/verify-production-boundary.mjs",
     "production:verify:bundle": "node scripts/verify-production-boundary.mjs --require-bundle",
     "audit:high": "npm audit --audit-level=high",
     "doctor": "expo-doctor",
     "bundle:platforms": "expo export --platform all --output-dir dist",
-    "validate": "npm run sdk:verify && npm run notices:check && npm run native:verify && npm run production:verify && npm run audit:high && npm run typecheck && npm run lint && npm run test:ci && npm run format:check && npm run doctor && npm run bundle:platforms && npm run production:verify:bundle"
+    "validate": "npm run sdk:verify && npm run notices:check && npm run security:verify && npm run native:verify && npm run production:verify && npm run audit:high && npm run typecheck && npm run lint && npm run test:ci && npm run format:check && npm run doctor && npm run bundle:platforms && npm run production:verify:bundle"
+  },
+  "overrides": {
+    "xcode": {
+      "uuid": "14.0.2"
+    }
   },
   "private": true,
   "jest": {
