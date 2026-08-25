@@ -651,7 +651,7 @@ function verifyArtifact() {
       name: CONFIG.artifactName,
       bytes: apkStat.size,
       sha256: sha256File(finalApk),
-      distribution: 'internal-non-production-android-preview',
+      distribution: 'public-non-production-android-preview',
       releaseCreated: false,
     },
     evidencePolicy: {
