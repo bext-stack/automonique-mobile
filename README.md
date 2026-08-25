@@ -31,8 +31,9 @@ npm run validate
 npm start
 ```
 
-`npm run validate` runs TypeScript, ESLint, Jest, Prettier, Expo Doctor, and
-Android/iOS/web export gates. Native EAS profiles are in `eas.json`; successful
+`npm run validate` verifies the pinned SDK, generated notices, native transport
+policy, dependency severity, TypeScript, ESLint, Jest, Prettier, Expo Doctor,
+and Android/iOS/web exports. Native EAS profiles are in `eas.json`; successful
 local exports do not claim that signed device binaries or store releases exist.
 
 ## Safety properties
@@ -50,7 +51,8 @@ local exports do not claim that signed device binaries or store releases exist.
 See the [product definition](docs/product.md),
 [architecture](docs/architecture.md), [decisions](docs/decisions.md),
 [delivery backlog](docs/backlog.md), and [roadmap](docs/roadmap.md). Security
-reports follow [SECURITY.md](SECURITY.md).
+reports follow [SECURITY.md](SECURITY.md); native build, signing, and rollback
+controls follow [release governance](docs/release-governance.md).
 
 ## License
 

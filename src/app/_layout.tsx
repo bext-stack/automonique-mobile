@@ -4,10 +4,12 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 
 import { MobileProvider } from '@/providers/mobile-provider';
+import { useReducedMotion } from '@/core/accessibility';
 import { usePalette } from '@/theme/palette';
 
 function Navigation() {
   const palette = usePalette();
+  const reducedMotion = useReducedMotion();
   return (
     <>
       <StatusBar style="auto" />
@@ -18,6 +20,7 @@ function Navigation() {
           headerTintColor: palette.text,
           headerShadowVisible: false,
           contentStyle: { backgroundColor: palette.background },
+          animation: reducedMotion ? 'none' : 'default',
         }}
       >
         <Stack.Screen name="index" options={{ title: 'Automonique' }} />

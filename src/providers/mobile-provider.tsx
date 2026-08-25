@@ -6,6 +6,7 @@ import {
   createContext,
   use,
   useEffect,
+  useRef,
   useState,
   type PropsWithChildren,
 } from 'react';
@@ -39,6 +40,7 @@ import { bootstrapVerticalSlice } from '@/core/vertical-slice';
 interface MobileContextValue {
   readonly snapshot: MobileSnapshot;
   readonly busyAction: string | null;
+  readonly projectionReady: boolean;
   readonly sendFollowUp: (
     session: SessionSummary,
     text: string,
@@ -48,6 +50,7 @@ interface MobileContextValue {
     decision: 'grant' | 'deny',
   ) => Promise<Receipt>;
   readonly stopRun: (session: SessionSummary) => Promise<Receipt>;
+  readonly refreshProjection: () => Promise<void>;
   readonly setConnectionPhase: (
     phase: Extract<ConnectionPhase, 'live' | 'stale'>,
   ) => void;
@@ -160,6 +163,15 @@ function recoveredReceipt(
   };
 }
 
+function isResyncError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'outcome' in error &&
+    (error as Error & { readonly outcome?: unknown }).outcome ===
+      'resync_required'
+  );
+}
+
 export function MobileProvider({
   children,
   gateway: providedGateway,
@@ -172,6 +184,62 @@ export function MobileProvider({
   const [cacheReady, setCacheReady] = useState(false);
   const [syntheticReady, setSyntheticReady] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const operationInFlight = useRef(false);
+
+  async function refreshProjection(): Promise<void> {
+    if (operationInFlight.current) return;
+    operationInFlight.current = true;
+    setBusyAction('refresh-projection');
+    setSyntheticReady(false);
+    setSnapshot((current) => ({
+      ...current,
+      connection: {
+        ...current.connection,
+        phase: 'reconnecting',
+        label: 'Reconnecting and validating projection',
+        mutationsAllowed: false,
+      },
+    }));
+    try {
+      let fresh: MobileSnapshot;
+      try {
+        fresh = await bootstrapVerticalSlice(gateway, snapshot);
+      } catch (error) {
+        if (!isResyncError(error)) throw error;
+        fresh = await bootstrapVerticalSlice(gateway);
+      }
+      if (
+        fresh.connection.phase === 'stale' &&
+        fresh.connection.label === 'Cursor resynchronization required'
+      ) {
+        fresh = await bootstrapVerticalSlice(gateway);
+      }
+      const recovered = await recoverPendingReceipts(gateway, pendingStore);
+      const withReceiptHistory = {
+        ...fresh,
+        receipts: snapshot.receipts.reduce(upsertReceipt, fresh.receipts),
+      };
+      setSnapshot(applyRecoveredReceipts(withReceiptHistory, recovered));
+      setCacheReady(true);
+      setSyntheticReady(fresh.connection.synthetic);
+    } catch (error) {
+      setSnapshot((current) => ({
+        ...current,
+        connection: {
+          ...current.connection,
+          phase: 'stale',
+          label:
+            error instanceof Error
+              ? `Reconnect failed · ${error.message}`
+              : 'Reconnect failed · read only',
+          mutationsAllowed: false,
+        },
+      }));
+    } finally {
+      setBusyAction(null);
+      operationInFlight.current = false;
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -278,6 +346,8 @@ export function MobileProvider({
     target: SessionSummary['target'],
     operation: (idempotencyKey: string) => Promise<Receipt>,
   ): Promise<Receipt> {
+    if (operationInFlight.current) throw new Error('operation_in_progress');
+    operationInFlight.current = true;
     const idempotencyKey = Crypto.randomUUID();
     setBusyAction(idempotencyKey);
     try {
@@ -289,6 +359,7 @@ export function MobileProvider({
       );
     } finally {
       setBusyAction(null);
+      operationInFlight.current = false;
     }
   }
 
@@ -436,9 +507,11 @@ export function MobileProvider({
       value={{
         snapshot,
         busyAction,
+        projectionReady: cacheReady,
         sendFollowUp,
         decideApproval,
         stopRun,
+        refreshProjection,
         setConnectionPhase,
       }}
     >

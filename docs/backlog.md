@@ -98,14 +98,27 @@ Remaining tracked work is grouped in the
 - [ ] **[MOB-200 — Run reproducible EAS Android and iOS simulator builds](https://github.com/bext-stack/automonique-mobile/issues/6).**
       Record immutable build references and verify cleartext/ATS policy in the
       generated native applications.
+  - [x] Pin the credential-free simulator profile and assert generated Android
+        and iOS transport policy from a clean prebuild.
+  - [ ] Link the authorized Expo project, run both EAS builds, and record build
+        IDs plus downloaded artifact hashes.
 - [ ] **[MOB-201 — Complete device accessibility and resilience passes](https://github.com/bext-stack/automonique-mobile/issues/7).**
       Verify VoiceOver, TalkBack, Dynamic Type, reduced motion, dark/light themes,
       reconnect, cursor expiry, interrupted mutation recovery, and destructive
       action announcements on both platforms.
+  - [x] Implement semantic controls, truthful action announcements,
+        reduced-motion navigation, scalable layouts, serialized reconnect, fresh
+        snapshot recovery after cursor expiry, and automated contract coverage.
+  - [ ] Record hands-on VoiceOver and TalkBack passes on authorized iOS and
+        Android devices/simulators.
 - [ ] **[MOB-202 — Add repository release governance](https://github.com/bext-stack/automonique-mobile/issues/8).** Require CI checks on
       `main`, add ownership/review rules, pin third-party actions and scanner images
       immutably, produce complete third-party notices, and document signing and
       rollback before any release.
+  - [x] Add CODEOWNERS, PR policy, immutable workflow references, generated npm
+        notices, release/signing/rollback guidance, and CI enforcement.
+  - [ ] Activate repository rules and independent approval once a second
+        qualified organization reviewer exists.
 
 ## Later
 

@@ -1,0 +1,11 @@
+# Every change requires an accountable owner. GitHub rules must separately
+# require CODEOWNERS review; see docs/release-governance.md.
+* @benfavre
+
+# Treat authority, delivery, and security controls as sensitive surfaces.
+/.github/ @benfavre
+/app.json @benfavre
+/eas.json @benfavre
+/SECURITY.md @benfavre
+/docs/release-governance.md @benfavre
+/src/core/ @benfavre

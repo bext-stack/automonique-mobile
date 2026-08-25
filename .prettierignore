@@ -2,3 +2,4 @@ dist
 .expo
 node_modules
 package-lock.json
+THIRD_PARTY_NOTICES.generated.md
