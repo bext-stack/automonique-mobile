@@ -121,6 +121,24 @@ jobs:
           test -x "$ANDROID_SDK_ROOT/emulator/emulator"
           test -f "$ANDROID_SDK_ROOT/system-images/android-36/google_apis/x86_64/source.properties"
 
+      - name: Install and record the Android emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update 2>&1 \
+            | tee "$PREVIEW_OUTPUT_DIR/ubuntu-apt-update.txt"
+          sudo apt-get install --yes --no-install-recommends libpulse0 2>&1 \
+            | tee "$PREVIEW_OUTPUT_DIR/ubuntu-emulator-runtime-install.txt"
+          dpkg-query --show --showformat='${Package}=${Version}\n' libpulse0 \
+            | tee "$PREVIEW_OUTPUT_DIR/ubuntu-emulator-runtime-packages.txt"
+          ldd "$ANDROID_SDK_ROOT/emulator/emulator" \
+            | tee "$PREVIEW_OUTPUT_DIR/android-emulator-ldd.txt"
+          if grep -F 'not found' "$PREVIEW_OUTPUT_DIR/android-emulator-ldd.txt"; then
+            exit 1
+          fi
+          "$ANDROID_SDK_ROOT/emulator/emulator" -version 2>&1 \
+            | tee "$PREVIEW_OUTPUT_DIR/android-emulator-version.txt"
+
       - name: Build the credential-free universal release APK
         shell: bash
         run: |
