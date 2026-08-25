@@ -2,38 +2,77 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+import {
+  MOBILE_AUTH_SCHEMA_V1,
+  MobileAccessToken,
+  MobileActor,
+  MobileCredentialId,
+  MobileEpochMillis,
+  MobileFollowUpBytes,
+  MobileHttpsOrigin,
+  MobilePageEvents,
+  MobilePlatformEndpoint,
+  MobileRefreshToken,
+  MobileRevision,
+  MobileServerIdentity,
+  MobileSessionId,
+  decodeMobileAction,
+  type IssuedMobileCredentials,
+  type MobileAction,
+  type MobileAuthorization,
+  type MobileDiscovery,
+} from '@automonique/sdk';
 
-import { normalizeEndpoint } from './network-policy';
-
-const PROFILE_KEY = 'automonique.mobile.connection-profile.v1';
-const CREDENTIAL_KEY = 'automonique.mobile.scoped-credential.v1';
-const PROFILE_SCHEMA = 'automonique.mobile.connection-profile/v2';
-const CREDENTIAL_SCHEMA = 'automonique.mobile.scoped-credential/v2';
-const MAX_ENDPOINT_LENGTH = 2048;
-const MAX_IDENTITY_BYTES = 256;
-const MAX_CREDENTIAL_LENGTH = 4096;
+const PROFILE_KEY = 'automonique.mobile.connection-profile.v3';
+const CREDENTIAL_KEY = 'automonique.mobile.scoped-credential.v3';
+const PROFILE_SCHEMA = 'automonique.mobile.connection-profile/v3';
+const CREDENTIAL_SCHEMA = 'automonique.mobile.scoped-credential/v3';
 
 export interface ConnectionProfile {
-  readonly endpoint: string;
-  readonly actor: string;
-  readonly credentialExpiresAt: string;
+  readonly origin: string;
+  readonly platformEndpoint: string;
   readonly serverIdentity: string;
+  readonly credentialId: string;
+  readonly actor: string;
+  readonly issuedAtMs: string;
+  readonly accessExpiresAtMs: string;
+  readonly authorizationRevision: string;
+  readonly credentialRevision: string;
+  readonly actions: readonly MobileAction[];
+  readonly sessionScope: readonly string[];
+  readonly maxPageEvents: number;
+  readonly maxFollowUpBytes: number;
 }
 
 export interface ScopedConnection {
   readonly profile: ConnectionProfile;
-  readonly credential: string;
+  readonly accessToken: string;
+  readonly refreshToken: string;
+  readonly authorization: MobileAuthorization;
 }
 
-interface PersistedProfile {
-  readonly schema: typeof PROFILE_SCHEMA;
-  readonly profile: ConnectionProfile;
-}
+export type StoredConnection =
+  | { readonly kind: 'active'; readonly connection: ScopedConnection }
+  | {
+      readonly kind: 'refresh_required';
+      readonly connection: ScopedConnection;
+    };
 
-interface PersistedCredential {
-  readonly schema: typeof CREDENTIAL_SCHEMA;
-  readonly profile: ConnectionProfile;
-  readonly credential: string;
+interface PersistedAuthorization {
+  readonly schema: typeof MOBILE_AUTH_SCHEMA_V1;
+  readonly actions: readonly string[];
+  readonly actor: string;
+  readonly authorization_revision: string;
+  readonly credential_id: string;
+  readonly credential_revision: string;
+  readonly expires_at_ms: string;
+  readonly issued_at_ms: string;
+  readonly limits: {
+    readonly max_follow_up_bytes: string;
+    readonly max_page_events: string;
+  };
+  readonly server_identity: string;
+  readonly session_scope: readonly string[];
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -51,98 +90,196 @@ function hasExactKeys(
   );
 }
 
-function isWellFormedUnicode(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const unit = value.charCodeAt(index);
-    if (unit >= 0xd800 && unit <= 0xdbff) {
-      const trailing = value.charCodeAt(index + 1);
-      if (!(trailing >= 0xdc00 && trailing <= 0xdfff)) return false;
-      index += 1;
-    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function boundedIdentity(value: unknown): string {
+function exactDecimal(value: unknown, allowZero: boolean): bigint {
   if (
     typeof value !== 'string' ||
-    value.length === 0 ||
-    !isWellFormedUnicode(value) ||
-    !/^[^\p{Cc}]+$/u.test(value) ||
-    new TextEncoder().encode(value).byteLength > MAX_IDENTITY_BYTES
+    !(allowZero ? /^(?:0|[1-9][0-9]*)$/u : /^[1-9][0-9]*$/u).test(value)
   ) {
-    throw new Error('connection_profile_invalid');
+    throw new Error('persisted_connection_invalid');
   }
-  return value;
+  return BigInt(value);
 }
 
-function canonicalExpiry(value: unknown, now: number): string {
-  if (
-    !Number.isFinite(now) ||
-    typeof value !== 'string' ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)
-  ) {
-    throw new Error('credential_expiry_invalid');
-  }
-  const expiresAt = Date.parse(value);
-  const canonical = Number.isFinite(expiresAt)
-    ? new Date(expiresAt).toISOString()
-    : null;
-  const inputWithMillis = value.includes('.')
-    ? value
-    : value.replace(/Z$/u, '.000Z');
-  if (canonical !== inputWithMillis || expiresAt <= now) {
-    throw new Error('credential_expired');
-  }
-  return canonical;
-}
-
-function admitProfile(value: unknown, now: number): ConnectionProfile {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
-      'endpoint',
-      'actor',
-      'credentialExpiresAt',
-      'serverIdentity',
-    ]) ||
-    typeof value.endpoint !== 'string' ||
-    value.endpoint.length > MAX_ENDPOINT_LENGTH
-  ) {
-    throw new Error('connection_profile_invalid');
-  }
+function persistAuthorization(
+  authorization: MobileAuthorization,
+): PersistedAuthorization {
   return {
-    endpoint: normalizeEndpoint(value.endpoint, false),
-    actor: boundedIdentity(value.actor),
-    credentialExpiresAt: canonicalExpiry(value.credentialExpiresAt, now),
-    serverIdentity: boundedIdentity(value.serverIdentity),
+    schema: MOBILE_AUTH_SCHEMA_V1,
+    actions: authorization.actions,
+    actor: authorization.actor,
+    authorization_revision: authorization.authorization_revision.toString(),
+    credential_id: authorization.credential_id,
+    credential_revision: authorization.credential_revision.toString(),
+    expires_at_ms: authorization.expires_at_ms.toString(),
+    issued_at_ms: authorization.issued_at_ms.toString(),
+    limits: {
+      max_follow_up_bytes: authorization.limits.max_follow_up_bytes.toString(),
+      max_page_events: authorization.limits.max_page_events.toString(),
+    },
+    server_identity: authorization.server_identity,
+    session_scope: authorization.session_scope,
   };
 }
 
-function admitCredential(value: unknown): string {
+function admitAuthorization(value: unknown): MobileAuthorization {
   if (
-    typeof value !== 'string' ||
-    value.length === 0 ||
-    value.length > MAX_CREDENTIAL_LENGTH ||
-    !/^[\x21-\x7e]+$/u.test(value)
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schema',
+      'actions',
+      'actor',
+      'authorization_revision',
+      'credential_id',
+      'credential_revision',
+      'expires_at_ms',
+      'issued_at_ms',
+      'limits',
+      'server_identity',
+      'session_scope',
+    ]) ||
+    value.schema !== MOBILE_AUTH_SCHEMA_V1 ||
+    !Array.isArray(value.actions) ||
+    !Array.isArray(value.session_scope) ||
+    !isRecord(value.limits) ||
+    !hasExactKeys(value.limits, ['max_follow_up_bytes', 'max_page_events']) ||
+    typeof value.actor !== 'string' ||
+    typeof value.credential_id !== 'string' ||
+    typeof value.server_identity !== 'string' ||
+    value.actions.some((action) => typeof action !== 'string') ||
+    value.session_scope.some((session) => typeof session !== 'string')
   ) {
-    throw new Error('credential_invalid');
+    throw new Error('persisted_connection_invalid');
   }
-  return value;
+  const actions = value.actions.map((action) =>
+    decodeMobileAction(action as string),
+  );
+  const sessionScope = value.session_scope.map((session) =>
+    MobileSessionId(session as string),
+  );
+  if (
+    actions.length === 0 ||
+    new Set(actions).size !== actions.length ||
+    new Set(sessionScope).size !== sessionScope.length
+  ) {
+    throw new Error('persisted_connection_invalid');
+  }
+  const authorization: MobileAuthorization = {
+    schema: MOBILE_AUTH_SCHEMA_V1,
+    actions,
+    actor: MobileActor(value.actor),
+    authorization_revision: MobileRevision(
+      exactDecimal(value.authorization_revision, false),
+    ),
+    credential_id: MobileCredentialId(value.credential_id),
+    credential_revision: MobileRevision(
+      exactDecimal(value.credential_revision, false),
+    ),
+    expires_at_ms: MobileEpochMillis(exactDecimal(value.expires_at_ms, true)),
+    issued_at_ms: MobileEpochMillis(exactDecimal(value.issued_at_ms, true)),
+    limits: {
+      max_follow_up_bytes: MobileFollowUpBytes(
+        exactDecimal(value.limits.max_follow_up_bytes, false),
+      ),
+      max_page_events: MobilePageEvents(
+        exactDecimal(value.limits.max_page_events, false),
+      ),
+    },
+    server_identity: MobileServerIdentity(value.server_identity),
+    session_scope: sessionScope,
+  };
+  if (authorization.issued_at_ms >= authorization.expires_at_ms) {
+    throw new Error('persisted_connection_invalid');
+  }
+  return authorization;
+}
+
+function profileFor(
+  discovery: Pick<MobileDiscovery, 'origin' | 'platform_endpoint'>,
+  authorization: MobileAuthorization,
+): ConnectionProfile {
+  return {
+    origin: discovery.origin,
+    platformEndpoint: discovery.platform_endpoint,
+    serverIdentity: authorization.server_identity,
+    credentialId: authorization.credential_id,
+    actor: authorization.actor,
+    issuedAtMs: authorization.issued_at_ms.toString(),
+    accessExpiresAtMs: authorization.expires_at_ms.toString(),
+    authorizationRevision: authorization.authorization_revision.toString(),
+    credentialRevision: authorization.credential_revision.toString(),
+    actions: authorization.actions,
+    sessionScope: authorization.session_scope,
+    maxPageEvents: Number(authorization.limits.max_page_events),
+    maxFollowUpBytes: Number(authorization.limits.max_follow_up_bytes),
+  };
+}
+
+function admitProfile(value: unknown): ConnectionProfile {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'origin',
+      'platformEndpoint',
+      'serverIdentity',
+      'credentialId',
+      'actor',
+      'issuedAtMs',
+      'accessExpiresAtMs',
+      'authorizationRevision',
+      'credentialRevision',
+      'actions',
+      'sessionScope',
+      'maxPageEvents',
+      'maxFollowUpBytes',
+    ]) ||
+    typeof value.origin !== 'string' ||
+    typeof value.platformEndpoint !== 'string' ||
+    typeof value.serverIdentity !== 'string' ||
+    typeof value.credentialId !== 'string' ||
+    typeof value.actor !== 'string' ||
+    typeof value.issuedAtMs !== 'string' ||
+    typeof value.accessExpiresAtMs !== 'string' ||
+    typeof value.authorizationRevision !== 'string' ||
+    typeof value.credentialRevision !== 'string' ||
+    !Array.isArray(value.actions) ||
+    !Array.isArray(value.sessionScope) ||
+    !Number.isInteger(value.maxPageEvents) ||
+    !Number.isInteger(value.maxFollowUpBytes)
+  ) {
+    throw new Error('persisted_connection_invalid');
+  }
+  const authorization = admitAuthorization({
+    schema: MOBILE_AUTH_SCHEMA_V1,
+    actions: value.actions,
+    actor: value.actor,
+    authorization_revision: value.authorizationRevision,
+    credential_id: value.credentialId,
+    credential_revision: value.credentialRevision,
+    expires_at_ms: value.accessExpiresAtMs,
+    issued_at_ms: value.issuedAtMs,
+    limits: {
+      max_follow_up_bytes: String(value.maxFollowUpBytes),
+      max_page_events: String(value.maxPageEvents),
+    },
+    server_identity: value.serverIdentity,
+    session_scope: value.sessionScope,
+  });
+  const origin = MobileHttpsOrigin(value.origin);
+  const platformEndpoint = MobilePlatformEndpoint(value.platformEndpoint);
+  if (platformEndpoint !== `${origin}/api/platform`) {
+    throw new Error('persisted_connection_invalid');
+  }
+  return profileFor(
+    { origin, platform_endpoint: platformEndpoint },
+    authorization,
+  );
 }
 
 function sameProfile(
   left: ConnectionProfile,
   right: ConnectionProfile,
 ): boolean {
-  return (
-    left.endpoint === right.endpoint &&
-    left.actor === right.actor &&
-    left.credentialExpiresAt === right.credentialExpiresAt &&
-    left.serverIdentity === right.serverIdentity
-  );
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 async function secureStoreAvailable(): Promise<boolean> {
@@ -171,113 +308,188 @@ async function removePersistedConnection(): Promise<void> {
 }
 
 async function removePersistedConnectionBestEffort(): Promise<void> {
-  try {
-    await removePersistedConnection();
-  } catch {
-    // Admission has failed, so cleanup errors cannot make this pair usable.
-  }
+  await removePersistedConnection().catch(() => undefined);
 }
 
-export async function saveConnectionProfile(
-  profile: ConnectionProfile,
-  credential: string,
+/** Commit a newly issued or rotated access/refresh pair as one local generation. */
+export async function saveIssuedConnection(
+  discovery: Pick<
+    MobileDiscovery,
+    'origin' | 'platform_endpoint' | 'server_identity'
+  >,
+  issued: IssuedMobileCredentials,
   now = Date.now(),
-): Promise<void> {
-  const normalized = admitProfile(profile, now);
-  const admittedCredential = admitCredential(credential);
-  if (!(await secureStoreAvailable())) {
+  previous?: ScopedConnection,
+): Promise<ScopedConnection> {
+  if (!(await secureStoreAvailable()))
     throw new Error('secure_store_unavailable');
+  let authorization: MobileAuthorization;
+  try {
+    authorization = admitAuthorization(
+      persistAuthorization(issued.authorization),
+    );
+  } catch (error) {
+    throw new Error('issued_connection_mismatch', { cause: error });
   }
-  const persistedProfile: PersistedProfile = {
-    schema: PROFILE_SCHEMA,
-    profile: normalized,
-  };
-  const persistedCredential: PersistedCredential = {
+  if (
+    discovery.server_identity !== authorization.server_identity ||
+    authorization.issued_at_ms > BigInt(now) ||
+    authorization.expires_at_ms <= BigInt(now) ||
+    (previous !== undefined &&
+      (discovery.origin !== previous.profile.origin ||
+        discovery.platform_endpoint !== previous.profile.platformEndpoint ||
+        discovery.server_identity !== previous.profile.serverIdentity ||
+        authorization.credential_id !== previous.authorization.credential_id ||
+        authorization.credential_revision <=
+          previous.authorization.credential_revision ||
+        authorization.authorization_revision <
+          previous.authorization.authorization_revision ||
+        (authorization.authorization_revision ===
+          previous.authorization.authorization_revision &&
+          JSON.stringify({
+            actor: authorization.actor,
+            actions: authorization.actions,
+            sessionScope: authorization.session_scope,
+            limits: {
+              maxPageEvents: authorization.limits.max_page_events.toString(),
+              maxFollowUpBytes:
+                authorization.limits.max_follow_up_bytes.toString(),
+            },
+          }) !==
+            JSON.stringify({
+              actor: previous.authorization.actor,
+              actions: previous.authorization.actions,
+              sessionScope: previous.authorization.session_scope,
+              limits: {
+                maxPageEvents:
+                  previous.authorization.limits.max_page_events.toString(),
+                maxFollowUpBytes:
+                  previous.authorization.limits.max_follow_up_bytes.toString(),
+              },
+            }))))
+  ) {
+    throw new Error('issued_connection_mismatch');
+  }
+  const accessToken = MobileAccessToken(issued.access_token);
+  const refreshToken = MobileRefreshToken(issued.refresh_token);
+  const profile = profileFor(discovery, authorization);
+  const publicValue = { schema: PROFILE_SCHEMA, profile } as const;
+  const privateValue = {
     schema: CREDENTIAL_SCHEMA,
-    profile: normalized,
-    credential: admittedCredential,
-  };
+    profile,
+    accessToken,
+    refreshToken,
+    authorization: persistAuthorization(authorization),
+  } as const;
 
-  // Remove the public half before rotating the token. An interruption leaves
-  // no pair or two halves with different embedded profiles; both are refused.
+  // The secure record is the generation commit. Removing the public mirror
+  // first prevents an interrupted rotation from exposing a mismatched pair.
   await AsyncStorage.removeItem(PROFILE_KEY);
   try {
     await SecureStore.setItemAsync(
       CREDENTIAL_KEY,
-      JSON.stringify(persistedCredential),
-      { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY },
+      JSON.stringify(privateValue),
+      {
+        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+      },
     );
   } catch (error) {
     await removePersistedConnectionBestEffort();
     throw error;
   }
-  try {
-    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(persistedProfile));
-  } catch (error) {
-    await removePersistedConnectionBestEffort();
-    throw error;
-  }
+  // The secure generation is authoritative. A missing or stale non-secret
+  // mirror is repaired on the next load and must never destroy a rotated token.
+  await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(publicValue)).catch(
+    () => undefined,
+  );
+  return { profile, accessToken, refreshToken, authorization };
 }
 
-/** Load the profile and bearer token as one admitted, non-expired pair. */
-export async function loadScopedConnection(
+/** Load an admitted pair without discarding an expired access token's refresh path. */
+export async function loadStoredConnection(
   now = Date.now(),
-): Promise<ScopedConnection | null> {
+): Promise<StoredConnection | null> {
   if (!(await secureStoreAvailable())) {
-    try {
-      await AsyncStorage.removeItem(PROFILE_KEY);
-    } catch {
-      // The unavailable secure boundary still makes the connection unusable.
-    }
+    await AsyncStorage.removeItem(PROFILE_KEY).catch(() => undefined);
     return null;
   }
-
   const [profileJson, credentialJson] = await Promise.all([
     AsyncStorage.getItem(PROFILE_KEY),
     SecureStore.getItemAsync(CREDENTIAL_KEY),
   ]);
-  if (profileJson === null && credentialJson === null) return null;
+  if (credentialJson === null) {
+    await AsyncStorage.removeItem(PROFILE_KEY).catch(() => undefined);
+    return null;
+  }
 
   try {
-    const persistedProfile: unknown =
-      profileJson === null ? null : JSON.parse(profileJson);
-    const persistedCredential: unknown =
-      credentialJson === null ? null : JSON.parse(credentialJson);
+    const privateValue: unknown = JSON.parse(credentialJson);
     if (
-      !isRecord(persistedProfile) ||
-      !hasExactKeys(persistedProfile, ['schema', 'profile']) ||
-      persistedProfile.schema !== PROFILE_SCHEMA ||
-      !isRecord(persistedCredential) ||
-      !hasExactKeys(persistedCredential, ['schema', 'profile', 'credential']) ||
-      persistedCredential.schema !== CREDENTIAL_SCHEMA
+      !isRecord(privateValue) ||
+      !hasExactKeys(privateValue, [
+        'schema',
+        'profile',
+        'accessToken',
+        'refreshToken',
+        'authorization',
+      ]) ||
+      privateValue.schema !== CREDENTIAL_SCHEMA ||
+      typeof privateValue.accessToken !== 'string' ||
+      typeof privateValue.refreshToken !== 'string'
     ) {
       throw new Error('persisted_connection_invalid');
     }
-    const publicProfile = admitProfile(persistedProfile.profile, now);
-    const privateProfile = admitProfile(persistedCredential.profile, now);
-    const credential = admitCredential(persistedCredential.credential);
-    if (!sameProfile(publicProfile, privateProfile)) {
+    const privateProfile = admitProfile(privateValue.profile);
+    const authorization = admitAuthorization(privateValue.authorization);
+    const expectedProfile = profileFor(
+      {
+        origin: MobileHttpsOrigin(privateProfile.origin),
+        platform_endpoint: MobilePlatformEndpoint(
+          privateProfile.platformEndpoint,
+        ),
+      },
+      authorization,
+    );
+    if (
+      !sameProfile(privateProfile, expectedProfile) ||
+      authorization.issued_at_ms > BigInt(now)
+    ) {
       throw new Error('persisted_connection_mismatch');
     }
-    return { profile: publicProfile, credential };
+    let publicProfile: ConnectionProfile | null = null;
+    if (profileJson !== null) {
+      try {
+        const publicValue: unknown = JSON.parse(profileJson);
+        if (
+          isRecord(publicValue) &&
+          hasExactKeys(publicValue, ['schema', 'profile']) &&
+          publicValue.schema === PROFILE_SCHEMA
+        ) {
+          publicProfile = admitProfile(publicValue.profile);
+        }
+      } catch {
+        // The private generation below remains authoritative.
+      }
+    }
+    if (publicProfile === null || !sameProfile(publicProfile, privateProfile)) {
+      await AsyncStorage.setItem(
+        PROFILE_KEY,
+        JSON.stringify({ schema: PROFILE_SCHEMA, profile: privateProfile }),
+      ).catch(() => undefined);
+    }
+    const connection: ScopedConnection = {
+      profile: privateProfile,
+      accessToken: MobileAccessToken(privateValue.accessToken),
+      refreshToken: MobileRefreshToken(privateValue.refreshToken),
+      authorization,
+    };
+    return authorization.expires_at_ms <= BigInt(now)
+      ? { kind: 'refresh_required', connection }
+      : { kind: 'active', connection };
   } catch {
     await removePersistedConnectionBestEffort();
     return null;
   }
-}
-
-/** Prefer loadScopedConnection when both values will be used for networking. */
-export async function loadConnectionProfile(
-  now = Date.now(),
-): Promise<ConnectionProfile | null> {
-  return (await loadScopedConnection(now))?.profile ?? null;
-}
-
-/** Prefer loadScopedConnection when both values will be used for networking. */
-export async function loadScopedCredential(
-  now = Date.now(),
-): Promise<string | null> {
-  return (await loadScopedConnection(now))?.credential ?? null;
 }
 
 export function revokeLocalCredential(): Promise<void> {

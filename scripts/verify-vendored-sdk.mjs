@@ -4,7 +4,13 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { SCHEMA_DIGEST } from '@automonique/sdk';
+import {
+  MOBILE_AUTH_SCHEMA_V1,
+  MobileLifecycleClient,
+  MobileSessionClient,
+  SCHEMA_DIGEST,
+  mobilePlatformClientId,
+} from '@automonique/sdk';
 
 const root = process.cwd();
 const manifest = JSON.parse(
@@ -26,7 +32,11 @@ if (
   archiveSha256 !== manifest.archiveSha256 ||
   `sha256:${SCHEMA_DIGEST}` !== manifest.schemaDigest ||
   installed.automonique?.schemaDigest !== manifest.schemaDigest ||
-  installed.license !== 'Apache-2.0'
+  installed.license !== 'Apache-2.0' ||
+  MOBILE_AUTH_SCHEMA_V1 !== 'automonique.mobile-auth/v1' ||
+  typeof MobileLifecycleClient !== 'function' ||
+  typeof MobileSessionClient !== 'function' ||
+  typeof mobilePlatformClientId !== 'function'
 ) {
   throw new Error('vendored_automonique_sdk_verification_failed');
 }

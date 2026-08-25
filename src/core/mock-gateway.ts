@@ -19,11 +19,13 @@ function makeReceipt(
   action: Receipt['action'],
 ): Receipt {
   const target =
-    'session' in command
+    action === 'follow_up'
       ? command.session
       : 'approval' in command
         ? command.approval
-        : command.run;
+        : 'run' in command
+          ? command.run
+          : command.session;
   return {
     id: `receipt-${command.idempotencyKey}`,
     idempotencyKey: command.idempotencyKey,
@@ -137,6 +139,7 @@ export function createMockGateway(): MobileAutomoniqueGateway {
       const current = approvals.get(command.approval.coordinate.id);
       if (
         !current ||
+        JSON.stringify(current.session) !== JSON.stringify(command.session) ||
         JSON.stringify(current.target) !== JSON.stringify(command.approval)
       ) {
         throw new Error('approval_revision_conflict');
@@ -155,6 +158,7 @@ export function createMockGateway(): MobileAutomoniqueGateway {
       );
       if (
         !current?.run ||
+        JSON.stringify(current.target) !== JSON.stringify(command.session) ||
         JSON.stringify(current.run) !== JSON.stringify(command.run)
       ) {
         throw new Error('run_revision_conflict');
@@ -169,9 +173,16 @@ export function createMockGateway(): MobileAutomoniqueGateway {
       return remember(receipt, command.idempotencyKey, fingerprint);
     },
 
-    async reconcile(idempotencyKey) {
-      const receipt = receipts.get(idempotencyKey);
+    async reconcile(request) {
+      const receipt = receipts.get(request.idempotencyKey);
       if (!receipt) throw new Error('receipt_unknown');
+      if (
+        receipt.action !== request.action ||
+        JSON.stringify(receipt.target) !==
+          JSON.stringify(request.target.coordinate)
+      ) {
+        throw new Error('receipt_reconciliation_mismatch');
+      }
       return receipt;
     },
   };

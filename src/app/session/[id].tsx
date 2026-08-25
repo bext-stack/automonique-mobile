@@ -22,13 +22,16 @@ import {
 import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
 
-function draftKey(id: string): string {
-  return `automonique.mobile.draft.v1:${id}`;
+function draftKey(id: string, scope: string | null): string {
+  return scope === null
+    ? `automonique.mobile.draft.v1:${id}`
+    : `automonique.mobile.draft.v1:${scope}:${id}`;
 }
 
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { snapshot, busyAction, sendFollowUp, stopRun } = useMobile();
+  const { snapshot, storageScope, busyAction, sendFollowUp, stopRun } =
+    useMobile();
   const palette = usePalette();
   const [draft, setDraft] = useState('');
   const [loadedDraftKey, setLoadedDraftKey] = useState<string | null>(null);
@@ -47,7 +50,7 @@ export default function SessionScreen() {
     if (!id) return;
     let active = true;
     void (async () => {
-      const key = draftKey(id);
+      const key = draftKey(id, storageScope);
       let value: string | null;
       try {
         value = await AsyncStorage.getItem(key);
@@ -71,18 +74,18 @@ export default function SessionScreen() {
     return () => {
       active = false;
     };
-  }, [followUpLimit, id]);
+  }, [followUpLimit, id, storageScope]);
 
   useEffect(() => {
     if (!id) return;
-    const key = draftKey(id);
+    const key = draftKey(id, storageScope);
     if (loadedDraftKey !== key) return;
     if (new TextEncoder().encode(draft).byteLength <= followUpLimit) {
       void AsyncStorage.setItem(key, draft).catch(() => undefined);
     } else {
       void AsyncStorage.removeItem(key).catch(() => undefined);
     }
-  }, [draft, followUpLimit, id, loadedDraftKey]);
+  }, [draft, followUpLimit, id, loadedDraftKey, storageScope]);
 
   if (!session) {
     return (
@@ -117,7 +120,7 @@ export default function SessionScreen() {
       );
       setDraft('');
       await AsyncStorage.removeItem(
-        draftKey(session!.target.coordinate.id),
+        draftKey(session!.target.coordinate.id, storageScope),
       ).catch(() => undefined);
     } catch (error) {
       Alert.alert(

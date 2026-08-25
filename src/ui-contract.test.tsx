@@ -16,6 +16,14 @@ const mockUseMobile = jest.fn();
 jest.mock('@/providers/mobile-provider', () => ({
   useMobile: () => mockUseMobile(),
 }));
+jest.mock('@/providers/production-mobile-provider', () => ({
+  useMobileLifecycle: () => ({
+    state: { phase: 'unpaired', profile: null },
+    refreshCredential: jest.fn(),
+    revokeCredential: jest.fn(),
+    pair: jest.fn(),
+  }),
+}));
 
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ id: 'session-synthetic-001' }),
@@ -39,6 +47,7 @@ function mobileValue(
   },
 ) {
   return {
+    storageScope: null,
     snapshot: {
       ...syntheticSnapshot,
       connection: {

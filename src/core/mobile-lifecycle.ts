@@ -1,0 +1,509 @@
+// SPDX-License-Identifier: Elastic-2.0
+
+import {
+  MobileLifecycleClient,
+  MobileLifecycleError,
+  type IssuedMobileCredentials,
+  type MobileDiscovery,
+  type MobilePairingOffer,
+} from '@automonique/sdk';
+
+import {
+  loadStoredConnection,
+  revokeLocalCredential,
+  saveIssuedConnection,
+  type ConnectionProfile,
+  type ScopedConnection,
+} from './credential-store';
+import { createAuthorizedHttpsGateway } from './sdk-gateway';
+import type { MobileAutomoniqueGateway } from './types';
+
+export type MobileLifecycleState =
+  | { readonly phase: 'loading'; readonly profile: null }
+  | { readonly phase: 'unpaired'; readonly profile: null }
+  | { readonly phase: 'pairing'; readonly profile: null }
+  | { readonly phase: 'ready'; readonly profile: ConnectionProfile }
+  | { readonly phase: 'refresh_required'; readonly profile: ConnectionProfile }
+  | { readonly phase: 'refreshing'; readonly profile: ConnectionProfile }
+  | { readonly phase: 'revoking'; readonly profile: ConnectionProfile }
+  | {
+      readonly phase: 'recovery_required';
+      readonly profile: ConnectionProfile | null;
+      readonly reason: string;
+    };
+
+interface LifecycleClient {
+  readonly discovery: MobileDiscovery;
+  refresh(
+    refreshToken: string,
+    signal?: AbortSignal,
+  ): Promise<IssuedMobileCredentials>;
+  revoke(refreshToken: string, signal?: AbortSignal): Promise<unknown>;
+  exchangePairing?(
+    request: {
+      readonly pairing_id: MobilePairingOffer['pairing_id'];
+      readonly pairing_token: MobilePairingOffer['pairing_token'];
+      readonly server_identity: MobilePairingOffer['server_identity'];
+    },
+    signal?: AbortSignal,
+  ): Promise<IssuedMobileCredentials>;
+}
+
+export interface MobileLifecycleDependencies {
+  readonly discover?: (
+    origin: string,
+    fetcher: typeof fetch,
+    signal: AbortSignal | undefined,
+    expectedServerIdentity: string | undefined,
+  ) => Promise<LifecycleClient>;
+  readonly fetcher?: typeof fetch;
+  readonly now?: () => number;
+}
+
+type Listener = (state: MobileLifecycleState) => void;
+
+const PAIRING_LIFETIME_MS = 5 * 60 * 1_000;
+
+function failureReason(error: unknown): string {
+  if (error instanceof MobileLifecycleError) return error.category;
+  return error instanceof Error ? error.message : 'mobile_lifecycle_failed';
+}
+
+function refreshIsRejected(error: unknown): boolean {
+  return (
+    error instanceof MobileLifecycleError &&
+    (error.status === 401 || error.status === 403 || error.status === 410)
+  );
+}
+
+function gatewayFingerprint(connection: ScopedConnection): string {
+  const authorization = connection.authorization;
+  return JSON.stringify({
+    serverIdentity: authorization.server_identity,
+    credentialId: authorization.credential_id,
+    credentialRevision: authorization.credential_revision.toString(),
+    authorizationRevision: authorization.authorization_revision.toString(),
+    actor: authorization.actor,
+    actions: authorization.actions,
+    sessionScope: authorization.session_scope,
+    maxPageEvents: authorization.limits.max_page_events.toString(),
+    maxFollowUpBytes: authorization.limits.max_follow_up_bytes.toString(),
+  });
+}
+
+/**
+ * Process-wide owner for the rotating credential generation. It serializes
+ * refresh, aborts stale network work on replacement/revocation, and never
+ * exposes access or refresh tokens through its observable state.
+ */
+export class MobileLifecycleCoordinator {
+  private readonly discover: NonNullable<
+    MobileLifecycleDependencies['discover']
+  >;
+  private readonly fetcher: typeof fetch;
+  private readonly now: () => number;
+  private readonly listeners = new Set<Listener>();
+  private state: MobileLifecycleState = { phase: 'loading', profile: null };
+  private connection: ScopedConnection | null = null;
+  private refreshInFlight: Promise<ScopedConnection> | null = null;
+  private operationTail: Promise<void> = Promise.resolve();
+  private replacementPending = 0;
+  private generation = 0;
+  private activeController: AbortController | null = null;
+  private expiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(dependencies: MobileLifecycleDependencies = {}) {
+    this.discover = dependencies.discover ?? MobileLifecycleClient.discover;
+    this.fetcher = dependencies.fetcher ?? fetch;
+    this.now = dependencies.now ?? Date.now;
+  }
+
+  snapshot(): MobileLifecycleState {
+    return this.state;
+  }
+
+  subscribe(listener: Listener): () => void {
+    this.listeners.add(listener);
+    listener(this.state);
+    return () => this.listeners.delete(listener);
+  }
+
+  private publish(state: MobileLifecycleState): void {
+    this.state = state;
+    for (const listener of this.listeners) listener(state);
+  }
+
+  private clearExpiryTimer(): void {
+    if (this.expiryTimer !== null) clearTimeout(this.expiryTimer);
+    this.expiryTimer = null;
+  }
+
+  private publishCredentialState(connection: ScopedConnection): void {
+    this.clearExpiryTimer();
+    const remaining =
+      Number(connection.authorization.expires_at_ms) - this.now();
+    if (remaining <= 0) {
+      this.publish({
+        phase: 'refresh_required',
+        profile: connection.profile,
+      });
+      return;
+    }
+    this.publish({ phase: 'ready', profile: connection.profile });
+    this.expiryTimer = setTimeout(
+      () => {
+        this.expiryTimer = null;
+        if (this.connection === connection && this.state.phase === 'ready') {
+          this.activeController?.abort();
+          this.publish({
+            phase: 'refresh_required',
+            profile: connection.profile,
+          });
+        }
+      },
+      Math.min(remaining, 2_147_483_647),
+    );
+    const timer = this.expiryTimer as unknown as { unref?: () => void };
+    timer.unref?.();
+  }
+
+  /** Revalidate local expiry whenever the app returns to the foreground. */
+  validateCurrentAuthorization(): MobileLifecycleState {
+    if (this.connection !== null && this.state.phase === 'ready') {
+      this.publishCredentialState(this.connection);
+    }
+    return this.state;
+  }
+
+  private replaceGeneration(): {
+    readonly generation: number;
+    readonly signal: AbortSignal;
+  } {
+    this.clearExpiryTimer();
+    this.activeController?.abort();
+    this.activeController = new AbortController();
+    this.generation += 1;
+    return {
+      generation: this.generation,
+      signal: this.activeController.signal,
+    };
+  }
+
+  private isCurrent(generation: number): boolean {
+    return generation === this.generation;
+  }
+
+  private async exclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.operationTail;
+    let release!: () => void;
+    this.operationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  private async replacing<T>(operation: () => Promise<T>): Promise<T> {
+    this.replacementPending += 1;
+    this.activeController?.abort();
+    try {
+      return await this.exclusive(operation);
+    } finally {
+      this.replacementPending -= 1;
+    }
+  }
+
+  async hydrate(): Promise<MobileLifecycleState> {
+    return this.replacing(() => this.hydrateExclusive());
+  }
+
+  private async hydrateExclusive(): Promise<MobileLifecycleState> {
+    const operation = this.replaceGeneration();
+    this.publish({ phase: 'loading', profile: null });
+    let stored: Awaited<ReturnType<typeof loadStoredConnection>>;
+    try {
+      stored = await loadStoredConnection(this.now());
+    } catch (error) {
+      if (this.isCurrent(operation.generation)) {
+        this.connection = null;
+        this.publish({
+          phase: 'recovery_required',
+          profile: null,
+          reason: failureReason(error),
+        });
+      }
+      return this.state;
+    }
+    if (!this.isCurrent(operation.generation)) return this.state;
+    if (stored === null) {
+      this.connection = null;
+      this.publish({ phase: 'unpaired', profile: null });
+      return this.state;
+    }
+    this.connection = stored.connection;
+    if (stored.kind === 'active') {
+      this.publishCredentialState(stored.connection);
+    } else {
+      this.publish({
+        phase: 'refresh_required',
+        profile: stored.connection.profile,
+      });
+    }
+    return this.state;
+  }
+
+  /** Exchange one strict copy-safe offer without persisting its pairing proof. */
+  async pair(offer: MobilePairingOffer): Promise<ConnectionProfile> {
+    return this.replacing(() => this.pairExclusive(offer));
+  }
+
+  private async pairExclusive(
+    offer: MobilePairingOffer,
+  ): Promise<ConnectionProfile> {
+    if (this.connection !== null) throw new Error('mobile_already_paired');
+    if (offer.expires_at_ms <= BigInt(this.now())) {
+      throw new Error('mobile_pairing_expired');
+    }
+    if (offer.expires_at_ms > BigInt(this.now() + PAIRING_LIFETIME_MS)) {
+      throw new Error('mobile_pairing_lifetime_invalid');
+    }
+    const operation = this.replaceGeneration();
+    this.publish({ phase: 'pairing', profile: null });
+    let exchanged = false;
+    try {
+      const client = await this.discover(
+        offer.origin,
+        this.fetcher,
+        operation.signal,
+        offer.server_identity,
+      );
+      if (
+        client.discovery.pairing_exchange_endpoint !==
+          offer.exchange_endpoint ||
+        client.exchangePairing === undefined
+      ) {
+        throw new Error('mobile_pairing_discovery_mismatch');
+      }
+      const issued = await client.exchangePairing(
+        {
+          pairing_id: offer.pairing_id,
+          pairing_token: offer.pairing_token,
+          server_identity: offer.server_identity,
+        },
+        operation.signal,
+      );
+      exchanged = true;
+      const connection = await saveIssuedConnection(
+        client.discovery,
+        issued,
+        this.now(),
+      );
+      if (!this.isCurrent(operation.generation)) {
+        throw new Error('mobile_lifecycle_generation_replaced');
+      }
+      this.connection = connection;
+      this.publishCredentialState(connection);
+      return connection.profile;
+    } catch (error) {
+      if (this.isCurrent(operation.generation)) {
+        this.connection = null;
+        this.publish(
+          exchanged
+            ? {
+                phase: 'recovery_required',
+                profile: null,
+                reason: 'pairing_commit_uncertain',
+              }
+            : { phase: 'unpaired', profile: null },
+        );
+      }
+      throw error;
+    }
+  }
+
+  async accessToken(): Promise<string> {
+    if (
+      this.replacementPending > 0 ||
+      this.state.phase === 'loading' ||
+      this.state.phase === 'unpaired' ||
+      this.state.phase === 'pairing' ||
+      this.state.phase === 'revoking' ||
+      this.state.phase === 'recovery_required'
+    ) {
+      throw new Error('mobile_credential_unavailable');
+    }
+    if (this.connection === null) throw new Error('mobile_pairing_required');
+    if (this.connection.authorization.expires_at_ms > BigInt(this.now())) {
+      return this.connection.accessToken;
+    }
+    return (await this.refresh()).accessToken;
+  }
+
+  createGateway(): MobileAutomoniqueGateway {
+    if (this.connection === null) throw new Error('mobile_pairing_required');
+    const authorization = this.connection.authorization;
+    const expectedFingerprint = gatewayFingerprint(this.connection);
+    const lifecycleFetcher: typeof fetch = async (input, init) => {
+      const response = await this.fetcher(input, init);
+      if (
+        (response.status === 401 ||
+          response.status === 403 ||
+          response.status === 410) &&
+        this.connection !== null &&
+        gatewayFingerprint(this.connection) === expectedFingerprint
+      ) {
+        this.clearExpiryTimer();
+        this.activeController?.abort();
+        this.publish({
+          phase: 'refresh_required',
+          profile: this.connection.profile,
+        });
+      }
+      return response;
+    };
+    return createAuthorizedHttpsGateway({
+      authorization,
+      endpoint: this.connection.profile.platformEndpoint,
+      expectedServerIdentity: this.connection.profile.serverIdentity,
+      fetcher: lifecycleFetcher,
+      now: this.now(),
+      token: async () => {
+        const token = await this.accessToken();
+        if (
+          this.connection === null ||
+          gatewayFingerprint(this.connection) !== expectedFingerprint
+        ) {
+          throw new Error('gateway_generation_replaced');
+        }
+        return token;
+      },
+    });
+  }
+
+  async refresh(): Promise<ScopedConnection> {
+    if (this.refreshInFlight !== null) return this.refreshInFlight;
+    const task = this.exclusive(() => this.refreshExclusive());
+    this.refreshInFlight = task;
+    try {
+      return await task;
+    } finally {
+      if (this.refreshInFlight === task) this.refreshInFlight = null;
+    }
+  }
+
+  private async refreshExclusive(): Promise<ScopedConnection> {
+    if (this.connection === null) throw new Error('mobile_pairing_required');
+    const current = this.connection;
+    const operation = this.replaceGeneration();
+    this.publish({ phase: 'refreshing', profile: current.profile });
+    try {
+      const client = await this.discover(
+        current.profile.origin,
+        this.fetcher,
+        operation.signal,
+        current.profile.serverIdentity,
+      );
+      const issued = await client.refresh(
+        current.refreshToken,
+        operation.signal,
+      );
+      let rotated: ScopedConnection;
+      try {
+        rotated = await saveIssuedConnection(
+          client.discovery,
+          issued,
+          this.now(),
+          current,
+        );
+      } catch (error) {
+        // The server consumed the previous refresh token. If the local commit
+        // is uncertain, replaying it could revoke the entire successor family.
+        await revokeLocalCredential().catch(() => undefined);
+        if (this.isCurrent(operation.generation)) {
+          this.connection = null;
+          this.publish({
+            phase: 'recovery_required',
+            profile: current.profile,
+            reason: 'refresh_commit_uncertain',
+          });
+        }
+        throw error;
+      }
+      if (!this.isCurrent(operation.generation)) {
+        throw new Error('mobile_lifecycle_generation_replaced');
+      }
+      this.connection = rotated;
+      this.publishCredentialState(rotated);
+      return rotated;
+    } catch (error) {
+      if (!this.isCurrent(operation.generation)) throw error;
+      if (refreshIsRejected(error)) {
+        await revokeLocalCredential().catch(() => undefined);
+        this.connection = null;
+        this.publish({
+          phase: 'recovery_required',
+          profile: current.profile,
+          reason: failureReason(error),
+        });
+      } else if (this.connection !== null) {
+        this.publish({
+          phase: 'refresh_required',
+          profile: this.connection.profile,
+        });
+      }
+      throw error;
+    }
+  }
+
+  /** Revoke remotely first; local deletion never masquerades as server revocation. */
+  async revoke(): Promise<void> {
+    return this.replacing(() => this.revokeExclusive());
+  }
+
+  private async revokeExclusive(): Promise<void> {
+    if (this.connection === null) {
+      await revokeLocalCredential();
+      this.publish({ phase: 'unpaired', profile: null });
+      return;
+    }
+    const current = this.connection;
+    const operation = this.replaceGeneration();
+    this.publish({ phase: 'revoking', profile: current.profile });
+    let remoteRevoked = false;
+    try {
+      const client = await this.discover(
+        current.profile.origin,
+        this.fetcher,
+        operation.signal,
+        current.profile.serverIdentity,
+      );
+      await client.revoke(current.refreshToken, operation.signal);
+      remoteRevoked = true;
+      if (!this.isCurrent(operation.generation)) return;
+      try {
+        await revokeLocalCredential();
+        this.connection = null;
+        this.publish({ phase: 'unpaired', profile: null });
+      } catch (error) {
+        this.connection = null;
+        this.publish({
+          phase: 'recovery_required',
+          profile: current.profile,
+          reason: 'revoked_local_cleanup_failed',
+        });
+        throw error;
+      }
+    } catch (error) {
+      if (this.isCurrent(operation.generation) && !remoteRevoked) {
+        this.publishCredentialState(current);
+      }
+      throw error;
+    }
+  }
+}
+
+export const mobileLifecycle = new MobileLifecycleCoordinator();
