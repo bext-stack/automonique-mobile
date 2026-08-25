@@ -32,13 +32,20 @@ artifact, signed device build, app-store release, or production deployment is
 claimed. Those steps require separately authorized endpoint, account, build,
 device, and release evidence.
 
-## Preview build status
+## Preview APK — publication pending
 
-No verified APK is published yet. After the Android preview artifact is built
-from a reviewed commit and its packaged transport policy is inspected, this
-section will record its immutable GitHub prerelease download URL and SHA-256
-digest. The preview will remain an internal, non-production artifact—not a
-production-signed device build, app-store release, or production deployment.
+Planned immutable download:
+[automonique-mobile-0.1.0-preview.1.apk](https://github.com/bext-stack/automonique-mobile/releases/download/v0.1.0-preview.1/automonique-mobile-0.1.0-preview.1.apk)
+
+SHA-256: pending build and packaged-artifact verification.
+
+The link is intentionally unavailable until the APK is built from reviewed
+protected `main`, its manifest, signing state, dependency notices, provenance,
+and digest pass the [preview prerelease gates](docs/release-governance.md#authorized-android-preview-prerelease),
+and GitHub release immutability is enabled. This will be a credential-free
+Android emulator preview for internal evaluation—not evidence of an authorized
+live Automonique connection, production signing, device support, app-store
+readiness, or deployment.
 
 ## Requirements
 

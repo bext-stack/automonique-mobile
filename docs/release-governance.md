@@ -3,8 +3,10 @@
 Automonique Mobile currently produces internal Android emulator and iOS
 Simulator artifacts only. Those artifacts are test evidence, not production
 releases, and must never be submitted to an app store or presented as signed
-device builds. There is intentionally no `production` EAS profile or submit
-configuration.
+device builds. An explicitly authorized immutable GitHub prerelease may host
+the credential-free Android emulator APK under the preview procedure below;
+the iOS Simulator artifact remains evidence-only. There is intentionally no
+`production` EAS profile or submit configuration.
 
 ## Reproducible native evidence
 
@@ -15,7 +17,7 @@ and `vendor/automonique-sdk.json`. EAS image names can still receive minor
 updates, so every build record must also preserve the resolved image and
 toolchain versions printed by EAS.
 
-Before requesting builds:
+Before requesting EAS builds:
 
 1. Work from a clean, reviewed commit on a protected branch.
 2. Run `npm ci`, `npm run validate`, and
@@ -29,15 +31,81 @@ Before requesting builds:
    npx --yes eas-cli@22.4.0 build --platform all --profile simulator --non-interactive --wait
    ```
 
-5. Download both artifacts without publishing a GitHub or app-store release.
-   Hash each artifact with `sha256sum` and attach the evidence to MOB-200.
+5. Download both artifacts and hash them with `sha256sum`. Do not publish an
+   app-store release. Do not publish a GitHub release except for the narrowly
+   authorized Android preview procedure below.
 
-The evidence record must contain the source commit and tree SHA, lockfile and
-vendored SDK SHA-256 digests, Expo project ID, EAS CLI version, build profile,
-Android and iOS EAS build UUIDs and URLs, resolved builder image/tool versions,
-artifact filenames and SHA-256 digests, and the native-policy verification
-output. A rebuild is comparable only when all of those inputs match; signed
-binaries are not expected to be bit-for-bit identical.
+The authorized Android preview may instead come from a reviewed, Android-only
+CI build on the protected commit when Expo account access is unavailable. That
+workflow must start from a clean generated native project, use the same
+credential-free release intent and native transport policy, pin or record every
+runner image and toolchain input, preserve its immutable run/artifact ID, and
+run the complete inspection and notice gates below. An ad hoc local APK without
+that provenance is not publishable. This exception does not authorize an iOS,
+store, signed-device, or production build.
+
+Every evidence record must contain the source commit and tree SHA, lockfile and
+vendored SDK SHA-256 digests, resolved builder image/tool versions, artifact
+filenames and SHA-256 digests, and native-policy verification output. An EAS
+record must additionally contain the Expo project ID, EAS CLI version, build
+profile, and Android/iOS EAS build UUIDs and URLs. An Android-only CI preview
+record instead contains the immutable workflow run and artifact IDs plus its
+exact build command and resolved toolchains. A rebuild is comparable only when
+all applicable inputs match; signed binaries are not expected to be
+bit-for-bit identical.
+
+## Authorized Android preview prerelease
+
+The owner has authorized one public download surface for the credential-free
+Android emulator APK. It is an internal preview convenience, not a production
+release, device-support claim, live-server acceptance result, or app-store
+candidate. No iOS artifact, credential, pairing offer, endpoint, customer data,
+log, or signing secret may be attached.
+
+Before publishing a preview:
+
+1. Select a reviewed commit already merged to protected `main`; record its
+   commit and tree SHA. The release-specific `v*` tag must resolve to that exact
+   commit and remains protected from movement or deletion.
+2. Run the full locked validation from that commit and preserve the run URL and
+   results. Record the lockfile and vendored SDK SHA-256 digests, build system
+   and immutable run/build ID, exact build command/profile, resolved builder
+   image, Node, npm, Java, Gradle, Android SDK/build-tools, NDK, and EAS CLI
+   versions as applicable.
+3. Name the artifact
+   `automonique-mobile-0.1.0-preview.1.apk` and compute its SHA-256 digest. The
+   APK must be the exact artifact produced by the recorded build; do not
+   rebuild or re-sign it for upload.
+4. Inspect the packaged effective manifest with `apkanalyzer`, Android Studio
+   APK Analyzer, or an equivalently reviewed Android build tool. Preserve the
+   output proving `android:usesCleartextTraffic="false"` and the absence of any
+   broader/domain cleartext exception.
+5. Run `apksigner verify --verbose --print-certs` (or an equivalently reviewed
+   Android signing verifier). Preserve the verification result, signer subject,
+   certificate SHA-256 digest, and signing schemes. Confirm that the signer is
+   only the generated non-production/debug identity described below, never an
+   app-store or organization production identity. An unsigned or unverifiable
+   APK must not be published.
+6. Generate the Maven dependency tree and dependency/license inventory from the
+   exact native project used for the APK. Include every required attribution
+   and notice in the prerelease record alongside the npm notice digest. Missing,
+   unknown, copyleft, source-available, or conflicting metadata blocks
+   publication until explicit legal approval is recorded.
+7. Enable GitHub release immutability before creating this release and verify
+   that the repository setting is active. Create the prerelease as a draft,
+   attach the final APK and complete provenance/verification record, then
+   publish it with `prerelease=true` and without marking it latest. After
+   publication, verify that GitHub labels it immutable and verify the local APK
+   against the immutable release attestation.
+8. Put the immutable asset URL and SHA-256 digest in the README. The release
+   notes and README must say that it is an internal non-production emulator
+   preview, has no embedded endpoint or credential, and does not establish live
+   acceptance, device support, signing custody, or store readiness.
+
+GitHub release immutability protects the published tag and assets; it applies
+only to releases published after the setting is enabled. Therefore the draft
+must contain the complete final asset set before publication. A mutable release
+or replaceable asset URL does not satisfy this policy.
 
 ## Native transport policy
 
@@ -63,15 +131,15 @@ permission blocks distribution.
 
 ## Repository controls
 
-The default branch must be governed by an active GitHub ruleset with no routine
-administrator bypass:
+The default branch is governed by active protection with no routine
+administrator bypass. Current controls:
 
-- require a pull request, one independent approval, CODEOWNERS approval,
-  dismissal of stale approvals, approval after the most recent push, and all
-  conversations resolved;
+- require a pull request, dismissal of stale approvals, and all conversations
+  resolved;
 - require the `validate`, `secrets`, and `review` checks from GitHub Actions,
   with the branch up to date before merge;
-- block force pushes and deletion of `main`;
+- require linear history and block force pushes and deletion of `main`,
+  including for administrators;
 - require full-length commit SHAs for Actions and allow only reviewed actions;
 - retain read-only default `GITHUB_TOKEN` permissions and prevent workflows
   from approving pull requests; and
@@ -79,9 +147,10 @@ administrator bypass:
 
 `CODEOWNERS` records ownership but is not enforcement by itself. The organization
 must add at least one qualified reviewer who is not the change author before the
-independent-review rule can be activated without deadlocking the repository.
-Direct pushes are emergency-only, must be auditable, and require a follow-up
-review and incident record.
+one-independent-approval, CODEOWNERS-review, and approval-after-last-push rules
+can be activated without deadlocking the repository. That is the only pending
+branch-review control. Direct pushes are emergency-only, must be auditable, and
+require a follow-up review and incident record.
 
 Workflow actions and scanner images are pinned to immutable commits or OCI
 digests. Dependabot may propose updates, but a reviewer must verify the upstream
@@ -126,6 +195,32 @@ memberships, and authorizing signing credentials require account-owner action.
 No agent, workflow, or contributor may infer that authority from a simulator
 build request.
 
+## Preview withdrawal and replacement
+
+An installed preview APK cannot be remotely removed or safely downgraded. If a
+preview is unsafe, incorrect, or no longer supportable:
+
+1. Revoke or disable affected server-side mobile credentials/capabilities when
+   safety requires it, and preserve the immutable release attestation, APK
+   digest, signing certificate digest, build provenance, and incident evidence.
+2. Remove the README download link in a reviewed commit and mark the prerelease
+   withdrawn in its release notes if GitHub permits metadata updates. Never
+   replace or delete the individual asset, move the tag, or reuse the version.
+3. Publish a corrected APK only as a new preview version and tag after repeating
+   every build, validation, transport, signing, dependency, and notice gate.
+4. If a confirmed security, privacy, or legal issue requires public removal,
+   the repository owner may delete the entire prerelease after preserving an
+   access-controlled evidence record. Keep the protected tag when possible and
+   permanently retire its tag/version name; GitHub does not permit reuse of a
+   tag name from a deleted immutable release.
+5. Open a private security advisory when secrets, customer data, signing
+   material, or a practical exploit may be involved. Document the decision and
+   verification before restoring any public download.
+
+Withdrawal is not a production rollback and does not establish an update
+channel. Users must uninstall the affected preview or install a separately
+verified successor; EAS Update remains unconfigured.
+
 ## Release and rollback
 
 Before promotion, record the approved commit, immutable build ID and artifact
@@ -158,7 +253,10 @@ The following cannot be completed by repository changes alone:
 
 - link an authorized Expo organization/project and supply a scoped build token;
 - provide EAS build capacity and preserve the resulting build records;
-- add an independent organization reviewer and activate the GitHub ruleset;
+- add an independent organization reviewer and activate the remaining
+  approval/CODEOWNERS rules;
+- enable repository release immutability before publishing the authorized
+  Android preview prerelease;
 - enable organization/repository security settings that require administrator
   authority; and
 - create store accounts, accept agreements, authorize signing identities, and
