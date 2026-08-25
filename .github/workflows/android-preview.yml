@@ -187,14 +187,31 @@ jobs:
             --device pixel_6 2>&1 \
             | tee "$PREVIEW_OUTPUT_DIR/emulator-avd-creation.txt"
 
-          "$emulator" -avd automonique-preview -no-window -no-audio \
-            -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect \
-            > "$PREVIEW_OUTPUT_DIR/emulator-console.txt" 2>&1 &
+          emulator_console="$PREVIEW_OUTPUT_DIR/emulator-console.txt"
+          "$emulator" -avd automonique-preview -accel on -gpu software \
+            -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data \
+            -no-metrics -camera-back none -memory 4096 -cores 4 \
+            > "$emulator_console" 2>&1 &
           emulator_pid=$!
-          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          emulator_cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              echo '--- Android emulator failure diagnostics ---'
+              "$adb" devices -l || true
+              tail -n 240 "$emulator_console" || true
+            fi
+            kill "$emulator_pid" 2>/dev/null || true
+            trap - EXIT
+            exit "$status"
+          }
+          trap emulator_cleanup EXIT
 
           booted=false
-          for _attempt in $(seq 1 120); do
+          for _attempt in $(seq 1 180); do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              echo 'Android emulator exited before completing boot.' >&2
+              exit 1
+            fi
             if "$adb" shell getprop sys.boot_completed 2>/dev/null \
               | grep -qx 1; then
               booted=true
@@ -202,7 +219,10 @@ jobs:
             fi
             sleep 2
           done
-          test "$booted" = true
+          if [ "$booted" != true ]; then
+            echo 'Android emulator did not complete boot within 360 seconds.' >&2
+            exit 1
+          fi
 
           "$adb" install --no-streaming -r "$apk" 2>&1 \
             | tee "$PREVIEW_OUTPUT_DIR/emulator-install.txt"
