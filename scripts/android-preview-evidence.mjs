@@ -35,6 +35,8 @@ const CONFIG = Object.freeze({
     'npm run native:verify',
     'npx expo prebuild --platform android --clean --no-install',
     'sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools" "ndk;27.1.12297006" "emulator" "system-images;android-36;google_apis;x86_64"',
+    'sudo apt-get install --yes --no-install-recommends libpulse0',
+    'ldd "$ANDROID_SDK_ROOT/emulator/emulator"',
     './android/gradlew -p android --no-daemon --console=plain --stacktrace :app:assembleRelease',
     './android/gradlew -p android --no-daemon --console=plain :app:dependencies --configuration releaseRuntimeClasspath',
     './android/gradlew -p android --no-daemon --console=plain -I "$GITHUB_WORKSPACE/scripts/android-preview-inventory.init.gradle" :app:previewRuntimeInventory',
@@ -430,6 +432,11 @@ function toolVersions(sdkRoot) {
       emulator: text(emulator, ['-version']),
       adb: text(adb, ['version']),
       systemImage: readFileSync(systemImageProperties, 'utf8').trim(),
+      ubuntuEmulatorRuntime: text('dpkg-query', [
+        '--show',
+        '--showformat=${Package}=${Version}',
+        'libpulse0',
+      ]),
     },
   };
 }
@@ -502,6 +509,11 @@ function verifyArtifact() {
       `Pkg.Revision\\s*=\\s*${CONFIG.androidNdk.replaceAll('.', '\\.')}`,
     ),
     'preview_ndk_version_drift',
+  );
+  requireMatch(
+    tools.values.ubuntuEmulatorRuntime,
+    /^libpulse0=\S+$/,
+    'preview_ubuntu_emulator_runtime_missing',
   );
 
   const packagedManifest = text(tools.apkAnalyzer, [
