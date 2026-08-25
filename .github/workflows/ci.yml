@@ -22,6 +22,7 @@ jobs:
       - run: npm run sdk:verify
       - run: npm run notices:check
       - run: npm run native:verify
+      - run: npm run production:verify
       - run: npm run audit:high
       - run: npm run typecheck
       - run: npm run lint
@@ -29,6 +30,7 @@ jobs:
       - run: npm run format:check
       - run: npm run doctor
       - run: npm run bundle:platforms
+      - run: npm run production:verify:bundle
 
   secrets:
     runs-on: ubuntu-24.04
