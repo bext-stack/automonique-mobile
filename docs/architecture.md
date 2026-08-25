@@ -10,10 +10,10 @@ outcomes.
 screens
    │ high-level reads and actions only
    ▼
-MobileProvider / vertical-slice controller
+ProductionMobileProvider / MobileProvider
    │
-   ├── MobileAutomoniqueGateway ──┬── createMockGateway
-   │                              │     deterministic synthetic contract
+   ├── MobileAutomoniqueGateway ──┬── createMockGateway (tests only)
+   │                              │     deterministic adverse-state contract
    │                              └── SDK mobile adapter
    │                                    │
    │                                    ▼
@@ -39,6 +39,17 @@ The synthetic and SDK gateways implement the same interface. Synthetic data
 must pass through gateway bootstrap, attachment, cursor reduction, mutation,
 and receipt recovery rather than being read directly by screens. This makes
 the initial slice an executable boundary test instead of a disconnected mockup.
+`ProductionMobileProvider` never selects that gateway: recursive source and
+emitted-bundle checks reject mock transport from production output.
+
+Before constructing the SDK gateway, the process-wide lifecycle coordinator
+requires an origin- and server-identity-bound one-time pairing offer, persists
+access and refresh credentials in OS Secure Store, and admits the exact actor,
+session scope, actions, limits, revisions, and expiry. It serializes refresh
+and revoke, aborts superseded work, and replaces the gateway generation after
+credential rotation. Loading, unpaired, pairing, expired/refresh-required,
+refreshing, revoking, and recovery-required states expose no operational
+gateway.
 
 ## Connection state
 
@@ -68,22 +79,26 @@ never restores write authority.
 
 ## Read and cursor flow
 
-1. `bootstrap` returns the bounded session, approval, receipt, authorization,
-   and limit projection.
-2. Each authorized attachable session is attached through the gateway.
-3. Event pages name the session, previous cursor, next cursor, and ordered
-   sequence. The reducer admits exact duplicates but rejects gaps, conflicting
-   duplicates, wrong-session pages, excessive pages, and pages over the
-   negotiated event ceiling.
+1. `bootstrap` verifies Platform capabilities, lists actor-visible sessions,
+   and reads per-session command state through `MobileSessionClient`; the
+   already admitted authorization supplies action and limit projection.
+2. Each authorized attachable session is attached through `PlatformClient`.
+   A first attachment obtains a sanitized bounded history snapshot; a resumed
+   attachment continues from the acknowledged history cursor.
+3. History pages name the session, previous cursor, terminal cursor, and
+   ordered sequence. The reducer admits exact duplicates but rejects gaps,
+   conflicting duplicates, wrong-session pages, excessive pages, and pages
+   over the negotiated event ceiling.
 4. An admitted cursor becomes the next resume point. A rejected page makes the
    entire projection stale and requires a fresh snapshot; the client does not
    guess across a gap.
 5. Timeline events carry `authoritative`, `preview`, `synthetic`, or unknown
    provenance. Unknown kinds stay visible and never imply success.
 
-The current Platform resource subscription can prove the cursor and resource
-update boundary, but rich sanitized conversation/tool history remains a server
-dependency tracked in Automonique #112.
+The server-owned history API emits only the sanitized message, tool-state,
+run-state, and explicit unknown-event vocabulary. A typed retention gap becomes
+`session_history_resync_required`; mobile replaces the projection from a fresh
+bounded snapshot rather than guessing across the missing range.
 
 ## Mutation and reconciliation flow
 
@@ -107,7 +122,7 @@ send the exact mutation once
         └── exception or accepted/pending outcome
                               │
                               ▼
-                  get receipt by idempotency key
+       MobileSessionClient.reconcileReceipt by idempotency key
                               │
                   ┌───────────┴───────────┐
                   │ settled               │ still unknown
@@ -129,14 +144,14 @@ approval; a completed stop clears the exact run association.
 
 ## SDK mapping
 
-| Mobile gateway operation | Canonical SDK methods                      | Additional mobile admission                                                                                |
-| ------------------------ | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `bootstrap`              | `capabilities`, `listSessions`, `snapshot` | Expected protocol/schema, remote HTTPS transport, stable server identity, actor actions and limits         |
-| `attach` and event pages | `attach`, `subscribe`                      | `attach` action, exact session, cursor grammar, page/event ceilings, ordered sequences                     |
-| `followUp`               | `execute` with `follow_up`                 | `follow_up` action, exact session revision, non-empty text, negotiated UTF-8 byte ceiling, idempotency key |
-| `decideApproval`         | `execute` with `decide_approval`           | `decide_approval` action, exact unexpired approval revision, decision, idempotency key                     |
-| `stopRun`                | `execute` with `stop_run`                  | `stop_run` action, exact run revision, idempotency key                                                     |
-| `reconcile`              | `getReceipt`                               | Existing pending key; receipt action and target must match the recorded handle                             |
+| Mobile gateway operation | Canonical SDK methods                                                             | Additional mobile admission                                                                                |
+| ------------------------ | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `bootstrap`              | `PlatformClient.capabilities`, `listSessions`; `MobileSessionClient.commandState` | Expected protocol/schema, remote HTTPS transport, stable server identity, actor actions and limits         |
+| `attach` and event pages | `PlatformClient.attach`, `sessionHistorySnapshot`, `sessionHistoryPage`           | `attach` action, exact session, cursor grammar, page/event ceilings, ordered sequences                     |
+| `followUp`               | `MobileSessionClient.followUp`                                                    | `follow_up` action, exact session revision, non-empty text, negotiated UTF-8 byte ceiling, idempotency key |
+| `decideApproval`         | `MobileSessionClient.decideApproval`                                              | `decide_approval` action, exact unexpired approval revision, decision, idempotency key                     |
+| `stopRun`                | `MobileSessionClient.stopRun`                                                     | `stop_run` action, exact run revision, idempotency key                                                     |
+| `reconcile`              | `MobileSessionClient.reconcileReceipt`                                            | Existing pending key; receipt action and target must match the recorded handle                             |
 
 Screens never receive `PlatformClient`, transport, raw `execute`, provider
 credentials, or arbitrary parameters. Detach and control claim/release are not
@@ -146,7 +161,7 @@ mobile actions in the first slice.
 
 | Data                                     | Store                 | Ceiling/lifetime                                                 | Rule                                                           |
 | ---------------------------------------- | --------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
-| Scoped mobile credential                 | OS Secure Store       | Server expiry/revocation                                         | Never Async Storage; device-only accessibility                 |
+| Scoped access and refresh credentials    | OS Secure Store       | Server expiry/rotation/revocation                                | Never Async Storage; pairing proof is never persisted          |
 | Endpoint, actor, expiry, server identity | Async Storage profile | One active profile                                               | Metadata only; endpoint must pass HTTPS policy                 |
 | Endpoint draft                           | Async Storage         | One draft; 2 KiB                                                 | Re-admitted on load; validation makes no network call          |
 | Read projection                          | Async Storage         | 256 KiB; 100 sessions; 1,000 events; 100 approvals; 200 receipts | Schema-admitted and always restored stale/read-only            |
@@ -174,16 +189,19 @@ mutation queue never cross or live inside the mobile boundary.
 ## Cross-repository dependencies
 
 - [Automonique #112](https://github.com/bext-stack/automonique/issues/112)
-  owns the end-to-end mobile epic and the missing server contracts: scoped
-  authentication, refresh/revocation, endpoint discovery, stable identity,
-  actor authorization, limits, and sanitized remotely resumable history.
+  owns the end-to-end mobile epic. Its scoped authentication, pairing,
+  refresh/revocation, endpoint identity, authorization, history, commands, and
+  testing-fixture contracts are implemented; registry publication and combined
+  hands-on accessibility evidence remain external gates.
 - [Automonique #113](https://github.com/bext-stack/automonique/issues/113)
-  owns the canonical TypeScript Platform client, generated codecs, package
-  boundary, live Rust contract tests, and longer-term removal of remaining
-  handwritten request encoding.
+  records the original canonical TypeScript Platform client and distribution
+  repair. The mobile app consumes the CI-verified packed SDK archive until an
+  authorized public registry release exists.
 - This repository owns the narrow mobile gateway, SDK adapter, persistence and
   reconciliation policy, screens, native behavior, and mobile verification.
 
-The SDK transport can be packaged and bundled before the #112 server contracts
-exist. A production connection must remain unavailable until those contracts
-are implemented and verified; a transport constructor alone is not authority.
+The server contracts and production composition root are implemented and
+verified by automated Rust-to-TypeScript, mobile, and bundle gates. An
+authorized non-production endpoint and one-time pairing ceremony are still
+required to establish live acceptance; EAS artifacts, device accessibility,
+and release evidence remain separate gates.

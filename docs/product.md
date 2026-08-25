@@ -30,14 +30,15 @@ clear freshness, and explicit actions rather than an administration cockpit.
 7. Retain a bounded read-only projection and message draft when connectivity
    is lost.
 
-## First-slice outcome
+## Historical first-slice outcome
 
-The first slice is a deterministic, synthetic operator journey through the
-same narrow gateway, cursor reducer, cache boundary, and reconciliation path
-that a production SDK adapter uses. It is valuable as an executable contract
-and interaction test; it is not evidence of a live server connection.
+The original first slice was a deterministic, synthetic operator journey
+through the same narrow gateway, cursor reducer, cache boundary, and
+reconciliation path that the production SDK adapter now uses. It remains
+valuable as an executable contract and interaction test; by itself, it is not
+evidence of a live server connection.
 
-The slice is accepted only when all of the following are evidenced:
+The slice was accepted after all of the following were evidenced:
 
 - Session bootstrap and every attachable timeline flow through
   `MobileAutomoniqueGateway`; screens do not import fixtures or the Platform
@@ -53,8 +54,8 @@ The slice is accepted only when all of the following are evidenced:
   actor-authorized action. Follow-up also observes its negotiated UTF-8 byte
   ceiling.
 - A reconciliation handle is durably recorded before a mutation is sent. An
-  ambiguous or accepted result is resolved only with `get_receipt`; the
-  original mutation is never replayed.
+  ambiguous or accepted result is resolved only through receipt
+  reconciliation; the original mutation is never replayed.
 - A completed follow-up may add a labeled local preview without advancing the
   acknowledged resume cursor; a completed approval disappears, and a completed
   stop removes the run association.
@@ -66,32 +67,56 @@ The slice is accepted only when all of the following are evidenced:
 - TypeScript, lint, unit/integration tests, formatting, Expo Doctor, secret
   scanning, and Android/iOS/web exports pass in CI under Node.js 24.
 
-Signed native builds, physical-device accessibility passes, and live server
-acceptance are later evidence gates and must not be inferred from Expo export
-success.
+Signed native builds, hands-on device/simulator accessibility passes, and live
+server acceptance are later evidence gates and must not be inferred from Expo
+export success.
+
+## Current implemented boundary
+
+The production composition root now starts unpaired, admits an exact HTTPS
+origin and server identity through a short-lived one-time pairing offer, and
+stores issued access and refresh credentials only in OS Secure Store. It
+enables the operational routes only while the server-issued credential and
+actor authorization are current. Expiry, identity or scope drift, rejected
+authorization, uncertain rotation, and revocation fail closed to settings or a
+read-only recovery state.
+
+The canonical SDK supplies actor-filtered session discovery, sanitized bounded
+history snapshots/pages, typed retention-gap resynchronization, command state,
+and high-level follow-up, approval-decision, exact-run-stop, and receipt
+reconciliation methods. Production screens still receive only
+`MobileAutomoniqueGateway`; neither a generic `execute` method nor raw provider
+output crosses that boundary. Synthetic transports remain test fixtures and
+are rejected by production source and emitted-bundle verification.
+
+This proves the client implementation and its automated Rust-to-TypeScript,
+mobile, security, and bundle contracts. It does not prove an authorized live
+connection, EAS/native artifact, VoiceOver/TalkBack pass, signed release, or
+production deployment.
 
 ## Delivery phases
 
-### Phase 0 — verified synthetic slice
+### Phase 0 — verified synthetic slice (complete)
 
-Finish the executable mobile boundary, persistence rules, reconciliation
-behavior, UI states, automated tests, and documentation without enabling a
-production credential or endpoint.
+Established the executable mobile boundary, persistence rules, reconciliation
+behavior, UI states, automated tests, and historical synthetic fixtures before
+enabling a production credential or endpoint.
 
-### Phase 1 — server contract and SDK integration
+### Phase 1 — server contract and SDK integration (complete)
 
-Keep the mobile adapter pinned to a verified `@automonique/sdk` artifact. Add
-server-owned scoped credential issue/refresh/revoke, endpoint discovery,
-stable identity, actor authorization, limits, and sanitized resumable history.
+The mobile adapter is pinned to a verified `@automonique/sdk` artifact and
+consumes server-owned pairing, credential refresh/revoke, endpoint discovery,
+stable identity, actor authorization, limits, sanitized resumable history, and
+high-level mobile commands.
 
-### Phase 2 — authorized production connection
+### Phase 2 — authorized non-production acceptance (external evidence pending)
 
-Enable connection setup only after the Phase 1 contracts have live
-Rust-to-TypeScript evidence. Verify real sessions, attachment, follow-up,
-approval, stop, conflict, resynchronization, and receipt recovery against an
-authorized non-production installation.
+Connection setup is implemented after live Rust-to-TypeScript contract
+evidence. Verifying real sessions, attachment, follow-up, approval, stop,
+conflict, resynchronization, and receipt recovery still requires an authorized
+non-production installation and pairing/test-data scope.
 
-### Phase 3 — native release readiness
+### Phase 3 — native release readiness (external evidence pending)
 
 Run EAS Android and iOS simulator builds, device accessibility checks, adverse
 network tests, privacy review, dependency notices, signing, and release
