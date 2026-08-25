@@ -62,7 +62,7 @@ Remaining tracked work is grouped in the
     oversized cache, authorization per action, exact-target conflicts, cursor
     resume/gap/duplicate/unknown event, ambiguous outcome, restart recovery,
     and receipt-driven UI updates.
-- [ ] **[MOB-016 — Verify and publish the synthetic baseline evidence](https://github.com/bext-stack/automonique-mobile/issues/1).**
+- [x] **[MOB-016 — Verify and publish the synthetic baseline evidence](https://github.com/bext-stack/automonique-mobile/issues/1).**
   - Dependencies: MOB-010 through MOB-015.
   - Acceptance: `npm run validate` passes from a clean Node.js 24 install; CI
     is green on the pushed commit; documentation matches the implementation;
