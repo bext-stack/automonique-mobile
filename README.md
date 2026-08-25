@@ -34,18 +34,18 @@ device, and release evidence.
 
 ## Preview APK — publication pending
 
-Planned immutable download:
-[automonique-mobile-0.1.0-preview.1.apk](https://github.com/bext-stack/automonique-mobile/releases/download/v0.1.0-preview.1/automonique-mobile-0.1.0-preview.1.apk)
+Immutable `automonique.fr` download URL: pending publication.
 
 SHA-256: pending build and packaged-artifact verification.
 
 The link is intentionally unavailable until the APK is built from reviewed
 protected `main`, its manifest, signing state, dependency notices, provenance,
-and digest pass the [preview prerelease gates](docs/release-governance.md#authorized-android-preview-prerelease),
-and GitHub release immutability is enabled. This will be a credential-free
-Android emulator preview for internal evaluation—not evidence of an authorized
-live Automonique connection, production signing, device support, app-store
-readiness, or deployment.
+and digest pass the [preview publication gates](docs/release-governance.md#authorized-android-preview-publication),
+and publication controls are enabled. This will be a credential-free,
+public non-production Android preview for evaluation. Its universal package
+must contain both `arm64-v8a` and `x86_64`; that packaging evidence is not
+evidence of an authorized live Automonique connection, physical-device testing,
+production signing, app-store readiness, or deployment.
 
 ## Requirements
 

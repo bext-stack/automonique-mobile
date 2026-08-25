@@ -1,12 +1,12 @@
 # Release governance
 
-Automonique Mobile currently produces internal Android emulator and iOS
-Simulator artifacts only. Those artifacts are test evidence, not production
+Automonique Mobile currently produces a public non-production Android preview
+and internal iOS Simulator artifacts. Those artifacts are test evidence, not production
 releases, and must never be submitted to an app store or presented as signed
-device builds. An explicitly authorized immutable GitHub prerelease may host
-the credential-free Android emulator APK under the preview procedure below;
-the iOS Simulator artifact remains evidence-only. There is intentionally no
-`production` EAS profile or submit configuration.
+device builds. The owner has explicitly authorized a public, credential-free
+Android preview on `automonique.fr` under the procedure below; the iOS Simulator
+artifact remains evidence-only. There is intentionally no `production` EAS
+profile or submit configuration.
 
 ## Reproducible native evidence
 
@@ -32,8 +32,8 @@ Before requesting EAS builds:
    ```
 
 5. Download both artifacts and hash them with `sha256sum`. Do not publish an
-   app-store release. Do not publish a GitHub release except for the narrowly
-   authorized Android preview procedure below.
+   app-store release. EAS artifacts are not eligible for the public Android
+   preview unless they independently satisfy the complete procedure below.
 
 The authorized Android preview may instead come from a reviewed, Android-only
 CI build on the protected commit when Expo account access is unavailable. That
@@ -43,6 +43,14 @@ runner image and toolchain input, preserve its immutable run/artifact ID, and
 run the complete inspection and notice gates below. An ad hoc local APK without
 that provenance is not publishable. This exception does not authorize an iOS,
 store, signed-device, or production build.
+
+The reviewed `.github/workflows/android-preview.yml` workflow implements that
+CI path. It is manual-only, accepts no ref input, rejects any dispatch whose
+selected source is not protected `main`, uploads the APK and complete evidence
+as a retained Actions artifact and emulator-tests that same universal APK. It
+performs no publication. A later publication operator must review that retained
+evidence and mirror only the exact attested APK; the workflow itself does not
+authorize publication.
 
 Every evidence record must contain the source commit and tree SHA, lockfile and
 vendored SDK SHA-256 digests, resolved builder image/tool versions, artifact
@@ -54,19 +62,20 @@ exact build command and resolved toolchains. A rebuild is comparable only when
 all applicable inputs match; signed binaries are not expected to be
 bit-for-bit identical.
 
-## Authorized Android preview prerelease
+## Authorized Android preview publication
 
-The owner has authorized one public download surface for the credential-free
-Android emulator APK. It is an internal preview convenience, not a production
-release, device-support claim, live-server acceptance result, or app-store
-candidate. No iOS artifact, credential, pairing offer, endpoint, customer data,
-log, or signing secret may be attached.
+The owner has authorized one public download surface on `automonique.fr` for the
+credential-free Android preview APK. It is a non-production preview convenience,
+not a production release, physical-device support claim, live-server acceptance
+result, or app-store candidate. The universal APK must contain both `arm64-v8a`
+and `x86_64`, and the exact publishable APK must be emulator-tested. No iOS
+artifact, credential, pairing offer, endpoint, customer data, log, or signing
+secret may be published.
 
 Before publishing a preview:
 
 1. Select a reviewed commit already merged to protected `main`; record its
-   commit and tree SHA. The release-specific `v*` tag must resolve to that exact
-   commit and remains protected from movement or deletion.
+   commit and tree SHA.
 2. Run the full locked validation from that commit and preserve the run URL and
    results. Record the lockfile and vendored SDK SHA-256 digests, build system
    and immutable run/build ID, exact build command/profile, resolved builder
@@ -80,32 +89,46 @@ Before publishing a preview:
    APK Analyzer, or an equivalently reviewed Android build tool. Preserve the
    output proving `android:usesCleartextTraffic="false"` and the absence of any
    broader/domain cleartext exception.
-5. Run `apksigner verify --verbose --print-certs` (or an equivalently reviewed
+5. Inspect the packaged ABI inventory and preserve evidence that both
+   `arm64-v8a` and `x86_64` are present. Run the same exact APK on the reviewed
+   Android emulator; a rebuild is not equivalent evidence.
+6. Run `apksigner verify --verbose --print-certs` (or an equivalently reviewed
    Android signing verifier). Preserve the verification result, signer subject,
    certificate SHA-256 digest, and signing schemes. Confirm that the signer is
    only the generated non-production/debug identity described below, never an
    app-store or organization production identity. An unsigned or unverifiable
    APK must not be published.
-6. Generate the Maven dependency tree and dependency/license inventory from the
+7. Generate the Maven dependency tree and dependency/license inventory from the
    exact native project used for the APK. Include every required attribution
-   and notice in the prerelease record alongside the npm notice digest. Missing,
+   and notice in the publication record alongside the npm notice digest. Missing,
    unknown, copyleft, source-available, or conflicting metadata blocks
    publication until explicit legal approval is recorded.
-7. Enable GitHub release immutability before creating this release and verify
-   that the repository setting is active. Create the prerelease as a draft,
-   attach the final APK and complete provenance/verification record, then
-   publish it with `prerelease=true` and without marking it latest. After
-   publication, verify that GitHub labels it immutable and verify the local APK
-   against the immutable release attestation.
-8. Put the immutable asset URL and SHA-256 digest in the README. The release
-   notes and README must say that it is an internal non-production emulator
-   preview, has no embedded endpoint or credential, and does not establish live
-   acceptance, device support, signing custody, or store readiness.
+8. Retrieve the retained workflow artifact by its immutable run and artifact
+   IDs. Verify its recorded SHA-256 and GitHub artifact attestation against
+   `bext-stack/automonique-mobile`. Copy the verified APK bytes into protected
+   website staging without rebuilding, re-signing, renaming to another version,
+   or otherwise transforming them.
+9. Publish those exact bytes on a versioned, content-addressed
+   `automonique.fr` path containing both the preview version and APK SHA-256.
+   Publish adjacent SHA-256 and provenance records that identify the source
+   repository, commit and tree, workflow run and artifact IDs, attestation URL,
+   signer certificate digest, ABI inventory, toolchains, and notice evidence.
+   The path is immutable: never overwrite or reuse it for different bytes.
+10. Re-download the APK from its public `automonique.fr` URL. Verify its SHA-256
+    against both adjacent metadata and the workflow evidence, and verify the
+    downloaded file against the original GitHub attestation. A redirect,
+    content transformation, missing provenance record, or digest/attestation
+    mismatch blocks publication.
+11. Put the verified immutable URL and SHA-256 digest in the README. The download
+    page, adjacent provenance, and README must say that this is a public,
+    credential-free, non-production Android preview and does not establish an
+    authorized live connection, physical-device support, production signing,
+    app-store readiness, or deployment of Automonique itself.
 
-GitHub release immutability protects the published tag and assets; it applies
-only to releases published after the setting is enabled. Therefore the draft
-must contain the complete final asset set before publication. A mutable release
-or replaceable asset URL does not satisfy this policy.
+The versioned content-addressed website path is the public immutability
+boundary. Deployment records must connect it to the retained Actions artifact;
+cache or CDN layers must return the exact bytes. A replaceable URL or asset that
+cannot be re-downloaded and verified does not satisfy this policy.
 
 ## Native transport policy
 
@@ -143,7 +166,8 @@ administrator bypass. Current controls:
 - require full-length commit SHAs for Actions and allow only reviewed actions;
 - retain read-only default `GITHUB_TOKEN` permissions and prevent workflows
   from approving pull requests; and
-- protect release tags matching `v*` from deletion or movement.
+- protect release tags matching `v*` from deletion or movement (the public
+  Android preview hosting path does not depend on a tag).
 
 `CODEOWNERS` records ownership but is not enforcement by itself. The organization
 must add at least one qualified reviewer who is not the change author before the
@@ -173,7 +197,7 @@ distributor, is an external release gate.
 
 ## Signing custody
 
-Simulator evidence does not require Apple signing. The Android emulator APK is
+Simulator evidence does not require Apple signing. The Android preview APK is
 credential-free and non-production; its generated debug key is not an app-store
 identity and must never be promoted.
 
@@ -201,18 +225,18 @@ An installed preview APK cannot be remotely removed or safely downgraded. If a
 preview is unsafe, incorrect, or no longer supportable:
 
 1. Revoke or disable affected server-side mobile credentials/capabilities when
-   safety requires it, and preserve the immutable release attestation, APK
+   safety requires it, and preserve the artifact attestation, APK
    digest, signing certificate digest, build provenance, and incident evidence.
-2. Remove the README download link in a reviewed commit and mark the prerelease
-   withdrawn in its release notes if GitHub permits metadata updates. Never
-   replace or delete the individual asset, move the tag, or reuse the version.
-3. Publish a corrected APK only as a new preview version and tag after repeating
-   every build, validation, transport, signing, dependency, and notice gate.
+2. Remove the README download link in a reviewed commit, mark the website
+   download withdrawn, and prevent new downloads when safety requires it. Never
+   replace the bytes at the content-addressed path or reuse the version or digest.
+3. Publish a corrected APK only under a new preview version and content-addressed
+   path after repeating every build, validation, transport, signing, dependency,
+   and notice gate.
 4. If a confirmed security, privacy, or legal issue requires public removal,
-   the repository owner may delete the entire prerelease after preserving an
-   access-controlled evidence record. Keep the protected tag when possible and
-   permanently retire its tag/version name; GitHub does not permit reuse of a
-   tag name from a deleted immutable release.
+   the website owner may disable the content-addressed path after preserving an
+   access-controlled evidence record. Permanently retire its version and digest
+   path; do not later reuse either identifier.
 5. Open a private security advisory when secrets, customer data, signing
    material, or a practical exploit may be involved. Document the decision and
    verification before restoring any public download.
@@ -234,7 +258,7 @@ back:
 
 1. Halt or pause the staged App Store/Play rollout and disable affected server
    capabilities or mobile credentials when safety is at risk.
-2. Preserve logs, receipts, build provenance, and the immutable release tag;
+2. Preserve logs, receipts, build provenance, and immutable publication records;
    open a private security advisory if secrets or customer data may be involved.
 3. Rebuild the last-known-good source with a new, monotonically increasing iOS
    build number and Android version code, run the complete gates, obtain fresh
@@ -255,12 +279,12 @@ The following cannot be completed by repository changes alone:
 - provide EAS build capacity and preserve the resulting build records;
 - add an independent organization reviewer and activate the remaining
   approval/CODEOWNERS rules;
-- enable repository release immutability before publishing the authorized
-  Android preview prerelease;
+- produce the reviewed workflow artifact, deploy its exact attested bytes to the
+  governed `automonique.fr` path, and complete live re-download verification;
 - enable organization/repository security settings that require administrator
   authority; and
 - create store accounts, accept agreements, authorize signing identities, and
   approve any production release.
 
-Until each applicable gate has named ownership and evidence, the app remains an
-internal, non-production mobile client.
+Until each applicable gate has named ownership and evidence, the public preview
+remains a non-production mobile client.
