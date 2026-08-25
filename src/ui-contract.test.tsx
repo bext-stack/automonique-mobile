@@ -58,9 +58,11 @@ function mobileValue(
       })),
     },
     busyAction: null,
+    projectionReady: true,
     sendFollowUp: jest.fn(),
     decideApproval: jest.fn(),
     stopRun: jest.fn(),
+    refreshProjection: jest.fn(),
     setConnectionPhase: jest.fn(),
   };
 }
@@ -179,6 +181,25 @@ test('shared connection status distinguishes an SDK transport', async () => {
   mockUseMobile.mockReturnValue(mobileValue(['attach'], { synthetic: false }));
   const view = await render(<ConnectionBanner />);
   expect(view.getByText('Live · SDK')).toBeTruthy();
+});
+
+test('initial hydration does not expose a competing reconnect operation', async () => {
+  const value = mobileValue(['attach']);
+  mockUseMobile.mockReturnValue({
+    ...value,
+    projectionReady: false,
+    snapshot: {
+      ...value.snapshot,
+      connection: {
+        ...value.snapshot.connection,
+        phase: 'stale',
+        mutationsAllowed: false,
+      },
+    },
+  });
+  const view = await render(<ConnectionBanner />);
+
+  expect(view.queryByLabelText('Reconnect and refresh projection')).toBeNull();
 });
 
 test('a refusal without a receipt id remains visibly reconcilable', async () => {

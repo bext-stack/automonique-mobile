@@ -1,26 +1,24 @@
 {
   "cli": {
-    "version": ">= 16.0.0",
-    "appVersionSource": "remote"
+    "version": "22.4.0",
+    "requireCommit": true,
+    "appVersionSource": "local"
   },
   "build": {
-    "development": {
-      "developmentClient": true,
+    "simulator": {
+      "node": "24.19.0",
       "distribution": "internal",
+      "environment": "preview",
+      "autoIncrement": false,
       "android": {
-        "buildType": "apk"
+        "image": "ubuntu-26.04-jdk-17-ndk-r27b-sdk-57",
+        "gradleCommand": ":app:assembleRelease",
+        "withoutCredentials": true
       },
       "ios": {
-        "simulator": true
-      }
-    },
-    "preview": {
-      "distribution": "internal",
-      "android": {
-        "buildType": "apk"
-      },
-      "ios": {
-        "simulator": true
+        "image": "macos-tahoe-26.5-xcode-26.6",
+        "simulator": true,
+        "withoutCredentials": true
       }
     }
   }

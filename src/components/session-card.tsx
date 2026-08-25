@@ -72,7 +72,9 @@ const styles = StyleSheet.create({
   identity: { fontSize: 12 },
   footer: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
+    gap: 8,
     marginTop: 6,
   },
   meta: { fontSize: 13 },

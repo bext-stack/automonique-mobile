@@ -11,3 +11,5 @@ credential or live transport path.
 Security invariants include HTTPS-only production endpoints, OS secure storage
 for credentials, no offline mutation outbox, exact revision/idempotency binding,
 server-owned authority, bounded cached reads, and fail-closed unknown events.
+Native signing custody, immutable build evidence, production authorization, and
+incident rollback follow [docs/release-governance.md](docs/release-governance.md).

@@ -25,8 +25,10 @@ jest.mock('expo-crypto', () => ({ randomUUID: () => 'provider-key' }));
 function Probe() {
   const {
     snapshot,
+    projectionReady,
     decideApproval,
     sendFollowUp,
+    refreshProjection,
     setConnectionPhase,
     stopRun,
   } = useMobile();
@@ -36,10 +38,18 @@ function Probe() {
   return (
     <>
       <Text>{`${snapshot.connection.phase}:${snapshot.connection.mutationsAllowed}`}</Text>
+      <Text>{`projection-ready:${projectionReady}`}</Text>
       <Text>{`events:${events.length}`}</Text>
       <Text>{`receipts:${snapshot.receipts.length}`}</Text>
       <Text>{`approvals:${snapshot.approvals.length}`}</Text>
       <Text>{`run:${session.run?.coordinate.id ?? 'none'}`}</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Test refresh"
+        onPress={() => void refreshProjection()}
+      >
+        <Text>Refresh</Text>
+      </Pressable>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Test follow-up"
@@ -107,10 +117,12 @@ test('startup is read only until bootstrap traverses attachment', async () => {
   );
 
   expect(view.getByText('stale:false')).toBeTruthy();
+  expect(view.getByText('projection-ready:false')).toBeTruthy();
   await fireEvent.press(view.getByLabelText('Test resume'));
   expect(view.getByText('stale:false')).toBeTruthy();
   releaseBootstrap();
   await waitFor(() => expect(view.getByText('live:true')).toBeTruthy());
+  expect(view.getByText('projection-ready:true')).toBeTruthy();
   expect(view.getByText('events:3')).toBeTruthy();
   expect(attach).toHaveBeenCalledTimes(2);
 
@@ -118,6 +130,38 @@ test('startup is read only until bootstrap traverses attachment', async () => {
   await waitFor(() => expect(view.getByText('stale:false')).toBeTruthy());
   await fireEvent.press(view.getByLabelText('Test resume'));
   await waitFor(() => expect(view.getByText('live:true')).toBeTruthy());
+});
+
+test('reconnect replaces an expired cursor with a fresh bounded snapshot', async () => {
+  const base = createMockGateway();
+  let expireResume = false;
+  const gateway: MobileAutomoniqueGateway = {
+    ...base,
+    async attach(session, cursor, signal) {
+      if (expireResume && cursor !== null) {
+        const error = Object.assign(new Error('cursor_expired'), {
+          outcome: 'resync_required' as const,
+        });
+        throw error;
+      }
+      return base.attach(session, cursor, signal);
+    },
+  };
+  const attach = jest.spyOn(gateway, 'attach');
+  const view = await render(
+    <MobileProvider gateway={gateway}>
+      <Probe />
+    </MobileProvider>,
+  );
+  await waitFor(() => expect(view.getByText('live:true')).toBeTruthy());
+  expireResume = true;
+
+  await fireEvent.press(view.getByLabelText('Test refresh'));
+
+  await waitFor(() => expect(view.getByText('live:true')).toBeTruthy());
+  expect(view.getByText('events:3')).toBeTruthy();
+  expect(attach.mock.calls.some((call) => call[1] !== null)).toBe(true);
+  expect(attach.mock.calls.some((call) => call[1] === null)).toBe(true);
 });
 
 test('a rejected receipt is visible but never invents a completed event', async () => {

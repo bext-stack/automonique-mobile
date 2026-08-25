@@ -4,6 +4,10 @@ import { useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Screen } from '@/components/screen';
+import {
+  approvalAnnouncement,
+  announceForAccessibility,
+} from '@/core/accessibility';
 import type { ApprovalSummary } from '@/core/types';
 import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
@@ -25,7 +29,10 @@ export default function ApprovalsScreen() {
 
   async function decide(approval: ApprovalSummary, decision: 'grant' | 'deny') {
     try {
-      await decideApproval(approval, decision);
+      const receipt = await decideApproval(approval, decision);
+      announceForAccessibility(
+        approvalAnnouncement(approval.title, decision, receipt.outcome),
+      );
     } catch (error) {
       Alert.alert(
         'Decision not recorded',

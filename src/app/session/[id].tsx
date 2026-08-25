@@ -15,6 +15,10 @@ import {
 import { ReceiptCard } from '@/components/receipt-card';
 import { Screen } from '@/components/screen';
 import { TimelineEventCard } from '@/components/timeline-event-card';
+import {
+  announceForAccessibility,
+  receiptAnnouncement,
+} from '@/core/accessibility';
 import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
 
@@ -107,7 +111,10 @@ export default function SessionScreen() {
     const text = draft.trim();
     if (!text || !followUpAllowed || !draftWithinLimit) return;
     try {
-      await sendFollowUp(session!, text);
+      const receipt = await sendFollowUp(session!, text);
+      announceForAccessibility(
+        receiptAnnouncement(receipt.action, receipt.outcome),
+      );
       setDraft('');
       await AsyncStorage.removeItem(
         draftKey(session!.target.coordinate.id),
@@ -122,7 +129,10 @@ export default function SessionScreen() {
 
   async function requestStop() {
     try {
-      await stopRun(session!);
+      const receipt = await stopRun(session!);
+      announceForAccessibility(
+        `${receiptAnnouncement(receipt.action, receipt.outcome)} for ${session!.run?.coordinate.id ?? 'the selected run'}`,
+      );
     } catch (error) {
       Alert.alert(
         'Run not stopped',

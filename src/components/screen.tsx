@@ -37,8 +37,10 @@ export function Screen({
     >
       {scroll ? (
         <ScrollView
+          automaticallyAdjustKeyboardInsets
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={[styles.content, contentContainerStyle]}
+          keyboardShouldPersistTaps="handled"
         >
           {content}
         </ScrollView>

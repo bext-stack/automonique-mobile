@@ -4,35 +4,45 @@
     "slug": "automonique-mobile",
     "version": "0.1.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/automonique-icon-opaque.png",
     "scheme": "automonique",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
+      "icon": "./assets/images/automonique-icon-opaque.png",
       "bundleIdentifier": "dev.bext.automonique",
-      "supportsTablet": true
+      "buildNumber": "1",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": false
+        }
+      }
     },
     "android": {
       "package": "dev.bext.automonique",
+      "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#0B3529",
+        "foregroundImage": "./assets/images/automonique-mark.png"
       }
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/automonique-icon-opaque.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "backgroundColor": "#F6F5F0",
+          "dark": {
+            "backgroundColor": "#111310",
+            "image": "./assets/images/automonique-mark.png"
+          },
+          "image": "./assets/images/automonique-mark.png",
+          "imageWidth": 180
         }
       ],
       "expo-secure-store",
