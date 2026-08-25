@@ -5,8 +5,16 @@ Please report vulnerabilities privately through GitHub Security Advisories for
 private endpoints, customer data, or exploit details.
 
 The supported line is the latest commit on the default branch until tagged
-mobile releases begin. The current baseline is synthetic and has no production
-credential or live transport path.
+mobile releases begin. The application includes the production SDK transport
+and scoped pairing, refresh, revocation, server-identity, authorization, and
+resumable-history boundaries. It ships with no configured endpoint or
+credential, and operational navigation remains unavailable until an operator
+supplies an origin- and identity-bound one-time pairing offer.
+
+Automated contract, security, native-policy, and bundle verification does not
+establish live-environment or release acceptance. No authorized
+non-production connection, EAS artifact, signed device build, app-store
+release, or production deployment is currently claimed by this repository.
 
 Security invariants include HTTPS-only production endpoints, OS secure storage
 for credentials, no offline mutation outbox, exact revision/idempotency binding,

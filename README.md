@@ -5,18 +5,32 @@ fail-closed consumer: it never embeds an agent runtime, provider credentials,
 routing policy, privileged tools, direct database access, or an alternative
 authority model.
 
-## Current baseline
+## Current implementation
 
-The checked-in vertical slice is synthetic by design. It demonstrates bounded
-session discovery, an authoritative/preview/synthetic timeline, exact-session
-follow-up, exact-run stop, approval decisions, stale read-only behavior,
-durable receipts, idempotent reconciliation, cached reads, and persisted
-drafts. It does not connect to a live Automonique installation.
+The checked-in application has a production networking path backed by the
+canonical Automonique SDK. The production composition root starts unpaired and
+keeps operational navigation unavailable until an operator supplies a
+short-lived, one-time pairing offer for an exact HTTPS origin. Discovery and
+pairing pin the server identity; issued access and refresh credentials are
+stored in OS Secure Store, while non-secret connection metadata is kept
+separately. Expiry, rejected authorization, refresh uncertainty, revocation,
+and identity or contract mismatches return the app to a fail-closed,
+non-writable lifecycle state.
 
-Production networking remains unavailable until the server supplies scoped
-mobile authentication, refresh/revocation, stable server identity, negotiated
-actor-authorized actions and remotely resumable sanitized history. The app
-does not ask for or persist a live credential before those contracts exist.
+After successful admission, the SDK gateway consumes the server-authorized
+actor, session scope, actions, limits, sanitized resumable history, and receipt
+state. Screens expose only bounded session discovery and attachment,
+exact-session follow-up, exact-run stop, approval decisions, and receipt
+reconciliation. They never receive generic Platform execution authority.
+Deterministic synthetic gateways remain test fixtures and are excluded from
+the production source graph and emitted bundles.
+
+This implementation has passed automated SDK, lifecycle, security, native
+policy, test, and Android/iOS/web export gates. It has not yet been accepted
+against an authorized non-production Automonique installation, and no EAS
+artifact, signed device build, app-store release, or production deployment is
+claimed. Those steps require separately authorized endpoint, account, build,
+device, and release evidence.
 
 ## Requirements
 
@@ -39,7 +53,8 @@ local exports do not claim that signed device binaries or store releases exist.
 ## Safety properties
 
 - Production endpoints require HTTPS; Android cleartext traffic is disabled.
-- Credentials, once supported, are stored only with `expo-secure-store`.
+- Scoped access and refresh credentials are stored only with
+  `expo-secure-store`; one-time pairing proofs are never persisted.
 - Async Storage contains bounded cached reads, endpoint drafts, and message
   drafts—never credentials and never an offline mutation outbox.
 - Screens receive only the narrow `MobileAutomoniqueGateway`; they cannot issue
