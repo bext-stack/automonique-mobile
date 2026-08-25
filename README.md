@@ -32,6 +32,14 @@ artifact, signed device build, app-store release, or production deployment is
 claimed. Those steps require separately authorized endpoint, account, build,
 device, and release evidence.
 
+## Preview build status
+
+No verified APK is published yet. After the Android preview artifact is built
+from a reviewed commit and its packaged transport policy is inspected, this
+section will record its immutable GitHub prerelease download URL and SHA-256
+digest. The preview will remain an internal, non-production artifact—not a
+production-signed device build, app-store release, or production deployment.
+
 ## Requirements
 
 - Node.js 24 LTS
