@@ -1,0 +1,171 @@
+// SPDX-License-Identifier: Elastic-2.0
+
+import groovy.json.JsonOutput
+import groovy.xml.XmlSlurper
+import java.security.MessageDigest
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+
+String sha256(File file) {
+    MessageDigest digest = MessageDigest.getInstance('SHA-256')
+    file.withInputStream { input ->
+        byte[] buffer = new byte[8192]
+        int read
+        while ((read = input.read(buffer)) != -1) {
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().encodeHex().toString()
+}
+
+gradle.projectsEvaluated {
+    Project appProject = gradle.rootProject.findProject(':app')
+    if (appProject == null) {
+        // The init script is also evaluated for React Native composite plugin builds.
+        return
+    }
+
+    appProject.tasks.register('previewRuntimeInventory') {
+        group = 'verification'
+        description = 'Resolve the exact release Maven artifacts and POM license metadata.'
+
+        doLast {
+            String rawOutput = System.getenv('PREVIEW_MAVEN_RAW')
+            if (rawOutput == null || rawOutput.trim().isEmpty()) {
+                throw new GradleException('preview_inventory_output_missing')
+            }
+
+            def configuration = appProject.configurations.getByName('releaseRuntimeClasspath')
+            def components = configuration.incoming.resolutionResult.allComponents.findAll {
+                it.id instanceof ModuleComponentIdentifier
+            }.sort { left, right ->
+                String leftKey = "${left.id.group}:${left.id.module}:${left.id.version}"
+                String rightKey = "${right.id.group}:${right.id.module}:${right.id.version}"
+                leftKey <=> rightKey
+            }
+
+            Map<String, Map<String, Object>> pomCache = [:]
+            Closure<Map<String, Object>> readPom
+            readPom = { String group, String module, String version, Set<String> ancestry ->
+                String coordinate = "${group}:${module}:${version}"
+                if (pomCache.containsKey(coordinate)) {
+                    return pomCache[coordinate]
+                }
+                if (ancestry.contains(coordinate) || ancestry.size() >= 8) {
+                    throw new GradleException("preview_inventory_pom_cycle:${coordinate}")
+                }
+
+                def dependency = appProject.dependencies.create("${coordinate}@pom")
+                def pomConfiguration = appProject.configurations.detachedConfiguration(dependency)
+                pomConfiguration.transitive = false
+                configuration.attributes.keySet().each { key ->
+                    def value = configuration.attributes.getAttribute(key)
+                    if (value != null) {
+                        pomConfiguration.attributes.attribute(key, value)
+                    }
+                }
+                Set<File> resolved = pomConfiguration.resolve()
+                if (resolved.size() != 1) {
+                    throw new GradleException("preview_inventory_pom_resolution:${coordinate}")
+                }
+
+                File pomFile = resolved.first()
+                def pom = new XmlSlurper(false, false).parse(pomFile)
+                String packaging = pom.packaging.text().trim() ?: 'jar'
+                List<Map<String, String>> licenses = pom.licenses.license.collect { license ->
+                    [
+                        name: license.name.text().trim(),
+                        url: license.url.text().trim(),
+                        distribution: license.distribution.text().trim(),
+                        comments: license.comments.text().trim(),
+                    ]
+                }
+
+                String inheritedFrom = ''
+                if (licenses.isEmpty()) {
+                    String parentGroup = pom.parent.groupId.text().trim()
+                    String parentModule = pom.parent.artifactId.text().trim()
+                    String parentVersion = pom.parent.version.text().trim()
+                    if (!parentGroup.isEmpty() && !parentModule.isEmpty() && !parentVersion.isEmpty()) {
+                        Set<String> nextAncestry = new LinkedHashSet<>(ancestry)
+                        nextAncestry.add(coordinate)
+                        Map<String, Object> parent = readPom(
+                            parentGroup,
+                            parentModule,
+                            parentVersion,
+                            nextAncestry,
+                        )
+                        licenses = parent.licenses as List<Map<String, String>>
+                        inheritedFrom = parent.coordinate as String
+                    }
+                }
+
+                Map<String, Object> result = [
+                    coordinate: coordinate,
+                    pomPath: pomFile.absolutePath,
+                    pomSha256: sha256(pomFile),
+                    packaging: packaging,
+                    licenses: licenses,
+                    inheritedFrom: inheritedFrom,
+                ]
+                pomCache[coordinate] = result
+                return result
+            }
+
+            List<Map<String, Object>> inventory = components.collect { component ->
+                def id = component.id as ModuleComponentIdentifier
+                Map<String, Object> pom = readPom(
+                    id.group,
+                    id.module,
+                    id.version,
+                    new LinkedHashSet<String>(),
+                )
+                String packaging = pom.packaging as String
+                File artifactFile = null
+                if (packaging != 'pom') {
+                    def artifactDependency = appProject.dependencies.create(
+                        "${id.group}:${id.module}:${id.version}@${packaging}",
+                    )
+                    def artifactConfiguration = appProject.configurations.detachedConfiguration(
+                        artifactDependency,
+                    )
+                    artifactConfiguration.transitive = false
+                    configuration.attributes.keySet().each { key ->
+                        def value = configuration.attributes.getAttribute(key)
+                        if (value != null) {
+                            artifactConfiguration.attributes.attribute(key, value)
+                        }
+                    }
+                    Set<File> artifactFiles = artifactConfiguration.resolve()
+                    if (artifactFiles.size() != 1) {
+                        throw new GradleException(
+                            "preview_inventory_artifact_resolution:${id.group}:${id.module}:${id.version}",
+                        )
+                    }
+                    artifactFile = artifactFiles.first()
+                }
+                return [
+                    coordinate: "${id.group}:${id.module}:${id.version}",
+                    type: packaging,
+                    classifier: '',
+                    artifactPath: artifactFile?.absolutePath ?: '',
+                    artifactName: artifactFile?.name ?: '',
+                    pomPath: pom.pomPath,
+                    pomSha256: pom.pomSha256,
+                    licenses: pom.licenses,
+                    inheritedFrom: pom.inheritedFrom,
+                ]
+            }
+
+            File output = new File(rawOutput)
+            output.parentFile.mkdirs()
+            output.setText(
+                JsonOutput.prettyPrint(JsonOutput.toJson([
+                    schema: 'automonique.android-preview-maven-raw/v1',
+                    configuration: 'releaseRuntimeClasspath',
+                    artifacts: inventory,
+                ])) + '\n',
+                'UTF-8',
+            )
+        }
+    }
+}
