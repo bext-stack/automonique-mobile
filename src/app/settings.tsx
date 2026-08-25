@@ -5,28 +5,49 @@ import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { Screen } from '@/components/screen';
-import { normalizeEndpoint } from '@/core/network-policy';
+import { MAX_ENDPOINT_BYTES, normalizeEndpoint } from '@/core/network-policy';
+import { AUTOMONIQUE_SDK_METADATA } from '@/core/sdk-metadata';
+import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
 
 const ENDPOINT_DRAFT_KEY = 'automonique.mobile.endpoint-draft.v1';
 
 export default function SettingsScreen() {
+  const { snapshot } = useMobile();
   const palette = usePalette();
   const [endpoint, setEndpoint] = useState('https://');
   const [message, setMessage] = useState(
     'Production connection is unavailable until scoped mobile authorization is implemented server-side.',
   );
+  const transportLabel = snapshot.connection.synthetic
+    ? 'Synthetic fixture through the mobile gateway'
+    : `${snapshot.connection.phase === 'live' ? 'Live' : 'Read-only'} ${AUTOMONIQUE_SDK_METADATA.packageName} transport`;
 
   useEffect(() => {
-    void AsyncStorage.getItem(ENDPOINT_DRAFT_KEY).then((value) => {
-      if (value) setEndpoint(value);
-    });
+    void (async () => {
+      let value: string | null;
+      try {
+        value = await AsyncStorage.getItem(ENDPOINT_DRAFT_KEY);
+      } catch {
+        return;
+      }
+      if (value === null) return;
+      try {
+        setEndpoint(normalizeEndpoint(value, false));
+      } catch {
+        await AsyncStorage.removeItem(ENDPOINT_DRAFT_KEY).catch(
+          () => undefined,
+        );
+      }
+    })();
   }, []);
 
   function validateDraft() {
     try {
       const normalized = normalizeEndpoint(endpoint, false);
-      void AsyncStorage.setItem(ENDPOINT_DRAFT_KEY, normalized);
+      void AsyncStorage.setItem(ENDPOINT_DRAFT_KEY, normalized).catch(
+        () => undefined,
+      );
       setEndpoint(normalized);
       setMessage(
         'Endpoint policy passed. No credential was requested and no network call was made.',
@@ -50,6 +71,30 @@ export default function SettingsScreen() {
         refresh, and revocation before navigation.
       </Text>
       <View
+        accessibilityLabel="Automonique SDK protocol metadata"
+        style={[
+          styles.card,
+          { backgroundColor: palette.surface, borderColor: palette.border },
+        ]}
+      >
+        <Text style={[styles.label, { color: palette.text }]}>
+          SDK boundary
+        </Text>
+        <Text style={[styles.copy, { color: palette.textMuted }]}>
+          {transportLabel}
+        </Text>
+        <Text style={[styles.metadata, { color: palette.text }]}>
+          {AUTOMONIQUE_SDK_METADATA.schema} · protocol v
+          {AUTOMONIQUE_SDK_METADATA.protocolVersion}
+        </Text>
+        <Text style={[styles.status, { color: palette.textMuted }]}>
+          {AUTOMONIQUE_SDK_METADATA.protocol}
+        </Text>
+        <Text selectable style={[styles.digest, { color: palette.textMuted }]}>
+          {AUTOMONIQUE_SDK_METADATA.schemaDigest}
+        </Text>
+      </View>
+      <View
         style={[
           styles.card,
           { backgroundColor: palette.surface, borderColor: palette.border },
@@ -63,6 +108,7 @@ export default function SettingsScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
+          maxLength={MAX_ENDPOINT_BYTES}
           onChangeText={setEndpoint}
           style={[
             styles.input,
@@ -126,6 +172,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   status: { fontSize: 12, lineHeight: 18 },
+  metadata: { fontSize: 13, fontWeight: '700' },
+  digest: { fontSize: 10, lineHeight: 15, fontFamily: 'monospace' },
   notice: { borderWidth: 1, borderRadius: 16, padding: 15, gap: 7 },
   noticeTitle: { fontSize: 15, fontWeight: '800' },
 });

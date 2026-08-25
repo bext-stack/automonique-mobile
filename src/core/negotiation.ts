@@ -1,41 +1,54 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-export interface MobileCapabilities {
+import {
+  ResourceAuthority_VALUES,
+  type ResourceAuthority,
+} from '@automonique/sdk';
+
+import type { MobileAction } from './types';
+
+export interface MobileAuthorization {
   readonly protocol: 'automonique.platform';
   readonly schema: 'automonique.platform/v1';
   readonly serverIdentity: string;
   readonly actor: string;
-  readonly allowedActions: readonly (
-    'attach' | 'follow_up' | 'decide_approval' | 'stop_run'
-  )[];
+  readonly sessionAuthority: ResourceAuthority;
+  readonly allowedActions: readonly MobileAction[];
   readonly limits: {
     readonly maxPageEvents: number;
     readonly maxFollowUpBytes: number;
   };
 }
 
-export function admitMobileCapabilities(
-  value: MobileCapabilities,
+const MOBILE_ACTIONS: readonly MobileAction[] = [
+  'attach',
+  'follow_up',
+  'decide_approval',
+  'stop_run',
+];
+
+export function admitMobileAuthorization(
+  value: MobileAuthorization,
   expectedIdentity: string,
-): MobileCapabilities {
+): MobileAuthorization {
   if (
     value.protocol !== 'automonique.platform' ||
     value.schema !== 'automonique.platform/v1' ||
     value.serverIdentity !== expectedIdentity ||
-    !value.actor ||
+    !/^[\x21-\x7e]{1,256}$/.test(value.actor) ||
+    !/^[\x21-\x7e]{1,256}$/.test(value.serverIdentity) ||
+    !ResourceAuthority_VALUES.includes(value.sessionAuthority) ||
+    !Array.isArray(value.allowedActions) ||
+    new Set(value.allowedActions).size !== value.allowedActions.length ||
+    value.allowedActions.some((action) => !MOBILE_ACTIONS.includes(action)) ||
+    !Number.isInteger(value.limits.maxPageEvents) ||
     value.limits.maxPageEvents < 1 ||
-    value.limits.maxFollowUpBytes < 1
+    value.limits.maxPageEvents > 512 ||
+    !Number.isInteger(value.limits.maxFollowUpBytes) ||
+    value.limits.maxFollowUpBytes < 1 ||
+    value.limits.maxFollowUpBytes > 65_536
   ) {
     throw new Error('mobile_capabilities_incompatible');
   }
   return value;
-}
-
-/**
- * Deliberate production gate. The current server does not issue the scoped,
- * actor-authorized capability document required above, so the mobile app has
- * no production transport constructor yet.
- */
-export function productionGatewayUnavailable(): never {
-  throw new Error('mobile_production_gateway_unavailable');
 }

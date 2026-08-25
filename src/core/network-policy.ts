@@ -7,10 +7,15 @@ export class EndpointPolicyError extends Error {
   }
 }
 
+export const MAX_ENDPOINT_BYTES = 2_048;
+
 export function normalizeEndpoint(
   input: string,
   allowLocalhost = __DEV__,
 ): string {
+  if (new TextEncoder().encode(input).byteLength > MAX_ENDPOINT_BYTES) {
+    throw new EndpointPolicyError('invalid_url');
+  }
   let endpoint: URL;
   try {
     endpoint = new URL(input.trim());
@@ -30,5 +35,9 @@ export function normalizeEndpoint(
 
   endpoint.hash = '';
   endpoint.search = '';
-  return endpoint.toString().replace(/\/$/, '');
+  const normalized = endpoint.toString().replace(/\/$/, '');
+  if (new TextEncoder().encode(normalized).byteLength > MAX_ENDPOINT_BYTES) {
+    throw new EndpointPolicyError('invalid_url');
+  }
+  return normalized;
 }

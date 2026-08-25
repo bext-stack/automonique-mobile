@@ -47,8 +47,10 @@ local exports do not claim that signed device binaries or store releases exist.
   writes reconcile by key instead of being blindly replayed.
 - A stale, incompatible, or reconnecting projection is read-only.
 
-See [architecture](docs/architecture.md), [decisions](docs/decisions.md), and
-[roadmap](docs/roadmap.md). Security reports follow [SECURITY.md](SECURITY.md).
+See the [product definition](docs/product.md),
+[architecture](docs/architecture.md), [decisions](docs/decisions.md),
+[delivery backlog](docs/backlog.md), and [roadmap](docs/roadmap.md). Security
+reports follow [SECURITY.md](SECURITY.md).
 
 ## License
 

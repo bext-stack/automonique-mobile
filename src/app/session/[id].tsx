@@ -27,6 +27,8 @@ export default function SessionScreen() {
   const { snapshot, busyAction, sendFollowUp, stopRun } = useMobile();
   const palette = usePalette();
   const [draft, setDraft] = useState('');
+  const [loadedDraftKey, setLoadedDraftKey] = useState<string | null>(null);
+  const followUpLimit = snapshot.connection.limits.maxFollowUpBytes;
   const session = snapshot.sessions.find(
     (candidate) => candidate.target.coordinate.id === id,
   );
@@ -39,15 +41,44 @@ export default function SessionScreen() {
 
   useEffect(() => {
     if (!id) return;
-    void AsyncStorage.getItem(draftKey(id)).then((value) =>
-      setDraft(value ?? ''),
-    );
-  }, [id]);
+    let active = true;
+    void (async () => {
+      const key = draftKey(id);
+      let value: string | null;
+      try {
+        value = await AsyncStorage.getItem(key);
+      } catch {
+        return;
+      }
+      if (!active) return;
+      if (
+        value !== null &&
+        new TextEncoder().encode(value).byteLength <= followUpLimit
+      ) {
+        setDraft(value);
+      } else {
+        setDraft('');
+        if (value !== null) {
+          await AsyncStorage.removeItem(key).catch(() => undefined);
+        }
+      }
+      if (active) setLoadedDraftKey(key);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [followUpLimit, id]);
 
   useEffect(() => {
     if (!id) return;
-    void AsyncStorage.setItem(draftKey(id), draft);
-  }, [draft, id]);
+    const key = draftKey(id);
+    if (loadedDraftKey !== key) return;
+    if (new TextEncoder().encode(draft).byteLength <= followUpLimit) {
+      void AsyncStorage.setItem(key, draft).catch(() => undefined);
+    } else {
+      void AsyncStorage.removeItem(key).catch(() => undefined);
+    }
+  }, [draft, followUpLimit, id, loadedDraftKey]);
 
   if (!session) {
     return (
@@ -59,18 +90,28 @@ export default function SessionScreen() {
     );
   }
 
-  const writable =
+  const followUpAllowed =
     snapshot.connection.mutationsAllowed &&
+    snapshot.connection.allowedActions.includes('follow_up') &&
     session.followUpAllowed &&
     busyAction === null;
+  const stopAllowed =
+    snapshot.connection.mutationsAllowed &&
+    snapshot.connection.allowedActions.includes('stop_run') &&
+    session.run !== null &&
+    busyAction === null;
+  const draftBytes = new TextEncoder().encode(draft.trim()).byteLength;
+  const draftWithinLimit = draftBytes <= followUpLimit;
 
   async function submitFollowUp() {
     const text = draft.trim();
-    if (!text || !writable) return;
+    if (!text || !followUpAllowed || !draftWithinLimit) return;
     try {
       await sendFollowUp(session!, text);
       setDraft('');
-      await AsyncStorage.removeItem(draftKey(session!.target.coordinate.id));
+      await AsyncStorage.removeItem(
+        draftKey(session!.target.coordinate.id),
+      ).catch(() => undefined);
     } catch (error) {
       Alert.alert(
         'Follow-up not sent',
@@ -137,12 +178,12 @@ export default function SessionScreen() {
         </Text>
         <TextInput
           accessibilityLabel="Follow-up message"
-          editable={writable}
+          editable={followUpAllowed}
           multiline
-          maxLength={4096}
+          maxLength={followUpLimit}
           onChangeText={setDraft}
           placeholder={
-            writable
+            followUpAllowed
               ? 'Send a bound follow-up…'
               : 'Read only while stale or unauthorized'
           }
@@ -153,21 +194,42 @@ export default function SessionScreen() {
           ]}
           value={draft}
         />
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[
+            styles.byteLimit,
+            {
+              color: draftWithinLimit ? palette.textMuted : palette.danger,
+            },
+          ]}
+        >
+          {draftBytes} / {followUpLimit} bytes
+          {draftWithinLimit ? '' : ' · too long'}
+        </Text>
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: !writable || !draft.trim() }}
-          disabled={!writable || !draft.trim()}
+          accessibilityLabel="Send follow-up"
+          accessibilityState={{
+            disabled: !followUpAllowed || !draft.trim() || !draftWithinLimit,
+          }}
+          disabled={!followUpAllowed || !draft.trim() || !draftWithinLimit}
           onPress={() => void submitFollowUp()}
           style={[
             styles.primary,
             {
-              backgroundColor: writable ? palette.accent : palette.surfaceMuted,
+              backgroundColor:
+                followUpAllowed && draftWithinLimit
+                  ? palette.accent
+                  : palette.surfaceMuted,
             },
           ]}
         >
           <Text
             style={{
-              color: writable ? palette.accentText : palette.textMuted,
+              color:
+                followUpAllowed && draftWithinLimit
+                  ? palette.accentText
+                  : palette.textMuted,
               fontWeight: '800',
             }}
           >
@@ -178,10 +240,13 @@ export default function SessionScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Stop exact run ${session.run.coordinate.id}`}
-            accessibilityState={{ disabled: !writable }}
-            disabled={!writable}
+            accessibilityState={{ disabled: !stopAllowed }}
+            disabled={!stopAllowed}
             onPress={() => void requestStop()}
-            style={[styles.stop, { borderColor: palette.danger }]}
+            style={[
+              styles.stop,
+              { borderColor: palette.danger, opacity: stopAllowed ? 1 : 0.45 },
+            ]}
           >
             <Text style={{ color: palette.danger, fontWeight: '800' }}>
               Stop exact run
@@ -199,7 +264,10 @@ export default function SessionScreen() {
             Durable receipts
           </Text>
           {receipts.map((receipt) => (
-            <ReceiptCard key={receipt.id} receipt={receipt} />
+            <ReceiptCard
+              key={receipt.id ?? receipt.idempotencyKey}
+              receipt={receipt}
+            />
           ))}
         </View>
       )}
@@ -222,6 +290,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlignVertical: 'top',
   },
+  byteLimit: { fontSize: 12, textAlign: 'right' },
   primary: {
     minHeight: 48,
     borderRadius: 12,

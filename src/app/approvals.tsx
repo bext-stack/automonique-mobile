@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Screen } from '@/components/screen';
@@ -10,7 +11,17 @@ import { usePalette } from '@/theme/palette';
 export default function ApprovalsScreen() {
   const { snapshot, busyAction, decideApproval } = useMobile();
   const palette = usePalette();
-  const enabled = snapshot.connection.mutationsAllowed && busyAction === null;
+  const [observedAt] = useState(() => Date.now());
+  const actionAllowed =
+    snapshot.connection.mutationsAllowed &&
+    snapshot.connection.allowedActions.includes('decide_approval');
+
+  function approvalEnabled(approval: ApprovalSummary): boolean {
+    const expired =
+      approval.expiresAt !== null &&
+      Date.parse(approval.expiresAt) <= observedAt;
+    return actionAllowed && !expired && busyAction === null;
+  }
 
   async function decide(approval: ApprovalSummary, decision: 'grant' | 'deny') {
     try {
@@ -34,6 +45,11 @@ export default function ApprovalsScreen() {
       {snapshot.approvals.length === 0 && (
         <Text style={{ color: palette.textMuted }}>
           No bounded approvals are pending.
+        </Text>
+      )}
+      {!actionAllowed && snapshot.approvals.length > 0 && (
+        <Text style={[styles.detail, { color: palette.textMuted }]}>
+          Approval decisions are read only for the current connection.
         </Text>
       )}
       {snapshot.approvals.map((approval) => (
@@ -62,14 +78,17 @@ export default function ApprovalsScreen() {
                 key={decision}
                 accessibilityRole="button"
                 accessibilityLabel={`${decision} ${approval.title} at revision ${approval.target.revision}`}
-                accessibilityState={{ disabled: !enabled }}
-                disabled={!enabled}
+                accessibilityState={{
+                  disabled: !approvalEnabled(approval),
+                }}
+                disabled={!approvalEnabled(approval)}
                 onPress={() => void decide(approval, decision)}
                 style={[
                   styles.action,
                   {
                     borderColor:
                       decision === 'grant' ? palette.accent : palette.danger,
+                    opacity: approvalEnabled(approval) ? 1 : 0.45,
                   },
                 ]}
               >

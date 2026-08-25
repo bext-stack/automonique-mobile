@@ -25,3 +25,9 @@ test('localhost cleartext is development-only', () => {
     'https_required',
   );
 });
+
+test('endpoint input and normalization are bounded', () => {
+  expect(() =>
+    normalizeEndpoint(`https://example.test/${'a'.repeat(2_048)}`, false),
+  ).toThrow('invalid_url');
+});

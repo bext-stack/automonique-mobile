@@ -1,0 +1,121 @@
+# Product definition
+
+## Product promise
+
+Automonique Mobile gives an operator a small, trustworthy control surface for
+work that is already running on an Automonique server. It is not a second
+agent runtime. The server remains authoritative for identity, policy,
+execution, history, and mutation outcomes.
+
+## Primary operator
+
+The first user is an on-call or delivery operator who needs to understand and
+intervene in an active Automonique session away from a desktop. They already
+have access to a particular Automonique installation and need a bounded view,
+clear freshness, and explicit actions rather than an administration cockpit.
+
+## Jobs to be done
+
+1. See which authorized sessions need attention and whether the view is live,
+   reconnecting, stale, incompatible, or synthetic.
+2. Open one exact session and understand its identity, revision, run,
+   freshness, cursor, and sanitized timeline.
+3. Send a deliberate follow-up to that exact session without accidentally
+   targeting another run or replaying an uncertain write.
+4. Review an approval's requester, impact, expiry, and exact revision before
+   granting or denying it.
+5. Stop one exact run and receive an authoritative outcome.
+6. Recover the receipt for an ambiguous mutation by idempotency key without
+   submitting the mutation again.
+7. Retain a bounded read-only projection and message draft when connectivity
+   is lost.
+
+## First-slice outcome
+
+The first slice is a deterministic, synthetic operator journey through the
+same narrow gateway, cursor reducer, cache boundary, and reconciliation path
+that a production SDK adapter uses. It is valuable as an executable contract
+and interaction test; it is not evidence of a live server connection.
+
+The slice is accepted only when all of the following are evidenced:
+
+- Session bootstrap and every attachable timeline flow through
+  `MobileAutomoniqueGateway`; screens do not import fixtures or the Platform
+  client.
+- The timeline retains authoritative, preview, synthetic, and unknown event
+  provenance without interpreting an unknown event as success.
+- Exact duplicate pages are idempotent. A cursor gap, conflicting duplicate,
+  invalid page, or page over the negotiated limit makes the projection stale
+  and read-only until a fresh snapshot is admitted.
+- Follow-up, approval decision, and run stop each carry an exact coordinate,
+  revision, and newly generated idempotency key.
+- Action controls require both a live projection and the corresponding
+  actor-authorized action. Follow-up also observes its negotiated UTF-8 byte
+  ceiling.
+- A reconciliation handle is durably recorded before a mutation is sent. An
+  ambiguous or accepted result is resolved only with `get_receipt`; the
+  original mutation is never replayed.
+- A completed follow-up may add a labeled local preview without advancing the
+  acknowledged resume cursor; a completed approval disappears, and a completed
+  stop removes the run association.
+- Cached data is schema-admitted, read-only on restore, capped at 256 KiB, 100
+  sessions, 1,000 events, 100 approvals, and 200 receipts. Corrupt or oversized
+  cache data cannot make an action writable.
+- The vendored SDK archive, source commit, package version, Apache-2.0 license,
+  schema digest, and SHA-256 digest agree before validation proceeds.
+- TypeScript, lint, unit/integration tests, formatting, Expo Doctor, secret
+  scanning, and Android/iOS/web exports pass in CI under Node.js 24.
+
+Signed native builds, physical-device accessibility passes, and live server
+acceptance are later evidence gates and must not be inferred from Expo export
+success.
+
+## Delivery phases
+
+### Phase 0 — verified synthetic slice
+
+Finish the executable mobile boundary, persistence rules, reconciliation
+behavior, UI states, automated tests, and documentation without enabling a
+production credential or endpoint.
+
+### Phase 1 — server contract and SDK integration
+
+Keep the mobile adapter pinned to a verified `@automonique/sdk` artifact. Add
+server-owned scoped credential issue/refresh/revoke, endpoint discovery,
+stable identity, actor authorization, limits, and sanitized resumable history.
+
+### Phase 2 — authorized production connection
+
+Enable connection setup only after the Phase 1 contracts have live
+Rust-to-TypeScript evidence. Verify real sessions, attachment, follow-up,
+approval, stop, conflict, resynchronization, and receipt recovery against an
+authorized non-production installation.
+
+### Phase 3 — native release readiness
+
+Run EAS Android and iOS simulator builds, device accessibility checks, adverse
+network tests, privacy review, dependency notices, signing, and release
+operations. App-store publication requires a separate decision.
+
+## Product risks
+
+| Risk                                    | Consequence                                                | Control                                                                                               |
+| --------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Authority inferred from method presence | An operator sees an action they are not allowed to perform | Admit a server-bound actor authorization document and gate each action independently                  |
+| Stale or conflicting projection         | A command targets obsolete state                           | Bind exact revisions; make stale, reconnecting, incompatible, gap, and conflict states read-only      |
+| Ambiguous network outcome               | A write is performed twice                                 | Persist only a reconciliation handle before send and query the receipt by idempotency key             |
+| Protocol or artifact drift              | Mobile encodes a different contract from the server        | Use the canonical SDK, pin its artifact and schema digests, and run bundle plus live contract gates   |
+| Sensitive or unbounded local data       | Customer data leaks or exhausts device storage             | Cache only sanitized projections and drafts under explicit ceilings; keep credentials in Secure Store |
+| Endpoint impersonation                  | Credentials or commands reach the wrong server             | Require HTTPS, stable server identity, scoped credentials, expiry, refresh, and revocation            |
+| Native-only regressions                 | A web/export check hides a device failure                  | Require simulator builds and VoiceOver/TalkBack/Dynamic Type checks before release claims             |
+
+## Non-goals for the first slice
+
+- An embedded agent or provider runtime.
+- Direct provider credentials, routing policy, privileged tools, shell access,
+  or direct database access.
+- A generic Platform `execute` surface in screens.
+- An offline mutation queue or background mutation execution.
+- Attachments, voice, widgets, multi-server cockpit, or model/profile/tool
+  administration.
+- Production deployment, signed store binaries, or app-store publication.

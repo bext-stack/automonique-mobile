@@ -31,7 +31,7 @@ export function ReceiptCard({ receipt }: { readonly receipt: Receipt }) {
         style={[styles.meta, { color: palette.textMuted }]}
         numberOfLines={1}
       >
-        {receipt.id}
+        {receipt.id ?? `pending · ${receipt.idempotencyKey}`}
       </Text>
     </View>
   );

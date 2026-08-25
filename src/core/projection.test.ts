@@ -53,6 +53,21 @@ test('gap and conflicting duplicate require a snapshot resync', () => {
   ).toBe(true);
 });
 
+test('page cursor must equal the last new event cursor and cannot advance empty', () => {
+  const first = reduceSessionPage(
+    emptyTimelineProjection,
+    page(null, '1', [events[0]!]),
+  );
+  expect(
+    reduceSessionPage(first, page('1', 'poisoned', [events[1]!]))
+      .resyncRequired,
+  ).toBe(true);
+  expect(reduceSessionPage(first, page('1', '2', [])).resyncRequired).toBe(
+    true,
+  );
+  expect(reduceSessionPage(first, page('1', '1', []))).toEqual(first);
+});
+
 test('unknown events are retained without being interpreted', () => {
   const unknown: SessionEvent = {
     id: 'future-1',

@@ -13,6 +13,13 @@ export default function SessionsScreen() {
   const { snapshot, setConnectionPhase } = useMobile();
   const palette = usePalette();
   const stale = snapshot.connection.phase !== 'live';
+  const transportLabel = snapshot.connection.synthetic
+    ? 'Synthetic development transport'
+    : `${stale ? 'Read-only' : 'Live'} SDK transport`;
+  const simulationControlVisible =
+    snapshot.connection.synthetic &&
+    (!stale ||
+      snapshot.connection.label === 'Simulated connectivity loss — read only');
   return (
     <Screen>
       <View style={styles.heading}>
@@ -25,7 +32,7 @@ export default function SessionsScreen() {
           </Text>
           <Text style={[styles.title, { color: palette.text }]}>Sessions</Text>
           <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-            Bounded, authority-qualified activity.
+            {transportLabel} · bounded, authority-qualified activity.
           </Text>
         </View>
         <Link href="/settings" asChild>
@@ -38,17 +45,21 @@ export default function SessionsScreen() {
         </Link>
       </View>
 
-      <Pressable
-        accessibilityRole="switch"
-        accessibilityState={{ checked: stale }}
-        accessibilityLabel="Simulate offline read-only mode"
-        onPress={() => setConnectionPhase(stale ? 'live' : 'stale')}
-        style={[styles.mode, { backgroundColor: palette.surfaceMuted }]}
-      >
-        <Text style={[styles.modeText, { color: palette.text }]}>
-          {stale ? 'Resume synthetic connection' : 'Simulate connectivity loss'}
-        </Text>
-      </Pressable>
+      {simulationControlVisible && (
+        <Pressable
+          accessibilityRole="switch"
+          accessibilityState={{ checked: stale }}
+          accessibilityLabel="Simulate offline read-only mode"
+          onPress={() => setConnectionPhase(stale ? 'live' : 'stale')}
+          style={[styles.mode, { backgroundColor: palette.surfaceMuted }]}
+        >
+          <Text style={[styles.modeText, { color: palette.text }]}>
+            {stale
+              ? 'Resume synthetic connection'
+              : 'Simulate connectivity loss'}
+          </Text>
+        </Pressable>
+      )}
 
       <View style={styles.list}>
         {snapshot.sessions.map((session) => (
@@ -79,7 +90,10 @@ export default function SessionsScreen() {
             .slice(-3)
             .reverse()
             .map((receipt) => (
-              <ReceiptCard key={receipt.id} receipt={receipt} />
+              <ReceiptCard
+                key={receipt.id ?? receipt.idempotencyKey}
+                receipt={receipt}
+              />
             ))}
         </View>
       )}

@@ -1,19 +1,25 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import type { ResourceAuthority, ResourceKind } from '@automonique/sdk';
+
 export type DecimalRevision = string & { readonly __brand: 'DecimalRevision' };
 
 const MAX_I64 = 9_223_372_036_854_775_807n;
 
 export function decimalRevision(value: string): DecimalRevision {
-  if (!/^[1-9][0-9]*$/.test(value) || BigInt(value) > MAX_I64) {
+  if (
+    value.length > 19 ||
+    !/^[1-9][0-9]*$/.test(value) ||
+    BigInt(value) > MAX_I64
+  ) {
     throw new Error('decimal_revision_invalid');
   }
   return value as DecimalRevision;
 }
 
 export interface Coordinate {
-  readonly authority: 'automonique' | 'provider' | 'client';
-  readonly kind: string;
+  readonly authority: ResourceAuthority;
+  readonly kind: ResourceKind;
   readonly id: string;
 }
 
@@ -25,11 +31,19 @@ export interface VersionedTarget {
 export type ConnectionPhase =
   'live' | 'reconnecting' | 'stale' | 'incompatible';
 
+export type MobileAction =
+  'attach' | 'follow_up' | 'decide_approval' | 'stop_run';
+
 export interface ConnectionStatus {
   readonly phase: ConnectionPhase;
   readonly label: string;
   readonly mutationsAllowed: boolean;
   readonly synthetic: boolean;
+  readonly allowedActions: readonly MobileAction[];
+  readonly limits: {
+    readonly maxPageEvents: number;
+    readonly maxFollowUpBytes: number;
+  };
 }
 
 export interface SessionSummary {
@@ -100,7 +114,7 @@ export type ReceiptOutcome =
   | 'unknown';
 
 export interface Receipt {
-  readonly id: string;
+  readonly id: string | null;
   readonly idempotencyKey: string;
   readonly action: 'follow_up' | 'decide_approval' | 'stop_run';
   readonly target: Coordinate;
@@ -137,7 +151,8 @@ export interface StopRunCommand {
 
 export interface AttachmentHandle {
   readonly session: VersionedTarget;
-  readonly cursor: string;
+  readonly cursor: string | null;
+  readonly sequence: DecimalRevision | null;
   events(signal?: AbortSignal): AsyncIterable<SessionPage>;
 }
 

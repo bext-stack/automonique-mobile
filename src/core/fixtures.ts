@@ -9,6 +9,8 @@ export const syntheticSnapshot: MobileSnapshot = {
     label: 'Synthetic development transport',
     mutationsAllowed: true,
     synthetic: true,
+    allowedActions: ['attach', 'follow_up', 'decide_approval', 'stop_run'],
+    limits: { maxPageEvents: 128, maxFollowUpBytes: 4096 },
   },
   sessions: [
     {
@@ -103,7 +105,7 @@ export const syntheticSnapshot: MobileSnapshot = {
     {
       target: {
         coordinate: {
-          authority: 'provider',
+          authority: 'automonique',
           kind: 'approval',
           id: 'approval-synthetic-001',
         },
@@ -115,7 +117,7 @@ export const syntheticSnapshot: MobileSnapshot = {
       impact:
         'Creates an externally accessible preview artifact. No production deployment.',
       requester: 'provider/session-synthetic-001',
-      expiresAt: '2026-08-26T09:00:00Z',
+      expiresAt: '2099-08-26T09:00:00Z',
     },
   ],
   receipts: [],

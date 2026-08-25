@@ -32,7 +32,11 @@ export function ConnectionBanner() {
       />
       <View style={styles.copy}>
         <Text style={[styles.status, { color: palette.text }]}>
-          {stale ? 'Stale · read only' : 'Live · synthetic'}
+          {stale
+            ? 'Stale · read only'
+            : snapshot.connection.synthetic
+              ? 'Live · synthetic'
+              : 'Live · SDK'}
         </Text>
         <Text style={[styles.label, { color: palette.textMuted }]}>
           {snapshot.connection.label}
