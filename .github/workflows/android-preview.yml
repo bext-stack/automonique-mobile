@@ -174,21 +174,37 @@ jobs:
           avdmanager="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
           emulator="$ANDROID_SDK_ROOT/emulator/emulator"
           adb="$ANDROID_SDK_ROOT/platform-tools/adb"
+          export ANDROID_AVD_HOME="$PREVIEW_WORK_DIR/avd"
+          avd_name=automonique-preview
           test -f "$apk"
           apk_sha_before="$(sha256sum "$apk" | awk '{ print $1 }')"
           test -c /dev/kvm
           sudo setfacl -m "u:$(id -un):rw" /dev/kvm
           test -r /dev/kvm
           test -w /dev/kvm
+          mkdir -p "$ANDROID_AVD_HOME"
+          printf 'ANDROID_AVD_HOME=%s\n' "$ANDROID_AVD_HOME" \
+            | tee "$PREVIEW_OUTPUT_DIR/emulator-avd-environment.txt"
 
           printf 'no\n' | "$avdmanager" create avd --force \
-            --name automonique-preview \
+            --name "$avd_name" \
+            --path "$ANDROID_AVD_HOME/$avd_name.avd" \
             --package 'system-images;android-36;google_apis;x86_64' \
             --device pixel_6 2>&1 \
             | tee "$PREVIEW_OUTPUT_DIR/emulator-avd-creation.txt"
+          test -f "$ANDROID_AVD_HOME/$avd_name.ini"
+          test -d "$ANDROID_AVD_HOME/$avd_name.avd"
+          grep -Fx "path=$ANDROID_AVD_HOME/$avd_name.avd" \
+            "$ANDROID_AVD_HOME/$avd_name.ini"
+          "$avdmanager" list avd 2>&1 \
+            | tee "$PREVIEW_OUTPUT_DIR/emulator-avd-manager-list.txt"
+          "$emulator" -list-avds \
+            | tee "$PREVIEW_OUTPUT_DIR/emulator-avd-list.txt"
+          test "$(wc -l < "$PREVIEW_OUTPUT_DIR/emulator-avd-list.txt")" -eq 1
+          grep -Fx "$avd_name" "$PREVIEW_OUTPUT_DIR/emulator-avd-list.txt"
 
           emulator_console="$PREVIEW_OUTPUT_DIR/emulator-console.txt"
-          "$emulator" -avd automonique-preview -accel on -gpu software \
+          "$emulator" -avd "$avd_name" -accel on -gpu software \
             -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data \
             -no-metrics -camera-back none -memory 4096 -cores 4 \
             > "$emulator_console" 2>&1 &
