@@ -47,11 +47,11 @@
       ],
       "expo-secure-store",
       [
-        "expo-camera",
+        "expo-image-picker",
         {
           "cameraPermission": "Allow Automonique to capture a one-time server pairing QR code for local decoding.",
-          "barcodeScannerEnabled": false,
-          "recordAudioAndroid": false
+          "microphonePermission": false,
+          "photosPermission": false
         }
       ],
       [

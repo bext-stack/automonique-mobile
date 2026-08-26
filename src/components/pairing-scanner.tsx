@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useRef, useState } from 'react';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import {
+  launchCameraAsync,
+  requestCameraPermissionsAsync,
+} from 'expo-image-picker';
+import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -14,23 +18,7 @@ interface PairingScannerProps {
   readonly onScan: (value: string) => void;
 }
 
-function choosePictureSize(sizes: readonly string[]): string | null {
-  const candidates = sizes
-    .map((value) => {
-      const match = /^(\d+)x(\d+)$/.exec(value);
-      if (match === null) return null;
-      return { value, pixels: Number(match[1]) * Number(match[2]) };
-    })
-    .filter(
-      (value): value is { value: string; pixels: number } => value !== null,
-    )
-    .sort((left, right) => left.pixels - right.pixels);
-  return (
-    candidates.filter(({ pixels }) => pixels <= 2_500_000).at(-1)?.value ??
-    candidates[0]?.value ??
-    null
-  );
-}
+const MAX_CAPTURE_PIXELS = 2_400_000;
 
 /** Camera payloads stay in memory and are handed directly to strict decoding. */
 export function PairingScanner({
@@ -39,44 +27,69 @@ export function PairingScanner({
   onScan,
 }: PairingScannerProps) {
   const palette = usePalette();
-  const camera = useRef<CameraView>(null);
-  const [permission, requestPermission] = useCameraPermissions();
   const [locked, setLocked] = useState(false);
-  const [pictureSize, setPictureSize] = useState<string | null>(null);
   const [message, setMessage] = useState(
-    'Center the QR code in the frame, then capture it.',
+    'Open the system camera and fill the frame with the pairing QR code.',
   );
 
-  async function prepareCamera() {
-    try {
-      const sizes = await camera.current?.getAvailablePictureSizesAsync();
-      const selected = choosePictureSize(sizes ?? []);
-      if (selected === null) throw new Error('camera_picture_sizes_missing');
-      setPictureSize(selected);
-    } catch {
-      setMessage('This camera could not provide a bounded capture size.');
-    }
-  }
-
   async function capturePairingQr() {
-    if (locked || pictureSize === null || camera.current === null) return;
+    if (locked) return;
     setLocked(true);
-    setMessage('Reading the QR code on this device…');
     try {
-      const picture = await camera.current.takePictureAsync({
-        base64: true,
+      const permission = await requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        setMessage(
+          permission.canAskAgain
+            ? 'Camera access is needed to capture the QR code.'
+            : 'Camera permission is disabled in system settings. You can still paste the invite on the previous screen.',
+        );
+        return;
+      }
+
+      const capture = await launchCameraAsync({
+        allowsEditing: false,
+        base64: false,
+        exif: false,
+        mediaTypes: ['images'],
         quality: 0.8,
-        skipProcessing: false,
       });
-      if (picture.base64 === undefined) {
+      if (capture.canceled) {
+        setMessage('Capture canceled. Open the camera when you are ready.');
+        return;
+      }
+
+      setMessage('Reading the QR code on this device…');
+      const image = capture.assets[0];
+      if (image === undefined || image.width < 1 || image.height < 1) {
+        throw new Error('camera_image_missing');
+      }
+      const scale = Math.min(
+        1,
+        Math.sqrt(MAX_CAPTURE_PIXELS / (image.width * image.height)),
+      );
+      const resized = await manipulateAsync(
+        image.uri,
+        scale < 1
+          ? [
+              {
+                resize: {
+                  width: Math.max(1, Math.floor(image.width * scale)),
+                },
+              },
+            ]
+          : [],
+        { base64: true, compress: 0.8, format: SaveFormat.JPEG },
+      );
+      if (resized.base64 === undefined) {
         throw new Error('camera_base64_missing');
       }
-      onScan(decodePairingQrJpeg(picture.base64));
+      onScan(decodePairingQrJpeg(resized.base64));
     } catch {
-      setLocked(false);
       setMessage(
-        'No pairing QR code was found. Hold steady, fill the frame, and try again.',
+        'No pairing QR code was found. Fill the frame, hold steady, and try again.',
       );
+    } finally {
+      setLocked(false);
     }
   }
 
@@ -104,76 +117,42 @@ export function PairingScanner({
           </Text>
         </View>
 
-        {permission?.granted ? (
-          <View
-            accessibilityLabel="Pairing QR camera"
-            style={[styles.cameraFrame, { borderColor: palette.border }]}
-          >
-            <CameraView
-              facing="back"
-              onCameraReady={() => void prepareCamera()}
-              pictureSize={pictureSize ?? undefined}
-              ref={camera}
-              style={styles.camera}
-            />
-            <View pointerEvents="none" style={styles.guide} />
-          </View>
-        ) : (
-          <View
-            style={[
-              styles.permission,
-              { backgroundColor: palette.surface, borderColor: palette.border },
-            ]}
-          >
-            <Text style={[styles.copy, { color: palette.textMuted }]}>
-              Camera access is used only while this scanner is open.
-            </Text>
-            {permission?.canAskAgain !== false && (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => void requestPermission()}
-                style={[styles.primary, { backgroundColor: palette.accent }]}
-              >
-                <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-                  Allow camera
-                </Text>
-              </Pressable>
-            )}
-            {permission?.canAskAgain === false && (
-              <Text style={[styles.copy, { color: palette.danger }]}>
-                Camera permission is disabled in system settings. You can still
-                paste the invite on the previous screen.
-              </Text>
-            )}
-          </View>
-        )}
+        <View
+          accessibilityLabel="Pairing QR camera capture"
+          style={[
+            styles.captureCard,
+            { backgroundColor: palette.surface, borderColor: palette.border },
+          ]}
+        >
+          <Text style={[styles.captureTitle, { color: palette.text }]}>QR</Text>
+          <Text style={[styles.copy, { color: palette.textMuted }]}>
+            Camera access is used only for this capture. The image is resized
+            and decoded locally, then discarded.
+          </Text>
+        </View>
 
-        {permission?.granted && (
-          <>
-            <Text
-              accessibilityLiveRegion="polite"
-              style={[styles.copy, { color: palette.textMuted }]}
-            >
-              {message}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              disabled={locked || pictureSize === null}
-              onPress={() => void capturePairingQr()}
-              style={[
-                styles.primary,
-                {
-                  backgroundColor: palette.accent,
-                  opacity: locked || pictureSize === null ? 0.55 : 1,
-                },
-              ]}
-            >
-              <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-                {locked ? 'Reading QR code…' : 'Capture QR code'}
-              </Text>
-            </Pressable>
-          </>
-        )}
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[styles.copy, { color: palette.textMuted }]}
+        >
+          {message}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          disabled={locked}
+          onPress={() => void capturePairingQr()}
+          style={[
+            styles.primary,
+            {
+              backgroundColor: palette.accent,
+              opacity: locked ? 0.55 : 1,
+            },
+          ]}
+        >
+          <Text style={{ color: palette.accentText, fontWeight: '800' }}>
+            {locked ? 'Reading QR code…' : 'Open camera'}
+          </Text>
+        </Pressable>
 
         <Pressable
           accessibilityRole="button"
@@ -192,25 +171,17 @@ const styles = StyleSheet.create({
   heading: { gap: 8 },
   title: { fontSize: 28, lineHeight: 34, fontWeight: '800' },
   copy: { fontSize: 14, lineHeight: 21 },
-  cameraFrame: {
+  captureCard: {
     flex: 1,
     minHeight: 320,
-    overflow: 'hidden',
     borderRadius: 24,
     borderWidth: 1,
+    padding: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 18,
   },
-  camera: { flex: 1 },
-  guide: {
-    position: 'absolute',
-    width: 220,
-    height: 220,
-    borderRadius: 22,
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
-    alignSelf: 'center',
-    top: '25%',
-  },
-  permission: { borderWidth: 1, borderRadius: 18, padding: 18, gap: 16 },
+  captureTitle: { fontSize: 64, lineHeight: 72, fontWeight: '900' },
   primary: {
     minHeight: 48,
     borderRadius: 12,

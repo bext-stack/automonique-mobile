@@ -17,6 +17,9 @@ import { spawnSync } from 'node:child_process';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const app = JSON.parse(readFileSync(join(root, 'app.json'), 'utf8')).expo;
 const eas = JSON.parse(readFileSync(join(root, 'eas.json'), 'utf8'));
+const packageJson = JSON.parse(
+  readFileSync(join(root, 'package.json'), 'utf8'),
+);
 const simulator = eas.build?.simulator;
 const iosIcon = readFileSync(join(root, app.ios?.icon ?? ''));
 
@@ -50,13 +53,23 @@ assert.equal(
   'Android release configuration must explicitly deny cleartext traffic',
 );
 
-const cameraPlugin = app.plugins?.find(
-  (plugin) => Array.isArray(plugin) && plugin[0] === 'expo-camera',
+const imagePickerPlugin = app.plugins?.find(
+  (plugin) => Array.isArray(plugin) && plugin[0] === 'expo-image-picker',
 );
 assert.equal(
-  cameraPlugin?.[1]?.barcodeScannerEnabled,
+  imagePickerPlugin?.[1]?.microphonePermission,
   false,
-  'camera QR capture must use the local decoder, not Google barcode services',
+  'QR capture must not request microphone access',
+);
+assert.equal(
+  imagePickerPlugin?.[1]?.photosPermission,
+  false,
+  'QR capture must not request photo-library access',
+);
+assert.equal(
+  Object.hasOwn(packageJson.dependencies ?? {}, 'expo-camera'),
+  false,
+  'QR capture must not ship Expo Camera or its Google barcode dependencies',
 );
 
 assert.match(
@@ -131,14 +144,15 @@ try {
     /android:usesCleartextTraffic="false"/,
     'generated Android release manifest must deny cleartext traffic',
   );
-  const androidProperties = readFileSync(
-    join(workspace, 'android', 'gradle.properties'),
-    'utf8',
+  assert.doesNotMatch(
+    androidManifest,
+    /com\.google\.mlkit/,
+    'generated Android release must not declare ML Kit',
   );
   assert.match(
-    androidProperties,
-    /^expo\.camera\.barcode-scanner-enabled=false$/m,
-    'generated Android project must keep Google barcode services disabled',
+    androidManifest,
+    /android:name="android\.permission\.RECORD_AUDIO" tools:node="remove"/,
+    'generated Android release must explicitly remove microphone access',
   );
 
   const iosInfo = readFileSync(
@@ -154,6 +168,11 @@ try {
     iosInfo,
     /<key>NSAllowsLocalNetworking<\/key>\s*<false\/>/,
     'generated iOS app must not exempt local cleartext traffic',
+  );
+  assert.doesNotMatch(
+    iosInfo,
+    /NSMicrophoneUsageDescription|NSPhotoLibraryUsageDescription/,
+    'generated iOS app must not request microphone or photo-library access',
   );
 
   console.log(
