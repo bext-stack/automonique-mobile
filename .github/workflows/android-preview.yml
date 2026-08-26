@@ -25,6 +25,9 @@ jobs:
       ANDROID_PLATFORM: android-36
       ANDROID_BUILD_TOOLS: 36.0.0
       ANDROID_NDK: 27.1.12297006
+      # Expo's generated 2 GiB default is insufficient for the universal APK's
+      # final D8 merge. Keep the governed runner budget explicit and bounded.
+      PREVIEW_GRADLE_JVM_ARGS: -Xmx4608m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8
 
     steps:
       - name: Check out the selected protected commit
@@ -144,6 +147,7 @@ jobs:
         run: |
           set -euo pipefail
           ./android/gradlew -p android --no-daemon --console=plain --stacktrace \
+            "-Dorg.gradle.jvmargs=$PREVIEW_GRADLE_JVM_ARGS" \
             :app:assembleRelease 2>&1 \
             | tee "$PREVIEW_OUTPUT_DIR/gradle-assemble-release.txt"
 

@@ -37,7 +37,7 @@ const CONFIG = Object.freeze({
     'sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools" "ndk;27.1.12297006" "emulator" "system-images;android-36;google_apis;x86_64"',
     'sudo apt-get install --yes --no-install-recommends libpulse0',
     'ldd "$ANDROID_SDK_ROOT/emulator/emulator"',
-    './android/gradlew -p android --no-daemon --console=plain --stacktrace :app:assembleRelease',
+    './android/gradlew -p android --no-daemon --console=plain --stacktrace "-Dorg.gradle.jvmargs=-Xmx4608m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8" :app:assembleRelease',
     './android/gradlew -p android --no-daemon --console=plain :app:dependencies --configuration releaseRuntimeClasspath',
     './android/gradlew -p android --no-daemon --console=plain -I "$GITHUB_WORKSPACE/scripts/android-preview-inventory.init.gradle" :app:previewRuntimeInventory',
     'apkanalyzer manifest print automonique-mobile-0.1.0-preview.2.apk',
