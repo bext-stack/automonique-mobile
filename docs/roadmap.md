@@ -63,6 +63,7 @@ external gates; none is inferred from Expo export or CI success.
 
 ## Later, explicitly out of the first slice
 
-Attachments, voice, widgets, a multi-server cockpit, model/profile/tool
-administration, direct provider access, background mutation execution, and
-app-store publication.
+Audio-message uploads, attachments, widgets, a multi-server cockpit,
+model/profile/tool administration, direct provider access, background mutation
+execution, and app-store publication. On-device dictation remains an editable
+input method for the existing text follow-up contract, not a new server action.

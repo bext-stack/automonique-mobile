@@ -50,8 +50,15 @@
         "expo-image-picker",
         {
           "cameraPermission": "Allow Automonique to capture a one-time server pairing QR code for local decoding.",
-          "microphonePermission": false,
+          "microphonePermission": "Allow Automonique to turn your voice into a reviewable text follow-up.",
           "photosPermission": false
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow Automonique to turn your voice into a reviewable text follow-up.",
+          "speechRecognitionPermission": "Allow Automonique to transcribe speech into a reviewable text follow-up."
         }
       ],
       [
