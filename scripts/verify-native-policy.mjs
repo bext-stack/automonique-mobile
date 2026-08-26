@@ -50,6 +50,15 @@ assert.equal(
   'Android release configuration must explicitly deny cleartext traffic',
 );
 
+const cameraPlugin = app.plugins?.find(
+  (plugin) => Array.isArray(plugin) && plugin[0] === 'expo-camera',
+);
+assert.equal(
+  cameraPlugin?.[1]?.barcodeScannerEnabled,
+  false,
+  'camera QR capture must use the local decoder, not Google barcode services',
+);
+
 assert.match(
   eas.cli?.version ?? '',
   /^\d+\.\d+\.\d+$/,
@@ -121,6 +130,15 @@ try {
     androidManifest,
     /android:usesCleartextTraffic="false"/,
     'generated Android release manifest must deny cleartext traffic',
+  );
+  const androidProperties = readFileSync(
+    join(workspace, 'android', 'gradle.properties'),
+    'utf8',
+  );
+  assert.match(
+    androidProperties,
+    /^expo\.camera\.barcode-scanner-enabled=false$/m,
+    'generated Android project must keep Google barcode services disabled',
   );
 
   const iosInfo = readFileSync(
