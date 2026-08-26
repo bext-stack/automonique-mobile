@@ -49,8 +49,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow Automonique to scan a one-time server pairing QR code.",
-          "barcodeScannerEnabled": true,
+          "cameraPermission": "Allow Automonique to capture a one-time server pairing QR code for local decoding.",
+          "barcodeScannerEnabled": false,
           "recordAudioAndroid": false
         }
       ],

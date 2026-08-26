@@ -35,7 +35,12 @@ async function licenseTexts(packageRoot) {
     const path = join(packageRoot, name);
     try {
       if (!(await stat(path)).isFile()) continue;
-      const text = (await readFile(path, 'utf8')).trim();
+      const text = (await readFile(path, 'utf8'))
+        .replaceAll('\r\n', '\n')
+        .split('\n')
+        .map((line) => line.trimEnd())
+        .join('\n')
+        .trim();
       if (text.length > 0 && !texts.includes(text)) texts.push(text);
     } catch {
       // The lockfile entry remains represented even if an optional notice file
