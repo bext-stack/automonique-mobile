@@ -61,6 +61,10 @@ example: it moved the digest from `sha256:3e58e47e…` to `sha256:183a1131…`
 while `platform.ts` and `mobile-auth.ts`, the only generated modules the mobile
 client uses, stayed byte-identical.
 
+Automonique #149 tracks widening the canonical SDK so a server may advertise
+more than one version; until then the SDK refuses such a document before this
+app's rule is reached.
+
 The consequence is deliberate: a server change does not require a mobile
 re-vendor and a new build. A re-vendor is required when the mobile protocol
 surface itself changes, and that shows up as a protocol version the app must

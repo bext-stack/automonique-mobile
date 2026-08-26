@@ -215,6 +215,8 @@ schema already allows up to `MAX_MOBILE_PROTOCOL_VERSIONS` (8) entries. Until
 the canonical SDK widens both, a server advertising `[1, 2]` is refused inside
 the SDK before this repository's rule is reached. The rule is written and tested
 here so that widening the canonical bound is the only change needed.
+[Automonique #149](https://github.com/bext-stack/automonique/issues/149) tracks
+that widening.
 
 The server contracts and production composition root are implemented and
 verified by automated Rust-to-TypeScript, mobile, and bundle gates. An
