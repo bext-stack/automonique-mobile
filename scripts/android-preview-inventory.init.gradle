@@ -43,16 +43,6 @@ gradle.projectsEvaluated {
                 leftKey <=> rightKey
             }
 
-            Map<String, List<File>> runtimeArtifacts = [:].withDefault { [] }
-            configuration.incoming.artifacts.artifacts.each { artifact ->
-                def componentId = artifact.id.componentIdentifier
-                if (componentId instanceof ModuleComponentIdentifier) {
-                    String coordinate =
-                        "${componentId.group}:${componentId.module}:${componentId.version}"
-                    runtimeArtifacts[coordinate].add(artifact.file)
-                }
-            }
-
             Map<String, Map<String, Object>> pomCache = [:]
             Closure<Map<String, Object>> readPom
             readPom = { String group, String module, String version, Set<String> ancestry ->
@@ -133,7 +123,23 @@ gradle.projectsEvaluated {
                 File artifactFile = null
                 if (packaging != 'pom') {
                     String coordinate = "${id.group}:${id.module}:${id.version}"
-                    List<File> artifactFiles = runtimeArtifacts[coordinate]
+                    // Maven's `bundle` packaging is an OSGi-enabled JAR, not a
+                    // separately published `.bundle` artifact.
+                    String artifactExtension = packaging == 'bundle' ? 'jar' : packaging
+                    def artifactDependency = appProject.dependencies.create(
+                        "${coordinate}@${artifactExtension}",
+                    )
+                    def artifactConfiguration = appProject.configurations.detachedConfiguration(
+                        artifactDependency,
+                    )
+                    artifactConfiguration.transitive = false
+                    configuration.attributes.keySet().each { key ->
+                        def value = configuration.attributes.getAttribute(key)
+                        if (value != null) {
+                            artifactConfiguration.attributes.attribute(key, value)
+                        }
+                    }
+                    Set<File> artifactFiles = artifactConfiguration.resolve()
                     if (artifactFiles.size() != 1) {
                         throw new GradleException(
                             "preview_inventory_artifact_resolution:${coordinate}:${artifactFiles.size()}",
