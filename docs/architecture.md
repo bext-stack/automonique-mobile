@@ -178,6 +178,7 @@ mutation queue never cross or live inside the mobile boundary.
 | Cache is corrupt, incompatible, or oversized                               | Remove/ignore it, remain read-only, and attempt a fresh bootstrap independently    |
 | Bootstrap or transport fails                                               | Retain only an admitted stale projection; disable every mutation                   |
 | Identity, schema, media type, or required SDK method mismatches            | Enter incompatible/read-only state; do not navigate to a writable surface          |
+| Server advertises no protocol version this build speaks                    | Refuse admission as `mobile_protocol_unsupported` before exchanging a credential   |
 | Page has a gap, conflicting duplicate, wrong session, or exceeds a ceiling | Stop page consumption, mark resynchronization required, and fetch a fresh snapshot |
 | Unknown event or outcome arrives                                           | Preserve it as unknown; never convert it to success                                |
 | Handle persistence fails before mutation                                   | Do not send the mutation                                                           |
@@ -199,6 +200,21 @@ mutation queue never cross or live inside the mobile boundary.
   authorized public registry release exists.
 - This repository owns the narrow mobile gateway, SDK adapter, persistence and
   reconciliation policy, screens, native behavior, and mobile verification.
+
+Compatibility with a server is negotiated on the mobile protocol major version;
+the vendored schema digest is recorded provenance and is never compared against
+a server. Both rules are stated in [decisions.md](decisions.md) and covered by
+`src/core/negotiation.test.ts`, `src/core/server-connection.test.ts` and
+`src/core/mobile-lifecycle.test.ts`.
+
+The negotiation this repository performs is currently narrower in effect than
+it is in statement, because the canonical SDK's `MobileLifecycleClient.discover`
+refuses a discovery document that does not advertise exactly `[1]`, and the
+generated `MobileProtocolVersion` domain is bounded to `1..1`, while the wire
+schema already allows up to `MAX_MOBILE_PROTOCOL_VERSIONS` (8) entries. Until
+the canonical SDK widens both, a server advertising `[1, 2]` is refused inside
+the SDK before this repository's rule is reached. The rule is written and tested
+here so that widening the canonical bound is the only change needed.
 
 The server contracts and production composition root are implemented and
 verified by automated Rust-to-TypeScript, mobile, and bundle gates. An

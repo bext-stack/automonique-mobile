@@ -7,6 +7,7 @@ import {
 } from '@automonique/sdk';
 
 import { normalizeEndpoint } from './network-policy';
+import { negotiateMobileProtocolVersion } from './negotiation';
 
 export interface CompatibleAutomoniqueServer {
   readonly origin: string;
@@ -41,7 +42,9 @@ export async function inspectAutomoniqueServer(
     origin: discovery.origin,
     platformEndpoint: discovery.platform_endpoint,
     serverIdentity: discovery.server_identity,
-    protocolVersion: discovery.supported_versions[0]?.toString() ?? 'unknown',
+    protocolVersion: negotiateMobileProtocolVersion(
+      discovery.supported_versions,
+    ).toString(),
   };
 }
 
@@ -56,6 +59,8 @@ export function describeServerConnectionError(error: unknown): string {
     case 'mobile_auth_schema_mismatch':
     case 'mobile_auth_protocol_mismatch':
       return 'This server answered, but its mobile API is not compatible with this app.';
+    case 'mobile_protocol_unsupported':
+      return 'This server speaks a mobile protocol version this app build does not. Update the app.';
     default:
       return 'The app could not verify the Automonique mobile API at this origin. Check HTTPS, DNS, the reverse proxy, and /.well-known/automonique-mobile.';
   }
