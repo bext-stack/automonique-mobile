@@ -2,8 +2,12 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import type { ReactNode } from 'react';
 
-import ApprovalsScreen from './app/approvals';
+import ActivityScreen from './app/(tabs)/activity';
+import ApprovalsScreen from './app/(tabs)/approvals';
+import OverviewScreen from './app/(tabs)/index';
+import SessionsScreen from './app/(tabs)/sessions';
 import SessionScreen from './app/session/[id]';
 import SettingsScreen from './app/settings';
 import { ConnectionBanner } from './components/connection-banner';
@@ -12,6 +16,8 @@ import { syntheticSnapshot } from '@/core/fixtures';
 import { decimalRevision } from '@/core/types';
 
 const mockUseMobile = jest.fn();
+const mockPair = jest.fn();
+const mockInspectAutomoniqueServer = jest.fn();
 
 jest.mock('@/providers/mobile-provider', () => ({
   useMobile: () => mockUseMobile(),
@@ -21,11 +27,17 @@ jest.mock('@/providers/production-mobile-provider', () => ({
     state: { phase: 'unpaired', profile: null },
     refreshCredential: jest.fn(),
     revokeCredential: jest.fn(),
-    pair: jest.fn(),
+    pair: mockPair,
   }),
+}));
+jest.mock('@/core/server-connection', () => ({
+  ...jest.requireActual('@/core/server-connection'),
+  inspectAutomoniqueServer: (...args: unknown[]) =>
+    mockInspectAutomoniqueServer(...args),
 }));
 
 jest.mock('expo-router', () => ({
+  Link: ({ children }: { readonly children: ReactNode }) => children,
   useLocalSearchParams: () => ({ id: 'session-synthetic-001' }),
 }));
 
@@ -146,6 +158,36 @@ test('approval decisions require their own negotiated action', async () => {
   ).toBeDisabled();
 });
 
+test('overview exposes real attention and authorized workload counts', async () => {
+  mockUseMobile.mockReturnValue(mobileValue(['attach']));
+  const view = await render(<OverviewScreen />);
+
+  expect(view.getByText('Your Automonique')).toBeTruthy();
+  expect(view.getByLabelText('Active: 2')).toBeTruthy();
+  expect(view.getByLabelText('Approvals: 1')).toBeTruthy();
+  expect(view.getByText('Review 1 pending approval')).toBeTruthy();
+});
+
+test('sessions can be filtered without changing server scope', async () => {
+  mockUseMobile.mockReturnValue(mobileValue(['attach']));
+  const view = await render(<SessionsScreen />);
+
+  expect(view.getByText('2 authorized · 2 shown')).toBeTruthy();
+  await fireEvent.press(view.getByRole('tab', { name: /completed/i }));
+  expect(view.getByText('2 authorized · 0 shown')).toBeTruthy();
+  expect(view.getByText('No completed sessions')).toBeTruthy();
+});
+
+test('activity separates sanitized events from durable receipts', async () => {
+  mockUseMobile.mockReturnValue(mobileValue(['attach']));
+  const view = await render(<ActivityScreen />);
+
+  expect(view.getByText('Session timeline')).toBeTruthy();
+  expect(view.getByText('Automonique message')).toBeTruthy();
+  await fireEvent.press(view.getByRole('tab', { name: /receipts/i }));
+  expect(view.queryByText('Session timeline')).toBeNull();
+});
+
 test('expired approvals remain disabled even when the action is authorized', async () => {
   mockUseMobile.mockReturnValue(
     mobileValue(['decide_approval'], {
@@ -184,6 +226,59 @@ test('an oversized endpoint draft is removed before display', async () => {
   expect(view.getByLabelText('Automonique HTTPS endpoint').props.value).toBe(
     'https://',
   );
+});
+
+test('checks an existing server before asking for a pairing invite', async () => {
+  mockUseMobile.mockReturnValue(mobileValue(['attach']));
+  mockInspectAutomoniqueServer.mockResolvedValue({
+    origin: 'https://ops.example.test',
+    platformEndpoint: 'https://ops.example.test/api/platform',
+    protocolVersion: '1',
+    serverIdentity: `sha256:${'a'.repeat(64)}`,
+  });
+  const view = await render(<SettingsScreen />);
+
+  await fireEvent.changeText(
+    view.getByLabelText('Automonique HTTPS endpoint'),
+    'https://ops.example.test',
+  );
+  await fireEvent.press(view.getByText('Check this server'));
+
+  await waitFor(() =>
+    expect(view.getByText('Compatible Automonique server')).toBeTruthy(),
+  );
+  expect(mockInspectAutomoniqueServer).toHaveBeenCalledWith(
+    'https://ops.example.test',
+    expect.any(AbortSignal),
+  );
+  expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+    'automonique.mobile.endpoint-draft.v1',
+    'https://ops.example.test',
+  );
+});
+
+test('reviews a one-time invite before exchanging it', async () => {
+  mockUseMobile.mockReturnValue(mobileValue(['attach']));
+  const identity = `sha256:${'a'.repeat(64)}`;
+  const offer = `{"exchange_endpoint":"https://ops.example.test/api/mobile/pairings/exchange","expires_at_ms":32472144000000,"origin":"https://ops.example.test","pairing_id":"pi_${'b'.repeat(43)}","pairing_token":"mp_${'c'.repeat(43)}","schema":"automonique.mobile-auth/v1","server_identity":"${identity}"}`;
+  const view = await render(<SettingsScreen />);
+
+  await fireEvent.changeText(
+    view.getByLabelText('One-time pairing offer'),
+    offer,
+  );
+  await fireEvent.press(view.getByText('Review pasted invite'));
+
+  expect(view.getByLabelText('Pairing invite confirmation')).toBeTruthy();
+  expect(view.getByText('Connect to https://ops.example.test?')).toBeTruthy();
+  expect(mockPair).not.toHaveBeenCalled();
+
+  await fireEvent.press(view.getByText('Connect this server'));
+  await waitFor(() => expect(mockPair).toHaveBeenCalledTimes(1));
+  expect(mockPair.mock.calls[0]?.[0]).toMatchObject({
+    origin: 'https://ops.example.test',
+    server_identity: identity,
+  });
 });
 
 test('shared connection status distinguishes an SDK transport', async () => {

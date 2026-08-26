@@ -82,7 +82,7 @@ Before publishing a preview:
    image, Node, npm, Java, Gradle, Android SDK/build-tools, NDK, and EAS CLI
    versions as applicable.
 3. Name the artifact
-   `automonique-mobile-0.1.0-preview.1.apk` and compute its SHA-256 digest. The
+   `automonique-mobile-0.1.0-preview.2.apk` and compute its SHA-256 digest. The
    APK must be the exact artifact produced by the recorded build; do not
    rebuild or re-sign it for upload.
 4. Inspect the packaged effective manifest with `apkanalyzer`, Android Studio

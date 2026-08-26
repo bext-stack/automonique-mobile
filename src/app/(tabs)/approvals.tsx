@@ -43,16 +43,31 @@ export default function ApprovalsScreen() {
 
   return (
     <Screen>
-      <Text
-        accessibilityRole="header"
-        style={[styles.title, { color: palette.text }]}
-      >
-        Pending approvals
-      </Text>
-      {snapshot.approvals.length === 0 && (
-        <Text style={{ color: palette.textMuted }}>
-          No bounded approvals are pending.
+      <View style={styles.heading}>
+        <Text
+          accessibilityRole="header"
+          style={[styles.title, { color: palette.text }]}
+        >
+          Approvals
         </Text>
+        <Text style={[styles.detail, { color: palette.textMuted }]}>
+          Exact, revision-bound decisions from your authorized sessions.
+        </Text>
+      </View>
+      {snapshot.approvals.length === 0 && (
+        <View
+          style={[
+            styles.empty,
+            { backgroundColor: palette.surface, borderColor: palette.border },
+          ]}
+        >
+          <Text style={[styles.cardTitle, { color: palette.text }]}>
+            You’re caught up
+          </Text>
+          <Text style={[styles.detail, { color: palette.textMuted }]}>
+            No bounded approvals are pending for this device.
+          </Text>
+        </View>
       )}
       {!actionAllowed && snapshot.approvals.length > 0 && (
         <Text style={[styles.detail, { color: palette.textMuted }]}>
@@ -118,8 +133,10 @@ export default function ApprovalsScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: { fontSize: 28, lineHeight: 34, fontWeight: '800' },
+  heading: { gap: 4 },
+  title: { fontSize: 30, lineHeight: 36, fontWeight: '800' },
   card: { borderWidth: 1, borderRadius: 18, padding: 16, gap: 9 },
+  empty: { borderWidth: 1, borderRadius: 18, padding: 18, gap: 7 },
   cardTitle: { fontSize: 18, fontWeight: '800' },
   detail: { fontSize: 14, lineHeight: 20 },
   meta: { fontSize: 11 },

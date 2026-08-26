@@ -16,18 +16,23 @@ clear freshness, and explicit actions rather than an administration cockpit.
 
 ## Jobs to be done
 
-1. See which authorized sessions need attention and whether the view is live,
+1. Open an overview that distinguishes active work, running sessions, pending
+   approvals, uncertain receipts, lost sessions, and connection freshness.
+2. See which authorized sessions need attention and whether the view is live,
    reconnecting, stale, incompatible, or synthetic.
-2. Open one exact session and understand its identity, revision, run,
+3. Open one exact session and understand its identity, revision, run,
    freshness, cursor, and sanitized timeline.
-3. Send a deliberate follow-up to that exact session without accidentally
+4. Send a deliberate follow-up to that exact session without accidentally
    targeting another run or replaying an uncertain write.
-4. Review an approval's requester, impact, expiry, and exact revision before
+5. Review an approval's requester, impact, expiry, and exact revision before
    granting or denying it.
-5. Stop one exact run and receive an authoritative outcome.
-6. Recover the receipt for an ambiguous mutation by idempotency key without
+6. Stop one exact run and receive an authoritative outcome.
+7. Review sanitized cross-session activity and recover the receipt for an
+   ambiguous mutation by idempotency key without
    submitting the mutation again.
-7. Retain a bounded read-only projection and message draft when connectivity
+8. Inspect the exact server identity, actor, actions, session scope, limits,
+   and credential expiry granted to this phone.
+9. Retain a bounded read-only projection and message draft when connectivity
    is lost.
 
 ## Historical first-slice outcome

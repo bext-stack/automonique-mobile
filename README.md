@@ -19,11 +19,22 @@ non-writable lifecycle state.
 
 After successful admission, the SDK gateway consumes the server-authorized
 actor, session scope, actions, limits, sanitized resumable history, and receipt
-state. Screens expose only bounded session discovery and attachment,
-exact-session follow-up, exact-run stop, approval decisions, and receipt
-reconciliation. They never receive generic Platform execution authority.
+state. A five-tab operator shell exposes a workload overview, filterable
+sessions, pending approvals, sanitized activity plus durable receipts, and the
+server/access scope. Screens expose only bounded session discovery and
+attachment, exact-session follow-up, exact-run stop, approval decisions, and
+receipt reconciliation. They never receive generic Platform execution authority.
 Deterministic synthetic gateways remain test fixtures and are excluded from
 the production source graph and emitted bundles.
+
+The connection screen is a self-host onboarding flow rather than a fixture
+selector: it checks an existing server's public mobile discovery contract,
+shows actionable reverse-proxy failures, accepts a pairing invite by QR scan or
+strict paste, displays the pinned origin and server identity for confirmation,
+and only then performs the one-time exchange. See
+[Connect an existing Automonique server](docs/connect-existing-server.md) for
+the routes, media type, scoping request, ingress constraints, and
+troubleshooting path.
 
 This implementation has passed automated SDK, lifecycle, security, native
 policy, test, and Android/iOS/web export gates. It has not yet been accepted
@@ -73,6 +84,8 @@ local exports do not claim that signed device binaries or store releases exist.
 ## Safety properties
 
 - Production endpoints require HTTPS; Android cleartext traffic is disabled.
+- Server checks use credential-free discovery; camera access is used only while
+  scanning a pairing QR code, and scanned offers are never persisted.
 - Scoped access and refresh credentials are stored only with
   `expo-secure-store`; one-time pairing proofs are never persisted.
 - Async Storage contains bounded cached reads, endpoint drafts, and message

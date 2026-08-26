@@ -72,9 +72,8 @@ test('uses protected screens instead of a render-time redirect when unpaired', a
     disabled: true,
   });
   expect(view.getByTestId('screen-settings')).toBeTruthy();
-  expect(view.getByTestId('screen-index')).toBeTruthy();
+  expect(view.getByTestId('screen-(tabs)')).toBeTruthy();
   expect(view.getByTestId('screen-session/[id]')).toBeTruthy();
-  expect(view.getByTestId('screen-approvals')).toBeTruthy();
 });
 
 test('admits operational screens only for a ready credential', async () => {

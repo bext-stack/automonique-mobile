@@ -14,18 +14,20 @@ import { usePalette } from '@/theme/palette';
 
 interface ScreenProps extends PropsWithChildren {
   readonly scroll?: boolean;
+  readonly showConnectionBanner?: boolean;
   readonly contentContainerStyle?: ScrollViewProps['contentContainerStyle'];
 }
 
 export function Screen({
   children,
   scroll = true,
+  showConnectionBanner = true,
   contentContainerStyle,
 }: ScreenProps) {
   const palette = usePalette();
   const content = (
     <>
-      <ConnectionBanner />
+      {showConnectionBanner && <ConnectionBanner />}
       {children}
     </>
   );
