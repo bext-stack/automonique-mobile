@@ -31,9 +31,8 @@ export function Navigation() {
         }}
       >
         <Stack.Protected guard={operational}>
-          <Stack.Screen name="index" options={{ title: 'Automonique' }} />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="session/[id]" options={{ title: 'Session' }} />
-          <Stack.Screen name="approvals" options={{ title: 'Approvals' }} />
         </Stack.Protected>
         <Stack.Screen name="settings" options={{ title: 'Connection' }} />
       </Stack>
