@@ -130,8 +130,10 @@ Remaining tracked work is grouped in the
 ## Later
 
 - [ ] Replace remaining Expo-template assets and remove unused dependencies.
-- [ ] Evaluate attachments and voice only after the base authority and privacy
-      contracts are stable.
+- [x] Add permission-gated, on-device voice dictation that only fills the
+      reviewable text follow-up draft and never persists audio.
+- [ ] Evaluate audio-message uploads and other attachments only after the base
+      authority and privacy contracts are stable.
 - [ ] Consider widgets and a multi-server cockpit as separate products.
 - [ ] Treat profiles/models/tools administration and app-store publication as
       separately authorized initiatives.

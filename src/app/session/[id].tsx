@@ -2,7 +2,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -19,6 +19,10 @@ import {
   announceForAccessibility,
   receiptAnnouncement,
 } from '@/core/accessibility';
+import {
+  useVoiceDictationEvent,
+  VoiceDictationModule,
+} from '@/core/voice-dictation';
 import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
 
@@ -35,6 +39,11 @@ export default function SessionScreen() {
   const palette = usePalette();
   const [draft, setDraft] = useState('');
   const [loadedDraftKey, setLoadedDraftKey] = useState<string | null>(null);
+  const [dictating, setDictating] = useState(false);
+  const [dictationMessage, setDictationMessage] = useState(
+    'Voice is transcribed on this device and stays editable before sending.',
+  );
+  const dictationBase = useRef('');
   const followUpLimit = snapshot.connection.limits.maxFollowUpBytes;
   const session = snapshot.sessions.find(
     (candidate) => candidate.target.coordinate.id === id,
@@ -45,6 +54,32 @@ export default function SessionScreen() {
       receipt.target.id === id ||
       receipt.target.id === session?.run?.coordinate.id,
   );
+
+  useVoiceDictationEvent('start', () => {
+    setDictating(true);
+    setDictationMessage('Listening… speak your follow-up.');
+  });
+  useVoiceDictationEvent('end', () => {
+    setDictating(false);
+  });
+  useVoiceDictationEvent('result', (event) => {
+    const transcript = event.results[0]?.transcript.trim();
+    if (!transcript) return;
+    setDraft([dictationBase.current, transcript].filter(Boolean).join(' '));
+    setDictationMessage(
+      event.isFinal
+        ? 'Dictation ready. Review or edit it before sending.'
+        : 'Listening… the draft will keep updating.',
+    );
+  });
+  useVoiceDictationEvent('error', (event) => {
+    setDictating(false);
+    setDictationMessage(
+      event.error === 'not-allowed'
+        ? 'Microphone or speech permission is disabled in system settings.'
+        : `Dictation stopped: ${event.error.replaceAll('-', ' ')}. You can keep typing.`,
+    );
+  });
 
   useEffect(() => {
     if (!id) return;
@@ -87,6 +122,13 @@ export default function SessionScreen() {
     }
   }, [draft, followUpLimit, id, loadedDraftKey, storageScope]);
 
+  useEffect(
+    () => () => {
+      VoiceDictationModule.abort();
+    },
+    [],
+  );
+
   if (!session) {
     return (
       <Screen>
@@ -126,6 +168,45 @@ export default function SessionScreen() {
       Alert.alert(
         'Follow-up not sent',
         error instanceof Error ? error.message : 'unknown_error',
+      );
+    }
+  }
+
+  async function toggleDictation() {
+    if (dictating) {
+      VoiceDictationModule.stop();
+      return;
+    }
+    if (!followUpAllowed) return;
+    try {
+      const permission = await VoiceDictationModule.requestPermissionsAsync();
+      if (!permission.granted) {
+        setDictationMessage(
+          permission.canAskAgain
+            ? 'Microphone and speech permissions are required for dictation.'
+            : 'Microphone or speech permission is disabled in system settings.',
+        );
+        return;
+      }
+      if (!VoiceDictationModule.supportsOnDeviceRecognition()) {
+        setDictationMessage(
+          'On-device speech recognition is unavailable. Use the keyboard so no audio leaves this device.',
+        );
+        return;
+      }
+      dictationBase.current = draft.trim();
+      VoiceDictationModule.start({
+        addsPunctuation: true,
+        contextualStrings: ['Automonique', 'Monique'],
+        continuous: false,
+        interimResults: true,
+        lang: Intl.DateTimeFormat().resolvedOptions().locale || 'en-US',
+        maxAlternatives: 1,
+        requiresOnDeviceRecognition: true,
+      });
+    } catch {
+      setDictationMessage(
+        'Dictation could not start. You can continue with the keyboard.',
       );
     }
   }
@@ -207,6 +288,37 @@ export default function SessionScreen() {
           ]}
           value={draft}
         />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            dictating ? 'Stop voice dictation' : 'Start voice dictation'
+          }
+          accessibilityState={{ disabled: !followUpAllowed }}
+          disabled={!followUpAllowed}
+          onPress={() => void toggleDictation()}
+          style={[
+            styles.voice,
+            {
+              borderColor: dictating ? palette.accent : palette.border,
+              opacity: followUpAllowed ? 1 : 0.45,
+            },
+          ]}
+        >
+          <Text
+            style={{
+              color: dictating ? palette.accent : palette.text,
+              fontWeight: '800',
+            }}
+          >
+            {dictating ? 'Stop listening' : 'Dictate with voice'}
+          </Text>
+        </Pressable>
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[styles.voiceStatus, { color: palette.textMuted }]}
+        >
+          {dictationMessage}
+        </Text>
         <Text
           accessibilityLiveRegion="polite"
           style={[
@@ -223,15 +335,21 @@ export default function SessionScreen() {
           accessibilityRole="button"
           accessibilityLabel="Send follow-up"
           accessibilityState={{
-            disabled: !followUpAllowed || !draft.trim() || !draftWithinLimit,
+            disabled:
+              !followUpAllowed ||
+              dictating ||
+              !draft.trim() ||
+              !draftWithinLimit,
           }}
-          disabled={!followUpAllowed || !draft.trim() || !draftWithinLimit}
+          disabled={
+            !followUpAllowed || dictating || !draft.trim() || !draftWithinLimit
+          }
           onPress={() => void submitFollowUp()}
           style={[
             styles.primary,
             {
               backgroundColor:
-                followUpAllowed && draftWithinLimit
+                followUpAllowed && !dictating && draftWithinLimit
                   ? palette.accent
                   : palette.surfaceMuted,
             },
@@ -240,7 +358,7 @@ export default function SessionScreen() {
           <Text
             style={{
               color:
-                followUpAllowed && draftWithinLimit
+                followUpAllowed && !dictating && draftWithinLimit
                   ? palette.accentText
                   : palette.textMuted,
               fontWeight: '800',
@@ -304,6 +422,14 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   byteLimit: { fontSize: 12, textAlign: 'right' },
+  voice: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  voiceStatus: { fontSize: 12, lineHeight: 18 },
   primary: {
     minHeight: 48,
     borderRadius: 12,

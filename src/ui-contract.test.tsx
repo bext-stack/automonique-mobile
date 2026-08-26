@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import type { ReactNode } from 'react';
 
 import ActivityScreen from './app/(tabs)/activity';
@@ -14,10 +14,36 @@ import { ConnectionBanner } from './components/connection-banner';
 import { ReceiptCard } from './components/receipt-card';
 import { syntheticSnapshot } from '@/core/fixtures';
 import { decimalRevision } from '@/core/types';
+import {
+  useVoiceDictationEvent,
+  VoiceDictationModule,
+} from '@/core/voice-dictation';
+
+jest.mock('expo-speech-recognition', () => ({
+  ExpoSpeechRecognitionModule: {
+    abort: jest.fn(),
+    requestPermissionsAsync: jest.fn(),
+    start: jest.fn(),
+    stop: jest.fn(),
+    supportsOnDeviceRecognition: jest.fn(),
+  },
+  useSpeechRecognitionEvent: jest.fn(),
+}));
 
 const mockUseMobile = jest.fn();
 const mockPair = jest.fn();
 const mockInspectAutomoniqueServer = jest.fn();
+const mockSpeechStart = jest
+  .spyOn(VoiceDictationModule, 'start')
+  .mockImplementation(() => undefined);
+jest.spyOn(VoiceDictationModule, 'stop').mockImplementation(() => undefined);
+jest.spyOn(VoiceDictationModule, 'abort').mockImplementation(() => undefined);
+jest
+  .spyOn(VoiceDictationModule, 'requestPermissionsAsync')
+  .mockResolvedValue({ granted: true, canAskAgain: true } as never);
+jest
+  .spyOn(VoiceDictationModule, 'supportsOnDeviceRecognition')
+  .mockReturnValue(true);
 
 jest.mock('@/providers/mobile-provider', () => ({
   useMobile: () => mockUseMobile(),
@@ -40,7 +66,6 @@ jest.mock('expo-router', () => ({
   Link: ({ children }: { readonly children: ReactNode }) => children,
   useLocalSearchParams: () => ({ id: 'session-synthetic-001' }),
 }));
-
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,
   default: {
@@ -115,6 +140,39 @@ test('follow-up uses the negotiated UTF-8 byte limit', async () => {
       'automonique.mobile.draft.v1:session-synthetic-001',
     ),
   );
+});
+
+test('voice dictation stays on-device and fills the reviewable draft', async () => {
+  mockUseMobile.mockReturnValue(mobileValue(['follow_up']));
+  const view = await render(<SessionScreen />);
+
+  await fireEvent.press(view.getByLabelText('Start voice dictation'));
+  await waitFor(() =>
+    expect(mockSpeechStart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        interimResults: true,
+        requiresOnDeviceRecognition: true,
+      }),
+    ),
+  );
+  const resultCall = jest
+    .mocked(useVoiceDictationEvent)
+    .mock.calls.find(([event]) => event === 'result');
+  const resultListener = resultCall?.[1] as
+    ((event: never) => void) | undefined;
+  await act(() => {
+    resultListener?.({
+      isFinal: true,
+      results: [{ transcript: 'Check the deployment status' }],
+    } as never);
+  });
+
+  expect(view.getByLabelText('Follow-up message').props.value).toBe(
+    'Check the deployment status',
+  );
+  expect(
+    view.getByText('Dictation ready. Review or edit it before sending.'),
+  ).toBeTruthy();
 });
 
 test('a bounded persisted draft restores without an initial blank overwrite', async () => {

@@ -146,6 +146,7 @@ operations. App-store publication requires a separate decision.
   or direct database access.
 - A generic Platform `execute` surface in screens.
 - An offline mutation queue or background mutation execution.
-- Attachments, voice, widgets, multi-server cockpit, or model/profile/tool
-  administration.
+- Audio-message uploads, attachments, widgets, a multi-server cockpit, or
+  model/profile/tool administration. On-device voice dictation is only an
+  editable input method for the existing text follow-up contract.
 - Production deployment, signed store binaries, or app-store publication.

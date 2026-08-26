@@ -58,8 +58,8 @@ const imagePickerPlugin = app.plugins?.find(
 );
 assert.equal(
   imagePickerPlugin?.[1]?.microphonePermission,
-  false,
-  'QR capture must not request microphone access',
+  'Allow Automonique to turn your voice into a reviewable text follow-up.',
+  'the shared microphone permission must describe reviewable voice dictation',
 );
 assert.equal(
   imagePickerPlugin?.[1]?.photosPermission,
@@ -70,6 +70,19 @@ assert.equal(
   Object.hasOwn(packageJson.dependencies ?? {}, 'expo-camera'),
   false,
   'QR capture must not ship Expo Camera or its Google barcode dependencies',
+);
+assert.equal(
+  packageJson.dependencies?.['expo-speech-recognition'],
+  '56.0.1',
+  'speech recognition must stay pinned to the reviewed native module',
+);
+const speechPlugin = app.plugins?.find(
+  (plugin) => Array.isArray(plugin) && plugin[0] === 'expo-speech-recognition',
+);
+assert.equal(
+  speechPlugin?.[1]?.speechRecognitionPermission,
+  'Allow Automonique to transcribe speech into a reviewable text follow-up.',
+  'speech permission must describe editable text transcription',
 );
 
 assert.match(
@@ -151,8 +164,13 @@ try {
   );
   assert.match(
     androidManifest,
+    /android:name="android\.permission\.RECORD_AUDIO"/,
+    'generated Android release must request microphone access for dictation',
+  );
+  assert.doesNotMatch(
+    androidManifest,
     /android:name="android\.permission\.RECORD_AUDIO" tools:node="remove"/,
-    'generated Android release must explicitly remove microphone access',
+    'generated Android release must not remove the dictation permission',
   );
 
   const iosInfo = readFileSync(
@@ -171,8 +189,18 @@ try {
   );
   assert.doesNotMatch(
     iosInfo,
-    /NSMicrophoneUsageDescription|NSPhotoLibraryUsageDescription/,
-    'generated iOS app must not request microphone or photo-library access',
+    /NSPhotoLibraryUsageDescription/,
+    'generated iOS app must not request photo-library access',
+  );
+  assert.match(
+    iosInfo,
+    /NSMicrophoneUsageDescription/,
+    'generated iOS app must declare microphone use for dictation',
+  );
+  assert.match(
+    iosInfo,
+    /NSSpeechRecognitionUsageDescription/,
+    'generated iOS app must declare speech recognition use',
   );
 
   console.log(
