@@ -15,6 +15,7 @@ import {
   type ConnectionProfile,
   type ScopedConnection,
 } from './credential-store';
+import { negotiateMobileProtocolVersion } from './negotiation';
 import { createAuthorizedHttpsGateway } from './sdk-gateway';
 import type { MobileAutomoniqueGateway } from './types';
 
@@ -288,6 +289,10 @@ export class MobileLifecycleCoordinator {
       ) {
         throw new Error('mobile_pairing_discovery_mismatch');
       }
+      // Admission negotiates on the advertised protocol major version. The
+      // vendored schema digest is provenance evidence, not an equality gate;
+      // see docs/decisions.md.
+      negotiateMobileProtocolVersion(client.discovery.supported_versions);
       const issued = await client.exchangePairing(
         {
           pairing_id: offer.pairing_id,

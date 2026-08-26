@@ -21,6 +21,12 @@ TLS terminates at the existing proxy or tunnel. The app rejects HTTP, embedded
 URL credentials, redirects, a mismatched origin, a changed server identity, an
 unexpected media type, and an incompatible discovery document.
 
+Compatibility is decided by the mobile protocol version your server advertises,
+not by which Automonique revision it runs. Keeping the server up to date does
+not require a new app build; only a change to the mobile protocol version does.
+If a server ever advertises no version the app speaks, the check reports that
+the app needs updating rather than blaming the endpoint.
+
 In the app, open **Connection**, enter only the origin—for example
 `https://ops.example.com`—and tap **Check this server**. This performs public
 discovery only. It sends no operator or mobile credential.

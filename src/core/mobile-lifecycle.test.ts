@@ -30,6 +30,7 @@ import {
   type ScopedConnection,
 } from './credential-store';
 import { MobileLifecycleCoordinator } from './mobile-lifecycle';
+import { SUPPORTED_MOBILE_PROTOCOL_VERSIONS } from './negotiation';
 
 jest.mock('./credential-store', () => ({
   loadStoredConnection: jest.fn(),
@@ -436,4 +437,63 @@ test('a consumed pairing with failed secure commit enters explicit recovery', as
     phase: 'recovery_required',
     reason: 'pairing_commit_uncertain',
   });
+});
+
+/**
+ * Admission negotiates on the advertised protocol major version, so a server
+ * that has moved ahead of this build stays pairable as long as it still
+ * advertises a version this build speaks. The vendored schema digest is not
+ * consulted; only these version lists decide.
+ */
+function discoveryAdvertising(versions: readonly bigint[]): MobileDiscovery {
+  return {
+    ...DISCOVERY,
+    supported_versions:
+      versions as unknown as MobileDiscovery['supported_versions'],
+  };
+}
+
+const NEWER_THAN_THIS_BUILD = SUPPORTED_MOBILE_PROTOCOL_VERSIONS.max + 1n;
+
+test('pairing admits a server that also advertises a newer protocol version', async () => {
+  const pairedIssued = issued(1n, 'c', NOW + 900_000);
+  const paired = connection(pairedIssued);
+  loadStored.mockResolvedValue(null);
+  saveIssued.mockResolvedValue(paired);
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    discover: jest.fn(async () => ({
+      discovery: discoveryAdvertising([
+        SUPPORTED_MOBILE_PROTOCOL_VERSIONS.max,
+        NEWER_THAN_THIS_BUILD,
+      ]),
+      exchangePairing: jest.fn(async () => pairedIssued),
+      refresh: jest.fn(),
+      revoke: jest.fn(),
+    })),
+  });
+  await lifecycle.hydrate();
+  await expect(lifecycle.pair(PAIRING_OFFER)).resolves.toEqual(paired.profile);
+  expect(lifecycle.snapshot()).toMatchObject({ phase: 'ready' });
+});
+
+test('pairing refuses a server with no shared protocol version before exchanging', async () => {
+  loadStored.mockResolvedValue(null);
+  const exchangePairing = jest.fn();
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    discover: jest.fn(async () => ({
+      discovery: discoveryAdvertising([NEWER_THAN_THIS_BUILD]),
+      exchangePairing,
+      refresh: jest.fn(),
+      revoke: jest.fn(),
+    })),
+  });
+  await lifecycle.hydrate();
+  await expect(lifecycle.pair(PAIRING_OFFER)).rejects.toThrow(
+    'mobile_protocol_unsupported',
+  );
+  expect(exchangePairing).not.toHaveBeenCalled();
+  expect(saveIssued).not.toHaveBeenCalled();
+  expect(lifecycle.snapshot()).toMatchObject({ phase: 'unpaired' });
 });

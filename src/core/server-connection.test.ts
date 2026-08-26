@@ -9,7 +9,10 @@ import {
 
 const IDENTITY = `sha256:${'a'.repeat(64)}`;
 
-function discovery(origin: string): MobileDiscovery {
+function discovery(
+  origin: string,
+  supportedVersions: readonly bigint[] = [1n],
+): MobileDiscovery {
   return {
     credential_inventory_endpoint: `${origin}/api/mobile/credentials/list`,
     credential_revoke_endpoint: `${origin}/api/mobile/credentials/revoke`,
@@ -21,7 +24,7 @@ function discovery(origin: string): MobileDiscovery {
     protocol: 'automonique.mobile-auth',
     schema: 'automonique.mobile-auth/v1',
     server_identity: IDENTITY,
-    supported_versions: [1n],
+    supported_versions: supportedVersions,
   } as unknown as MobileDiscovery;
 }
 
@@ -67,4 +70,34 @@ test('turns low-level discovery failures into actionable setup guidance', () => 
   expect(
     describeServerConnectionError(new TypeError('Network request failed')),
   ).toContain('/.well-known/automonique-mobile');
+});
+
+test('admits a server that advertises a newer version alongside a supported one', async () => {
+  const discover = jest.fn(async (origin: string) => ({
+    discovery: discovery(origin, [1n, 2n]),
+  }));
+
+  await expect(
+    inspectAutomoniqueServer('https://ops.example.test', undefined, {
+      discover,
+    }),
+  ).resolves.toMatchObject({ protocolVersion: '1' });
+});
+
+test('refuses a server whose advertised versions this build cannot speak', async () => {
+  const discover = jest.fn(async (origin: string) => ({
+    discovery: discovery(origin, [2n]),
+  }));
+
+  await expect(
+    inspectAutomoniqueServer('https://ops.example.test', undefined, {
+      discover,
+    }),
+  ).rejects.toThrow('mobile_protocol_unsupported');
+});
+
+test('explains an unsupported protocol version as an app update', () => {
+  expect(
+    describeServerConnectionError(new Error('mobile_protocol_unsupported')),
+  ).toContain('Update the app');
 });
