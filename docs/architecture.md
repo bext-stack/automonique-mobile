@@ -77,7 +77,13 @@ Before remote credential rotation, the lifecycle uses the still-admitted old
 secure grant to migrate only its exact legacy full-authorization-digest key
 into that exact old delegation family; it never enumerates or adopts another
 credential or delegation's keys. The stable copy commits before the legacy copy
-is removed, making an interrupted migration idempotently recoverable.
+is removed, making an interrupted migration idempotently recoverable. On a
+cold reload after expiry, the secure generation retains only a fixed
+server-identity, credential-ID, delegation-ID, and authorization-digest
+migration record. The expired grant is not returned as authority and cannot
+construct a gateway, while the primary refresh token remains available. A
+malformed optional grant or migration record is discarded without erasing an
+otherwise valid primary credential.
 Canonical receipts
 must match the exact project-bound
 handle, preview, digests, idempotency key, approval, and resulting revision.
@@ -217,6 +223,7 @@ mobile actions in the first slice.
 | Data                                     | Store                 | Ceiling/lifetime                                                 | Rule                                                           |
 | ---------------------------------------- | --------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
 | Scoped access and refresh credentials    | OS Secure Store       | Server expiry/rotation/revocation                                | Never Async Storage; pairing proof is never persisted          |
+| v2 receipt migration coordinates         | OS Secure Store       | Current/expired credential family; fixed digest only             | Non-authority; cannot construct a gateway or mutation          |
 | Endpoint, actor, expiry, server identity | Async Storage profile | One active profile                                               | Metadata only; endpoint must pass HTTPS policy                 |
 | Endpoint draft                           | Async Storage         | One draft; 2 KiB                                                 | Re-admitted on load; validation makes no network call          |
 | Read projection                          | Async Storage         | 256 KiB; 100 sessions; 1,000 events; 100 approvals; 200 receipts | Schema-admitted and always restored stale/read-only            |

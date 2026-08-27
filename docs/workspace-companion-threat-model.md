@@ -75,7 +75,11 @@ Drafts remain inert data. Authority previews are never cached.
   project grants filter every recovery surface. Legacy authorization-digest
   handles are migrated before remote rotation using only the exact old admitted
   secure grant and into only its old delegation family; no cross-family key scan
-  is permitted. Project roots, action grants, tenant and actor metadata,
+  is permitted. If the app cold-starts after expiry, only fixed receipt-migration
+  coordinates survive beside the refresh credential; the expired authority is
+  withheld from the gateway. Malformed optional migration state is discarded
+  without destroying an otherwise valid refresh path. Project roots, action
+  grants, tenant and actor metadata,
   previews, intents, and replayable payloads are excluded; the complete encoded
   set is capped at 16 KiB.
 

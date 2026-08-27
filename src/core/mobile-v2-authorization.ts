@@ -37,6 +37,30 @@ export interface DelegatedMobileV2Authorization {
   readonly actions: readonly MobileV2Action[];
 }
 
+export const MOBILE_V2_RECEIPT_MIGRATION_SCHEMA =
+  'automonique.mobile-platform-v2-receipt-migration/v1' as const;
+
+/**
+ * Non-authority coordinates retained only long enough to move legacy receipt
+ * handles into their stable delegation namespace. This is deliberately not a
+ * delegated authorization and cannot construct a workspace gateway.
+ */
+export interface MobileV2ReceiptMigrationMetadata {
+  readonly schema: typeof MOBILE_V2_RECEIPT_MIGRATION_SCHEMA;
+  readonly server_identity: string;
+  readonly credential_id: string;
+  readonly delegation_id: string;
+  readonly authorization_digest: string;
+}
+
+interface ExpectedMobileV2Authorization {
+  readonly serverIdentity: string;
+  readonly credentialId: string;
+  readonly credentialRevision: bigint;
+  readonly authorizationRevision: bigint;
+  readonly now: number;
+}
+
 function object(value: unknown): Readonly<Record<string, unknown>> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('mobile_v2_authorization_invalid');
@@ -76,15 +100,10 @@ function positive(value: unknown): bigint {
   return value;
 }
 
-export function admitDelegatedMobileV2Authorization(
+function admitDelegatedMobileV2AuthorizationInternal(
   value: unknown,
-  expected: {
-    readonly serverIdentity: string;
-    readonly credentialId: string;
-    readonly credentialRevision: bigint;
-    readonly authorizationRevision: bigint;
-    readonly now: number;
-  },
+  expected: ExpectedMobileV2Authorization,
+  allowExpired: boolean,
 ): DelegatedMobileV2Authorization {
   const candidate = object(value);
   exact(candidate, [
@@ -141,7 +160,7 @@ export function admitDelegatedMobileV2Authorization(
     authorization.credential_revision !== expected.credentialRevision ||
     authorization.authorization_revision !== expected.authorizationRevision ||
     authorization.issued_at_ms > BigInt(expected.now) ||
-    authorization.expires_at_ms <= BigInt(expected.now) ||
+    (!allowExpired && authorization.expires_at_ms <= BigInt(expected.now)) ||
     authorization.issued_at_ms >= authorization.expires_at_ms ||
     new Set(authorization.project_roots).size !==
       authorization.project_roots.length ||
@@ -160,6 +179,13 @@ export function admitDelegatedMobileV2Authorization(
     throw new Error('mobile_v2_authorization_invalid');
   }
   return authorization;
+}
+
+export function admitDelegatedMobileV2Authorization(
+  value: unknown,
+  expected: ExpectedMobileV2Authorization,
+): DelegatedMobileV2Authorization {
+  return admitDelegatedMobileV2AuthorizationInternal(value, expected, false);
 }
 
 export function mobileV2AuthorizationFingerprint(
@@ -197,6 +223,61 @@ export async function mobileV2AuthorizationDigest(
     throw new Error('mobile_v2_authorization_digest_invalid');
   }
   return `sha256:${digest}`;
+}
+
+/**
+ * Structurally admit an old grant without reviving its expired authority, then
+ * retain only the fixed receipt-migration coordinates derived from it.
+ */
+export async function deriveMobileV2ReceiptMigrationMetadata(
+  value: unknown,
+  expected: ExpectedMobileV2Authorization,
+): Promise<MobileV2ReceiptMigrationMetadata> {
+  const authorization = admitDelegatedMobileV2AuthorizationInternal(
+    value,
+    expected,
+    true,
+  );
+  return {
+    schema: MOBILE_V2_RECEIPT_MIGRATION_SCHEMA,
+    server_identity: authorization.server_identity,
+    credential_id: authorization.credential_id,
+    delegation_id: authorization.delegation_id,
+    authorization_digest: await mobileV2AuthorizationDigest(authorization),
+  };
+}
+
+export function admitMobileV2ReceiptMigrationMetadata(
+  value: unknown,
+  expected: Pick<
+    ExpectedMobileV2Authorization,
+    'serverIdentity' | 'credentialId'
+  >,
+): MobileV2ReceiptMigrationMetadata {
+  const candidate = object(value);
+  exact(candidate, [
+    'schema',
+    'server_identity',
+    'credential_id',
+    'delegation_id',
+    'authorization_digest',
+  ]);
+  const metadata: MobileV2ReceiptMigrationMetadata = {
+    schema: MOBILE_V2_RECEIPT_MIGRATION_SCHEMA,
+    server_identity: boundedString(candidate.server_identity, 96),
+    credential_id: boundedString(candidate.credential_id, 96),
+    delegation_id: boundedString(candidate.delegation_id, 128),
+    authorization_digest: boundedString(candidate.authorization_digest, 71),
+  };
+  if (
+    metadata.schema !== candidate.schema ||
+    metadata.server_identity !== expected.serverIdentity ||
+    metadata.credential_id !== expected.credentialId ||
+    !/^sha256:[0-9a-f]{64}$/u.test(metadata.authorization_digest)
+  ) {
+    throw new Error('mobile_v2_receipt_migration_invalid');
+  }
+  return metadata;
 }
 
 /**

@@ -398,6 +398,135 @@ test('refresh migrates legacy custody only into the old delegation family and a 
   await expect(oldFamilyStore.list()).resolves.toEqual([handle]);
 });
 
+test('cold expiry reload migrates the exact old family, refreshes, and reconciles once without submit', async () => {
+  const oldAuthorization = {
+    ...withWorkspaceAuthorization(connection(issued(1n, 'c', NOW)))
+      .workspaceAuthorization!,
+    expires_at_ms: BigInt(NOW),
+  };
+  const oldDigest = await mobileV2AuthorizationDigest(oldAuthorization);
+  const familyDigest = await mobileV2DelegationFamilyDigest(oldAuthorization);
+  const handle = {
+    schema: 'automonique.mobile-workspace-v2-receipt-handle/v2' as const,
+    authorization_digest: oldDigest,
+    project: 'project-mobile',
+    idempotency_key: 'workspace-cold-expiry',
+    preview_id: 'preview-cold-expiry',
+    preview_revision: '1',
+    preview_digest: `sha256:${'a'.repeat(64)}`,
+    request_digest: `sha256:${'b'.repeat(64)}`,
+    approval_id: null,
+    expected_resulting_revision: '1',
+    created_at_ms: String(NOW - 1),
+  };
+  const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${oldDigest}`;
+  const familyKey = `automonique.mobile.workspace-v2-receipts.v4.${familyDigest}`;
+  await AsyncStorage.setItem(legacyKey, JSON.stringify([handle]));
+
+  const expired = {
+    ...connection(issued(1n, 'c', NOW)),
+    workspaceReceiptMigration: {
+      schema: 'automonique.mobile-platform-v2-receipt-migration/v1' as const,
+      server_identity: oldAuthorization.server_identity,
+      credential_id: oldAuthorization.credential_id,
+      delegation_id: oldAuthorization.delegation_id,
+      authorization_digest: oldDigest,
+    },
+  };
+  loadStored.mockResolvedValue({
+    kind: 'refresh_required',
+    connection: expired,
+  });
+  const rotatedIssued = issued(2n, 'd', NOW + 900_000);
+  const rotated = connection(rotatedIssued);
+  const rotatedAuthorization = {
+    ...withWorkspaceAuthorization(rotated).workspaceAuthorization!,
+    principal_generation: 2n,
+  };
+  saveIssued.mockResolvedValue(rotated);
+  const observedKinds: string[] = [];
+  const platformFetch = jest.fn(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (
+        String(input) ===
+        'https://ops.example.test/api/mobile/platform-v2/authorization'
+      ) {
+        return delegatedAuthorizationResponse(rotatedAuthorization);
+      }
+      const request = JSON.parse(String(init?.body)) as {
+        kind: string;
+        protocol: string;
+        request_id: string;
+        version: number;
+      };
+      observedKinds.push(request.kind);
+      const mediaType = String(
+        (init?.headers as Record<string, string>)['content-type'],
+      );
+      const body =
+        request.kind === 'negotiate'
+          ? {
+              schema: 'automonique.platform/v2',
+              version: 2,
+              work_context: 'v2_structured',
+            }
+          : {
+              approval_id: null,
+              id: 'receipt-cold-expiry',
+              idempotency_key: handle.idempotency_key,
+              outcome: 'accepted',
+              preview: { id: handle.preview_id, revision: 1 },
+              preview_digest: handle.preview_digest,
+              recorded_at_ms: NOW,
+              request_digest: handle.request_digest,
+              resulting_revision: null,
+              schema: 'automonique.platform/v2',
+            };
+      return new Response(
+        JSON.stringify({
+          body,
+          kind:
+            request.kind === 'negotiate' ? 'negotiated' : 'mutation_receipt',
+          protocol: request.protocol,
+          request_id: request.request_id,
+          version: request.version,
+        }),
+        {
+          status: 200,
+          headers: { 'cache-control': 'no-store', 'content-type': mediaType },
+        },
+      );
+    },
+  ) as jest.MockedFunction<typeof fetch>;
+  const refresh = jest.fn(async () => {
+    expect(await AsyncStorage.getItem(legacyKey)).toBeNull();
+    expect(await AsyncStorage.getItem(familyKey)).not.toBeNull();
+    return rotatedIssued;
+  });
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+    discover: jest.fn(async () => ({
+      discovery: DISCOVERY,
+      refresh,
+      revoke: jest.fn(),
+    })),
+  });
+
+  await lifecycle.hydrate();
+  expect(lifecycle.createWorkspaceGateway()).toBeNull();
+  await lifecycle.refresh();
+  const gateway = lifecycle.createWorkspaceGateway()!;
+  await gateway.negotiate();
+  await expect(gateway.pendingMutationReceipts()).resolves.toEqual([handle]);
+  await expect(
+    gateway.reconcileMutation(handle.idempotency_key),
+  ).resolves.toMatchObject({ kind: 'accepted', handle });
+  expect(observedKinds).toEqual(['negotiate', 'get_mutation_receipt']);
+  expect(observedKinds).not.toContain('submit_mutation');
+  expect(refresh).toHaveBeenCalledTimes(1);
+});
+
 test('a consumed remote refresh plus failed secure commit requires re-pairing', async () => {
   const expired = connection(issued(1n, 'c', NOW));
   loadStored.mockResolvedValue({
@@ -625,6 +754,102 @@ test('Platform v2 remains unavailable without an exact server-issued delegated p
   const lifecycle = new MobileLifecycleCoordinator({ now: () => NOW });
   await lifecycle.hydrate();
   expect(lifecycle.createWorkspaceGateway()).toBeNull();
+});
+
+test('expired receipt migration metadata never exposes a Platform v2 gateway', async () => {
+  const expired = {
+    ...connection(issued(1n, 'c', NOW)),
+    workspaceReceiptMigration: {
+      schema: 'automonique.mobile-platform-v2-receipt-migration/v1' as const,
+      server_identity: IDENTITY,
+      credential_id: CREDENTIAL_ID,
+      delegation_id: 'delegation-mobile',
+      authorization_digest: `sha256:${'c'.repeat(64)}`,
+    },
+  };
+  loadStored.mockResolvedValue({
+    kind: 'refresh_required',
+    connection: expired,
+  });
+  const platformFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+  });
+
+  await lifecycle.hydrate();
+  expect(lifecycle.snapshot()).toMatchObject({ phase: 'refresh_required' });
+  expect(lifecycle.createWorkspaceGateway()).toBeNull();
+  expect(platformFetch).not.toHaveBeenCalled();
+});
+
+test('active reauthorization migrates old receipt custody before replacing delegation metadata', async () => {
+  const active = connection(issued(1n, 'c', NOW + 900_000));
+  const oldAuthorization =
+    withWorkspaceAuthorization(active).workspaceAuthorization!;
+  const oldDigest = await mobileV2AuthorizationDigest(oldAuthorization);
+  const oldFamily = await mobileV2DelegationFamilyDigest(oldAuthorization);
+  const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${oldDigest}`;
+  await AsyncStorage.setItem(
+    legacyKey,
+    JSON.stringify([
+      {
+        schema: 'automonique.mobile-workspace-v2-receipt-handle/v2',
+        authorization_digest: oldDigest,
+        project: 'project-mobile',
+        idempotency_key: 'workspace-before-reauthorization',
+        preview_id: 'preview-before-reauthorization',
+        preview_revision: '1',
+        preview_digest: `sha256:${'a'.repeat(64)}`,
+        request_digest: `sha256:${'b'.repeat(64)}`,
+        approval_id: null,
+        expected_resulting_revision: '1',
+        created_at_ms: String(NOW),
+      },
+    ]),
+  );
+  loadStored.mockResolvedValue({
+    kind: 'active',
+    connection: {
+      ...active,
+      workspaceReceiptMigration: {
+        schema: 'automonique.mobile-platform-v2-receipt-migration/v1',
+        server_identity: oldAuthorization.server_identity,
+        credential_id: oldAuthorization.credential_id,
+        delegation_id: oldAuthorization.delegation_id,
+        authorization_digest: oldDigest,
+      },
+    },
+  });
+  const regranted = {
+    ...oldAuthorization,
+    delegation_id: 'delegation-regranted',
+    principal_generation: 2n,
+  };
+  const platformFetch = jest.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      expect(await AsyncStorage.getItem(legacyKey)).toBeNull();
+      expect(
+        await AsyncStorage.getItem(
+          `automonique.mobile.workspace-v2-receipts.v4.${oldFamily}`,
+        ),
+      ).not.toBeNull();
+      return delegatedAuthorizationResponse(regranted);
+    },
+  ) as jest.MockedFunction<typeof fetch>;
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+  });
+
+  await lifecycle.hydrate();
+  expect(platformFetch).toHaveBeenCalledTimes(1);
+  expect(lifecycle.createWorkspaceGateway()).not.toBeNull();
+  const regrantedStore = createWorkspaceV2ReceiptStore(
+    () => mobileV2DelegationFamilyDigest(regranted),
+    () => mobileV2AuthorizationDigest(regranted),
+  );
+  await expect(regrantedStore.list()).resolves.toEqual([]);
 });
 
 test('hydrates and persists the dedicated server-issued Platform v2 authorization', async () => {

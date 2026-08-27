@@ -6,6 +6,8 @@ import {
   MOBILE_V2_ACTIONS,
   MOBILE_V2_AUTHORIZATION_SCHEMA,
   admitDelegatedMobileV2Authorization,
+  admitMobileV2ReceiptMigrationMetadata,
+  deriveMobileV2ReceiptMigrationMetadata,
   mobileV2AuthorizationDigest,
   mobileV2AuthorizationFingerprint,
   mobileV2DelegationFamilyDigest,
@@ -91,6 +93,31 @@ test('keeps one delegation receipt family stable across token rotation but not r
   expect(regranted).not.toBe(family);
   expect(family).toMatch(/^sha256:[0-9a-f]{64}$/u);
   expect(family).not.toContain(admitted.credential_id);
+});
+
+test('derives only fixed migration coordinates from an expired grant', async () => {
+  const metadata = await deriveMobileV2ReceiptMigrationMetadata(
+    { ...document(), expires_at_ms: BigInt(NOW) },
+    expected,
+  );
+  expect(metadata).toEqual({
+    schema: 'automonique.mobile-platform-v2-receipt-migration/v1',
+    server_identity: expected.serverIdentity,
+    credential_id: expected.credentialId,
+    delegation_id: 'delegation-mobile',
+    authorization_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+  });
+  expect(JSON.stringify(metadata)).not.toContain('project-a');
+  expect(JSON.stringify(metadata)).not.toContain('get_mutation_receipt');
+  expect(admitMobileV2ReceiptMigrationMetadata(metadata, expected)).toEqual(
+    metadata,
+  );
+  expect(() =>
+    admitMobileV2ReceiptMigrationMetadata(
+      { ...metadata, credential_id: 'credential-other' },
+      expected,
+    ),
+  ).toThrow('mobile_v2_receipt_migration_invalid');
 });
 
 test.each([

@@ -249,6 +249,21 @@ function withoutWorkspaceAuthorization(
   return current;
 }
 
+async function migrateLegacyReceiptCustody(
+  connection: ScopedConnection,
+): Promise<void> {
+  const metadata = connection.workspaceReceiptMigration;
+  const authorization = connection.workspaceAuthorization;
+  if (metadata === undefined && authorization === undefined) return;
+  await migrateLegacyWorkspaceV2Receipts(
+    () => mobileV2DelegationFamilyDigest(metadata ?? authorization!),
+    () =>
+      metadata === undefined
+        ? mobileV2AuthorizationDigest(authorization!)
+        : Promise.resolve(metadata.authorization_digest),
+  );
+}
+
 /**
  * Process-wide owner for the rotating credential generation. It serializes
  * refresh, aborts stale network work on replacement/revocation, and never
@@ -408,6 +423,10 @@ export class MobileLifecycleCoordinator {
       connection.workspaceAuthorization === undefined
     ) {
       try {
+        // Reauthorization may rotate or replace the delegation. Preserve the
+        // exact old family before accepting its successor.
+        await migrateLegacyReceiptCustody(connection);
+        if (!this.isCurrent(operation.generation)) return this.state;
         const workspaceAuthorization = await fetchWorkspaceAuthorization(
           connection,
           this.fetcher,
@@ -691,12 +710,11 @@ export class MobileLifecycleCoordinator {
       // which changes on rotation. Migrate it while the old secure generation
       // is still admitted and can identify its exact stable delegation family.
       // No unrelated Async Storage keys are enumerated or adopted.
-      if (current.workspaceAuthorization !== undefined) {
-        const previousWorkspaceAuthorization = current.workspaceAuthorization;
-        await migrateLegacyWorkspaceV2Receipts(
-          () => mobileV2DelegationFamilyDigest(previousWorkspaceAuthorization),
-          () => mobileV2AuthorizationDigest(previousWorkspaceAuthorization),
-        );
+      if (
+        current.workspaceReceiptMigration !== undefined ||
+        current.workspaceAuthorization !== undefined
+      ) {
+        await migrateLegacyReceiptCustody(current);
         if (!this.isCurrent(operation.generation)) {
           throw new Error('mobile_lifecycle_generation_replaced');
         }
