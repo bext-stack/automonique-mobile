@@ -14,6 +14,8 @@ import {
   SCHEMA_DIGEST,
   mobilePlatformClientId,
 } from '@automonique/sdk';
+import * as sdkRoot from '@automonique/sdk';
+import * as sdkTesting from '@automonique/sdk/testing';
 
 const root = process.cwd();
 const manifest = JSON.parse(
@@ -44,7 +46,9 @@ if (
   typeof MobileSessionClient !== 'function' ||
   typeof mobilePlatformClientId !== 'function' ||
   typeof PlatformV2Client !== 'function' ||
-  typeof HttpsPlatformV2Transport !== 'function'
+  typeof HttpsPlatformV2Transport !== 'function' ||
+  Object.hasOwn(sdkRoot, 'PlatformV2CanonicalTestingTransport') ||
+  Object.hasOwn(sdkTesting, 'PlatformV2CanonicalTestingTransport')
 ) {
   throw new Error('vendored_automonique_sdk_verification_failed');
 }
