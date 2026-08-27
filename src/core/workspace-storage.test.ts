@@ -64,7 +64,7 @@ beforeEach(() => {
   });
 });
 
-test('workspace drafts are bounded and keyed by exact server/workspace revision', async () => {
+test('workspace drafts are bounded and keyed by exact server, authorization, and workspace revision', async () => {
   const serverIdentity = identity('c');
   for (let index = 0; index <= MAX_WORKSPACE_DRAFTS; index += 1) {
     await persistWorkspaceDraft(
@@ -95,6 +95,101 @@ test('workspace drafts are bounded and keyed by exact server/workspace revision'
       workspaceRevision: decimalRevision('1'),
     }),
   ).resolves.toBe(`draft-${MAX_WORKSPACE_DRAFTS}`);
+});
+
+test('same workspace revision remains isolated across authorization revisions', async () => {
+  const serverIdentity = identity('a');
+  const base = {
+    serverIdentity,
+    workspaceId: 'workspace-same',
+    workspaceRevision: decimalRevision('4'),
+  };
+  await persistWorkspaceDraft(
+    { ...base, authorizationRevision: decimalRevision('20') },
+    'generation twenty',
+    20,
+  );
+  await persistWorkspaceDraft(
+    { ...base, authorizationRevision: decimalRevision('21') },
+    'generation twenty-one',
+    21,
+  );
+
+  await expect(
+    loadWorkspaceDraft({
+      ...base,
+      authorizationRevision: decimalRevision('20'),
+    }),
+  ).resolves.toBe('generation twenty');
+  await expect(
+    loadWorkspaceDraft({
+      ...base,
+      authorizationRevision: decimalRevision('21'),
+    }),
+  ).resolves.toBe('generation twenty-one');
+});
+
+test('legacy draft envelopes fail closed instead of migrating authority scope', async () => {
+  const serverIdentity = identity('b');
+  values.set(
+    'automonique.mobile.workspace-drafts.v1',
+    JSON.stringify({
+      schema: 'automonique.mobile-workspace-drafts/v1',
+      drafts: [
+        {
+          serverIdentity,
+          authorizationRevision: '30',
+          workspaceId: 'workspace-legacy',
+          workspaceRevision: '5',
+          text: 'must not cross the schema boundary',
+          updatedAtMs: '30',
+        },
+      ],
+    }),
+  );
+
+  await expect(
+    loadWorkspaceDraft({
+      serverIdentity,
+      authorizationRevision: decimalRevision('30'),
+      workspaceId: 'workspace-legacy',
+      workspaceRevision: decimalRevision('5'),
+    }),
+  ).resolves.toBe('');
+  expect(AsyncStorage.removeItem).toHaveBeenCalledWith(
+    'automonique.mobile.workspace-drafts.v1',
+  );
+});
+
+test('revoke and regrant cannot restore an old-generation draft', async () => {
+  const serverIdentity = identity('1');
+  const base = {
+    serverIdentity,
+    workspaceId: 'workspace-regrant',
+    workspaceRevision: decimalRevision('6'),
+  };
+  await persistWorkspaceDraft(
+    { ...base, authorizationRevision: decimalRevision('40') },
+    'old grant',
+  );
+  await revokeWorkspaceServerStorage(serverIdentity, '40');
+  await persistWorkspaceDraft(
+    { ...base, authorizationRevision: decimalRevision('41') },
+    'new grant',
+  );
+
+  await expect(
+    loadWorkspaceDraft({
+      ...base,
+      authorizationRevision: decimalRevision('40'),
+    }),
+  ).resolves.toBe('');
+  await expect(
+    loadWorkspaceDraft({
+      ...base,
+      authorizationRevision: decimalRevision('41'),
+    }),
+  ).resolves.toBe('new grant');
 });
 
 test('revocation aborts active work and purges catalog plus indexed drafts', async () => {

@@ -33,8 +33,11 @@ enters the generic session route: retained chat must first be revalidated
 against the current lifecycle server, authorization and principal generation,
 full v1 coordinate, and exact v1 target revision. Review-backed files,
 previews, source control, every mutation, and terminal require a current live
-grant. Drafts remain inert data in a 32-entry, server-scoped index and are
-purged with that server's revocation. Authority previews are never cached.
+grant. Drafts remain inert data in a 32-entry index keyed by exact server,
+authorization revision, workspace, and workspace revision. Prior draft schemas
+are discarded rather than migrated across authority generations, and all
+generations for a server are purged with its revocation. Authority previews are
+never cached.
 
 ## Expansion decisions
 
@@ -67,8 +70,14 @@ purged with that server's revocation. Authority previews are never cached.
   an equal or older reintroduction forces resynchronization.
 - Terminal navigation is refused even when visible in a workspace unless both
   live profile authority and a separate terminal action are present.
-- Oversized catalogs, session collections, unread counts, drafts, and encoded
-  caches are rejected or deterministically bounded.
+- Oversized project, host, workspace, retained-session, and detail inventories
+  are linearly and deterministically bounded before strict DTO admission. Each
+  omission class is reported separately and makes coverage partial. Unread
+  counts, drafts, and encoded caches are likewise rejected or bounded.
+- Revocation fences the exact server authorization generation and aborts its
+  active workspace operations synchronously. Durable workspace cleanup failure
+  is surfaced but cannot prevent the lifecycle's remote-first credential
+  revoke; simultaneous failures are reported together.
 - A cached or offline profile cannot recover mutation authority from its prior
   live state.
 - Durable v2 receipt lookup handles contain only a fixed SHA-256 principal

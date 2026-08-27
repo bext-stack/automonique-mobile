@@ -30,7 +30,7 @@ interface StoredWorkspaceDraft extends WorkspaceDraftScope {
 }
 
 interface WorkspaceDraftEnvelope {
-  readonly schema: 'automonique.mobile-workspace-drafts/v1';
+  readonly schema: 'automonique.mobile-workspace-drafts/v2';
   readonly drafts: readonly StoredWorkspaceDraft[];
 }
 
@@ -49,7 +49,7 @@ function serialized<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 function draftKey(scope: WorkspaceDraftScope): string {
-  return `${scope.serverIdentity}\u0000${scope.workspaceId}\u0000${scope.workspaceRevision}`;
+  return `${scope.serverIdentity}\u0000${scope.authorizationRevision}\u0000${scope.workspaceId}\u0000${scope.workspaceRevision}`;
 }
 
 function boundedText(value: unknown, maximum: number): string {
@@ -65,7 +65,7 @@ function boundedText(value: unknown, maximum: number): string {
 
 function decodeDrafts(encoded: string | null): WorkspaceDraftEnvelope {
   if (encoded === null) {
-    return { schema: 'automonique.mobile-workspace-drafts/v1', drafts: [] };
+    return { schema: 'automonique.mobile-workspace-drafts/v2', drafts: [] };
   }
   if (encoder.encode(encoded).byteLength > MAX_WORKSPACE_DRAFT_ENVELOPE_BYTES) {
     throw new Error('workspace_draft_invalid');
@@ -82,7 +82,7 @@ function decodeDrafts(encoded: string | null): WorkspaceDraftEnvelope {
   const envelope = parsed as Record<string, unknown>;
   if (
     Object.keys(envelope).length !== 2 ||
-    envelope.schema !== 'automonique.mobile-workspace-drafts/v1' ||
+    envelope.schema !== 'automonique.mobile-workspace-drafts/v2' ||
     !Array.isArray(envelope.drafts) ||
     envelope.drafts.length > MAX_WORKSPACE_DRAFTS
   ) {
@@ -120,12 +120,12 @@ function decodeDrafts(encoded: string | null): WorkspaceDraftEnvelope {
     keys.add(key);
     return draft;
   });
-  return { schema: 'automonique.mobile-workspace-drafts/v1', drafts };
+  return { schema: 'automonique.mobile-workspace-drafts/v2', drafts };
 }
 
 function encodeDrafts(drafts: readonly StoredWorkspaceDraft[]): string {
   const encoded = JSON.stringify({
-    schema: 'automonique.mobile-workspace-drafts/v1',
+    schema: 'automonique.mobile-workspace-drafts/v2',
     drafts: drafts.slice(0, MAX_WORKSPACE_DRAFTS),
   });
   if (encoder.encode(encoded).byteLength > MAX_WORKSPACE_DRAFT_ENVELOPE_BYTES) {
@@ -276,7 +276,7 @@ export function persistWorkspaceDraft(
       envelope = decodeDrafts(await AsyncStorage.getItem(WORKSPACE_DRAFTS_KEY));
     } catch {
       envelope = {
-        schema: 'automonique.mobile-workspace-drafts/v1',
+        schema: 'automonique.mobile-workspace-drafts/v2',
         drafts: [],
       };
     }

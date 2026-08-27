@@ -67,6 +67,50 @@ const INITIAL_GATEWAY: GatewayGeneration = {
   workspaceGateway: null,
 };
 
+async function revokeCredentialGeneration(
+  state: MobileLifecycleState,
+): Promise<void> {
+  const identity = state.profile?.serverIdentity;
+  const authorizationRevision = state.profile?.authorizationRevision;
+  let cleanupResult: Promise<{ readonly error?: unknown }> = Promise.resolve(
+    {},
+  );
+  if (identity !== undefined && authorizationRevision !== undefined) {
+    try {
+      // This call establishes the generation fence and aborts active workspace
+      // operations synchronously, before either durable cleanup or remote
+      // credential revocation can yield.
+      cleanupResult = revokeWorkspaceCatalogCache(
+        identity,
+        authorizationRevision,
+      ).then(
+        () => ({}),
+        (error: unknown) => ({ error }),
+      );
+    } catch (error) {
+      cleanupResult = Promise.resolve({ error });
+    }
+  }
+  let lifecycleError: unknown;
+  try {
+    // Workspace storage failure must never suppress remote-first revocation.
+    // The lifecycle publishes `revoking` synchronously and replaces all live
+    // gateways before its first remote await.
+    await mobileLifecycle.revoke();
+  } catch (error) {
+    lifecycleError = error;
+  }
+  const { error: cleanupError } = await cleanupResult;
+  if (lifecycleError !== undefined && cleanupError !== undefined) {
+    throw new AggregateError(
+      [lifecycleError, cleanupError],
+      'credential_and_workspace_revoke_failed',
+    );
+  }
+  if (lifecycleError !== undefined) throw lifecycleError;
+  if (cleanupError !== undefined) throw cleanupError;
+}
+
 /** Production composition root. Mock gateways must be passed explicitly in tests. */
 export function ProductionMobileProvider({ children }: PropsWithChildren) {
   const [state, setState] = useState<MobileLifecycleState>(() =>
@@ -142,12 +186,7 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
           await mobileLifecycle.refresh();
         },
         revokeCredential: async () => {
-          const identity = state.profile?.serverIdentity;
-          const authorizationRevision = state.profile?.authorizationRevision;
-          if (identity !== undefined && authorizationRevision !== undefined) {
-            await revokeWorkspaceCatalogCache(identity, authorizationRevision);
-          }
-          await mobileLifecycle.revoke();
+          await revokeCredentialGeneration(state);
         },
         pair: async (offer) => {
           await mobileLifecycle.pair(offer);

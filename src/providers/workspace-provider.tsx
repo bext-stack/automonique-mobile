@@ -40,7 +40,10 @@ export interface WorkspaceCatalogStatus {
   readonly coverage: 'complete' | 'partial' | 'unknown';
   readonly message: string;
   readonly omittedDetailCount: number;
+  readonly omittedProjectCount: number;
+  readonly omittedHostCount: number;
   readonly omittedWorkspaceCount: number;
+  readonly omittedSessionCount: number;
   readonly failedProjectCount: number;
   readonly failedDetailCount: number;
 }
@@ -75,7 +78,10 @@ const INITIAL_STATUS: WorkspaceCatalogStatus = {
   coverage: 'unknown',
   message: 'Loading the bounded workspace cache',
   omittedDetailCount: 0,
+  omittedProjectCount: 0,
+  omittedHostCount: 0,
   omittedWorkspaceCount: 0,
+  omittedSessionCount: 0,
   failedProjectCount: 0,
   failedDetailCount: 0,
 };
@@ -182,7 +188,10 @@ export function WorkspaceProvider({
             ? 'Current delegated workspace inventory'
             : 'Current inventory with bounded or unavailable detail reads',
         omittedDetailCount: built.omittedDetailCount,
+        omittedProjectCount: built.omittedProjectCount,
+        omittedHostCount: built.omittedHostCount,
         omittedWorkspaceCount: built.omittedWorkspaceCount,
+        omittedSessionCount: built.omittedSessionCount,
         failedProjectCount: built.failedProjectCount,
         failedDetailCount: built.failedDetailCount,
       });

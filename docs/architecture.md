@@ -14,9 +14,12 @@ It negotiates v2 before reads, consumes exact project-root queries, exposes
 typed lineage and read-only review snapshots, and performs create/resume only
 through an ephemeral server preview and a separate confirmation. The
 `WorkspaceProvider` joins only typed Platform v2 relations into a durable
-catalog, caps detail fanout at 32 workspaces with concurrency two, and reports
-partial project/lineage/review coverage. It retains historical server scopes as
-cached reads while only the current credential generation can be active.
+catalog. Linear indexed selection applies coherent global ceilings to projects,
+hosts, workspaces, and retained sessions before strict admission; detail fanout
+is capped at 32 workspaces with concurrency two. Every omission class and
+partial project/lineage/review coverage is reported. It retains historical
+server scopes as cached reads while only the current credential generation can
+be active.
 Production screens expose discovery, exact workspace detail, and revision-bound
 retained-session jumps. Review destinations require a current `get_review`
 projection; terminal and all workspace mutations remain unavailable. Persisted

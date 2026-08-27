@@ -184,7 +184,7 @@ function WorkspaceDraftEditor({
       <Text style={[styles.subtitle, { color: palette.textMuted }]}>
         {new TextEncoder().encode(draft).byteLength} /{' '}
         {MAX_WORKSPACE_DRAFT_BYTES} bytes · stored locally for this exact
-        workspace revision
+        authorization and workspace revision
       </Text>
       <View style={styles.mutations}>
         {['Create from task', 'Resume workspace'].map((label) => (

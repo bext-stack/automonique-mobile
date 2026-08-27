@@ -94,7 +94,10 @@ function workspaceValue() {
       coverage: 'partial',
       message: 'Current inventory with bounded detail reads',
       omittedDetailCount: 1,
+      omittedProjectCount: 0,
+      omittedHostCount: 0,
       omittedWorkspaceCount: 0,
+      omittedSessionCount: 0,
       failedProjectCount: 0,
       failedDetailCount: 1,
     },
@@ -154,7 +157,7 @@ test('discovery keeps external and orchestration status separate and labels part
   const view = await render(<WorkspacesScreen />);
   expect(view.getByText('Orchestration: review')).toBeTruthy();
   expect(view.getByText('External: GitHub #34 · open')).toBeTruthy();
-  expect(view.getByText(/Partial detail coverage/)).toBeTruthy();
+  expect(view.getByText(/Partial coverage/)).toBeTruthy();
   expect(
     view.getByLabelText(
       'Open Read-mostly workspace companion on Paris builder',
@@ -203,7 +206,7 @@ test('draft loading is keyed so route changes cannot copy text across workspaces
   });
   jest.mocked(AsyncStorage.getItem).mockResolvedValue(
     JSON.stringify({
-      schema: 'automonique.mobile-workspace-drafts/v1',
+      schema: 'automonique.mobile-workspace-drafts/v2',
       drafts: [
         {
           serverIdentity: WORKSPACE_FIXTURE_IDENTITY,

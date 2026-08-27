@@ -10,7 +10,15 @@ import {
   buildWorkspaceServerCatalog,
   MAX_WORKSPACE_DETAIL_READS,
 } from './workspace-v2-catalog';
-import { MAX_WORKSPACES } from './workspace-companion';
+import {
+  MAX_WORKSPACES,
+  MAX_WORKSPACE_HOSTS,
+  MAX_WORKSPACE_PROJECTS,
+  MAX_WORKSPACE_SESSIONS,
+  WORKSPACE_COMPANION_SCHEMA,
+  admitWorkspaceCompanionCatalog,
+  type ScopedServerProfile,
+} from './workspace-companion';
 import type { WorkspaceV2Gateway } from './workspace-v2-gateway';
 
 const serverIdentity = `sha256:${'b'.repeat(64)}`;
@@ -301,6 +309,150 @@ function fakeGateway(
   return { gateway, loadLineage, loadReview };
 }
 
+function boundedProjectRecords(
+  projectId: string,
+  options: {
+    readonly hostCount?: number;
+    readonly sessionCount?: number;
+  } = {},
+): readonly WorkContextRecord[] {
+  const hostCount = options.hostCount ?? 1;
+  const records: WorkContextRecord[] = [
+    record({ kind: 'project', id: projectId } as never, projectId),
+  ];
+  for (let index = 0; index < hostCount; index += 1) {
+    records.push(
+      record(
+        { kind: 'host_setup', id: `${projectId}-host-${index}` } as never,
+        `Host ${index}`,
+        [
+          {
+            kind: 'host_setup_project',
+            target: { kind: 'project', id: projectId } as never,
+          },
+        ],
+      ),
+    );
+  }
+  if (options.sessionCount === undefined) return records;
+  records.push(
+    record(
+      { kind: 'checkout', id: `${projectId}-checkout` } as never,
+      'Checkout',
+      [
+        {
+          kind: 'checkout_project',
+          target: { kind: 'project', id: projectId } as never,
+        },
+        {
+          kind: 'checkout_host_setup',
+          target: {
+            kind: 'host_setup',
+            id: `${projectId}-host-0`,
+          } as never,
+        },
+      ],
+    ),
+    record(
+      { kind: 'user_workspace', id: `${projectId}-workspace` } as never,
+      'Workspace',
+      [
+        {
+          kind: 'user_workspace_project',
+          target: { kind: 'project', id: projectId } as never,
+        },
+        {
+          kind: 'user_workspace_checkout',
+          target: {
+            kind: 'checkout',
+            id: `${projectId}-checkout`,
+          } as never,
+        },
+      ],
+    ),
+    record(
+      { kind: 'attempt_workspace', id: `${projectId}-attempt` } as never,
+      'Attempt',
+      [
+        {
+          kind: 'attempt_user_workspace',
+          target: {
+            kind: 'user_workspace',
+            id: `${projectId}-workspace`,
+          } as never,
+        },
+      ],
+    ),
+  );
+  for (let index = 0; index < options.sessionCount; index += 1) {
+    records.push(
+      record(
+        { kind: 'session', id: `${projectId}-work-session-${index}` } as never,
+        `Session ${index}`,
+        [
+          {
+            kind: 'session_attempt_workspace',
+            target: {
+              kind: 'attempt_workspace',
+              id: `${projectId}-attempt`,
+            } as never,
+          },
+          {
+            kind: 'session_platform_session',
+            target: {
+              kind: 'platform_session',
+              resource: {
+                authority: 'automonique',
+                kind: 'session',
+                id: `${projectId}-retained-${index}`,
+              },
+            } as never,
+          },
+        ],
+      ),
+    );
+  }
+  return records;
+}
+
+function boundedGateway(
+  projectRoots: readonly string[],
+  records: (project: string) => readonly WorkContextRecord[],
+): { readonly gateway: WorkspaceV2Gateway; readonly loadProject: jest.Mock } {
+  const loadProject = jest.fn(async (project: string) => records(project));
+  const gateway = {
+    authorizationScope: {
+      serverIdentity,
+      tenantId: 'tenant-1',
+      authorizationRevision: 9n,
+      principalGeneration: 4n,
+      delegationId: 'delegation-1',
+      expiresAtMs: 9_999_999_999_999n,
+      projectRoots,
+      actions: ['query_work_contexts'],
+    },
+    negotiate: jest.fn(async () => undefined),
+    loadProject,
+    loadLineage: jest.fn(),
+    loadReview: jest.fn(),
+  } as unknown as WorkspaceV2Gateway;
+  return { gateway, loadProject };
+}
+
+function expectStrictProfileAdmission(profile: ScopedServerProfile): void {
+  expect(() =>
+    admitWorkspaceCompanionCatalog({
+      schema: WORKSPACE_COMPANION_SCHEMA,
+      phase: 'live',
+      generatedAt: '2026-08-27T12:00:00.000Z',
+      selectedServerIdentity: profile.serverIdentity,
+      servers: [profile],
+      serverTombstones: [],
+      revisionTombstones: [],
+    }),
+  ).not.toThrow();
+}
+
 test('projects typed relations, lineage status, review attention, and separately granted destinations', async () => {
   const { gateway } = fakeGateway(1);
   const result = await buildWorkspaceServerCatalog({
@@ -373,10 +525,169 @@ test('bounds the indexed inventory and reports workspace omission separately', a
 
   expect(result.profile.workspaces).toHaveLength(MAX_WORKSPACES);
   expect(result.omittedWorkspaceCount).toBe(3);
+  expect(result.omittedSessionCount).toBe(3);
   expect(result.omittedDetailCount).toBe(
     MAX_WORKSPACES - MAX_WORKSPACE_DETAIL_READS,
   );
   expect(result.coverage).toBe('partial');
+});
+
+test.each([MAX_WORKSPACE_PROJECTS, MAX_WORKSPACE_PROJECTS + 1])(
+  'bounds %i delegated project roots before loading and reports exact omission',
+  async (count) => {
+    const roots = Array.from(
+      { length: count },
+      (_, index) => `project-${index}`,
+    );
+    const { gateway, loadProject } = boundedGateway(roots, (project) =>
+      boundedProjectRecords(project),
+    );
+    const result = await buildWorkspaceServerCatalog({
+      gateway,
+      origin: 'https://ops.example.test',
+      serverLabel: 'ops.example.test',
+    });
+
+    expect(loadProject).toHaveBeenCalledTimes(
+      Math.min(count, MAX_WORKSPACE_PROJECTS),
+    );
+    expect(result.profile.projects).toHaveLength(MAX_WORKSPACE_HOSTS);
+    expect(result.omittedProjectCount).toBe(count - MAX_WORKSPACE_HOSTS);
+    expect(result.profile.hosts).toHaveLength(MAX_WORKSPACE_HOSTS);
+    expect(result.omittedHostCount).toBe(
+      Math.min(count, MAX_WORKSPACE_PROJECTS) - MAX_WORKSPACE_HOSTS,
+    );
+    expectStrictProfileAdmission(result.profile);
+  },
+);
+
+test.each([MAX_WORKSPACE_HOSTS, MAX_WORKSPACE_HOSTS + 1])(
+  'bounds %i hosts coherently and reports exact omission',
+  async (hostCount) => {
+    const { gateway } = boundedGateway(['project-hosts'], (project) =>
+      boundedProjectRecords(project, { hostCount }),
+    );
+    const result = await buildWorkspaceServerCatalog({
+      gateway,
+      origin: 'https://ops.example.test',
+      serverLabel: 'ops.example.test',
+    });
+
+    expect(result.profile.hosts).toHaveLength(
+      Math.min(hostCount, MAX_WORKSPACE_HOSTS),
+    );
+    expect(result.profile.projects[0]?.hostIds).toHaveLength(
+      Math.min(hostCount, MAX_WORKSPACE_HOSTS),
+    );
+    expect(result.omittedHostCount).toBe(
+      Math.max(0, hostCount - MAX_WORKSPACE_HOSTS),
+    );
+    expectStrictProfileAdmission(result.profile);
+  },
+);
+
+test.each([MAX_WORKSPACE_SESSIONS, MAX_WORKSPACE_SESSIONS + 1])(
+  'bounds %i retained sessions coherently and reports exact omission',
+  async (sessionCount) => {
+    const { gateway } = boundedGateway(['project-sessions'], (project) =>
+      boundedProjectRecords(project, { sessionCount }),
+    );
+    const result = await buildWorkspaceServerCatalog({
+      gateway,
+      origin: 'https://ops.example.test',
+      serverLabel: 'ops.example.test',
+    });
+
+    expect(result.profile.workspaces[0]?.sessions).toHaveLength(
+      Math.min(sessionCount, MAX_WORKSPACE_SESSIONS),
+    );
+    expect(result.omittedSessionCount).toBe(
+      Math.max(0, sessionCount - MAX_WORKSPACE_SESSIONS),
+    );
+    expectStrictProfileAdmission(result.profile);
+  },
+);
+
+test('selects the latest attempt linearly and ignores malformed or duplicate retained sessions', async () => {
+  const records = [
+    ...boundedProjectRecords('project-adversarial', {
+      sessionCount: 0,
+    }),
+  ];
+  records.push(
+    record(
+      { kind: 'attempt_workspace', id: 'attempt-z' } as never,
+      'Tie loser',
+      [
+        {
+          kind: 'attempt_user_workspace',
+          target: {
+            kind: 'user_workspace',
+            id: 'project-adversarial-workspace',
+          } as never,
+        },
+      ],
+      'active',
+      9n,
+    ),
+    record(
+      { kind: 'attempt_workspace', id: 'attempt-a' } as never,
+      'Tie winner',
+      [
+        {
+          kind: 'attempt_user_workspace',
+          target: {
+            kind: 'user_workspace',
+            id: 'project-adversarial-workspace',
+          } as never,
+        },
+      ],
+      'active',
+      9n,
+    ),
+    record(
+      { kind: 'session', id: 'missing-target' } as never,
+      'Missing target',
+      [
+        {
+          kind: 'session_attempt_workspace',
+          target: { kind: 'attempt_workspace', id: 'attempt-a' } as never,
+        },
+      ],
+    ),
+    ...['first', 'duplicate'].map((id) =>
+      record({ kind: 'session', id } as never, id, [
+        {
+          kind: 'session_attempt_workspace',
+          target: { kind: 'attempt_workspace', id: 'attempt-a' } as never,
+        },
+        {
+          kind: 'session_platform_session',
+          target: {
+            kind: 'platform_session',
+            resource: {
+              authority: 'automonique',
+              kind: 'session',
+              id: 'retained-once',
+            },
+          } as never,
+        },
+      ]),
+    ),
+  );
+  const { gateway } = boundedGateway(['project-adversarial'], () => records);
+  const result = await buildWorkspaceServerCatalog({
+    gateway,
+    origin: 'https://ops.example.test',
+    serverLabel: 'ops.example.test',
+  });
+
+  expect(result.profile.workspaces[0]).toMatchObject({
+    attempt: { id: 'attempt-a', revision: '9' },
+    sessions: [{ id: 'retained-once', title: 'first' }],
+    navigation: [{ destination: 'chat' }],
+  });
+  expect(result.omittedSessionCount).toBe(0);
 });
 
 test('missing detail grants never become inferred navigation authority', async () => {

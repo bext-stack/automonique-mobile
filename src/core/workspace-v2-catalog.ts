@@ -9,6 +9,9 @@ import type {
 import { decimalRevision } from './types';
 import {
   MAX_WORKSPACES,
+  MAX_WORKSPACE_HOSTS,
+  MAX_WORKSPACE_PROJECTS,
+  MAX_WORKSPACE_SESSIONS,
   MAX_WORKSPACE_UNREAD,
   type AuthorizedHost,
   type AuthorizedProject,
@@ -58,7 +61,10 @@ export interface WorkspaceCatalogBuildResult {
   readonly details: readonly WorkspaceCatalogDetail[];
   readonly coverage: 'complete' | 'partial';
   readonly omittedDetailCount: number;
+  readonly omittedProjectCount: number;
+  readonly omittedHostCount: number;
   readonly omittedWorkspaceCount: number;
+  readonly omittedSessionCount: number;
   readonly failedProjectCount: number;
   readonly failedDetailCount: number;
   readonly successfulProjectIds: readonly string[];
@@ -266,36 +272,45 @@ interface WorkspaceGraph {
   readonly checkout: WorkContextRecord;
   readonly workspace: WorkContextRecord;
   readonly attempt: WorkContextRecord | null;
-  readonly sessions: readonly WorkContextRecord[];
-  readonly platformSessionTargets: ReadonlyMap<
-    string,
-    Extract<
-      WorkContextRecord['relations'][number]['target'],
-      { readonly kind: 'platform_session' }
-    >['resource']
-  >;
+  readonly sessions: readonly RetainedSession[];
   readonly repositoryId: string | null;
+}
+
+interface RetainedSession {
+  readonly record: WorkContextRecord;
+  readonly target: Extract<
+    WorkContextRecord['relations'][number]['target'],
+    { readonly kind: 'platform_session' }
+  >['resource'];
 }
 
 function graphs(
   records: readonly WorkContextRecord[],
 ): readonly WorkspaceGraph[] {
   const keyed = new Map<string, WorkContextRecord>();
-  for (const record of records)
-    keyed.set(`${record.identity.kind}:${recordId(record)}`, record);
-  const attemptsByWorkspace = new Map<string, WorkContextRecord[]>();
+  const workspaceRecords: WorkContextRecord[] = [];
+  const latestAttemptByWorkspace = new Map<string, WorkContextRecord>();
   const sessionsByAttempt = new Map<string, WorkContextRecord[]>();
   for (const record of records) {
-    if (record.identity.kind === 'attempt_workspace') {
+    keyed.set(`${record.identity.kind}:${recordId(record)}`, record);
+    if (record.identity.kind === 'user_workspace') {
+      workspaceRecords.push(record);
+    } else if (record.identity.kind === 'attempt_workspace') {
       const target = relation(
         record,
         'attempt_user_workspace',
         'user_workspace',
       );
       if (target?.kind === 'user_workspace') {
-        const values = attemptsByWorkspace.get(target.id) ?? [];
-        values.push(record);
-        attemptsByWorkspace.set(target.id, values);
+        const current = latestAttemptByWorkspace.get(target.id);
+        if (
+          current === undefined ||
+          record.revision > current.revision ||
+          (record.revision === current.revision &&
+            recordId(record).localeCompare(recordId(current)) < 0)
+        ) {
+          latestAttemptByWorkspace.set(target.id, record);
+        }
       }
     } else if (record.identity.kind === 'session') {
       const target = relation(
@@ -311,9 +326,7 @@ function graphs(
     }
   }
   const result: WorkspaceGraph[] = [];
-  for (const workspace of records.filter(
-    (record) => record.identity.kind === 'user_workspace',
-  )) {
+  for (const workspace of workspaceRecords) {
     if (workspace.identity.kind !== 'user_workspace') continue;
     const workspaceIdentity = workspace.identity;
     const projectTarget = relation(
@@ -338,37 +351,24 @@ function graphs(
     if (hostTarget?.kind !== 'host_setup') continue;
     const host = keyed.get(`host_setup:${hostTarget.id}`);
     if (host === undefined) continue;
-    const attempt =
-      [...(attemptsByWorkspace.get(workspaceIdentity.id) ?? [])].sort(
-        (left, right) =>
-          right.revision === left.revision
-            ? recordId(left).localeCompare(recordId(right))
-            : right.revision > left.revision
-              ? 1
-              : -1,
-      )[0] ?? null;
-    const sessions =
-      attempt === null
-        ? []
-        : [...(sessionsByAttempt.get(recordId(attempt)) ?? [])].sort((a, b) =>
-            recordId(a).localeCompare(recordId(b)),
-          );
-    const platformSessionTargets = new Map<
-      string,
-      Extract<
-        WorkContextRecord['relations'][number]['target'],
-        { readonly kind: 'platform_session' }
-      >['resource']
-    >();
-    for (const session of sessions) {
+    const attempt = latestAttemptByWorkspace.get(workspaceIdentity.id) ?? null;
+    const sessions: RetainedSession[] = [];
+    const retainedIds = new Set<string>();
+    for (const session of attempt === null
+      ? []
+      : (sessionsByAttempt.get(recordId(attempt)) ?? [])) {
       const target = relation(
         session,
         'session_platform_session',
         'platform_session',
       );
-      if (target?.kind === 'platform_session') {
-        platformSessionTargets.set(recordId(session), target.resource);
-      }
+      if (
+        target?.kind !== 'platform_session' ||
+        retainedIds.has(target.resource.id)
+      )
+        continue;
+      retainedIds.add(target.resource.id);
+      sessions.push({ record: session, target: target.resource });
     }
     const repository = relation(checkout, 'checkout_repository', 'repository');
     result.push({
@@ -378,19 +378,11 @@ function graphs(
       workspace,
       attempt,
       sessions,
-      platformSessionTargets,
       repositoryId:
         repository?.kind === 'repository' ? repository.resource.id : null,
     });
   }
-  return result.sort((left, right) => {
-    const project = recordId(left.project).localeCompare(
-      recordId(right.project),
-    );
-    return project === 0
-      ? recordId(left.workspace).localeCompare(recordId(right.workspace))
-      : project;
-  });
+  return result;
 }
 
 interface DetailRead {
@@ -443,15 +435,24 @@ export async function buildWorkspaceServerCatalog(
     throw new Error('workspace_catalog_read_not_granted');
   }
   await options.gateway.negotiate(options.signal);
-  const records: WorkContextRecord[] = [];
+  const admittedProjectRoots = scope.projectRoots.slice(
+    0,
+    MAX_WORKSPACE_PROJECTS,
+  );
+  const omittedRootCount =
+    scope.projectRoots.length - admittedProjectRoots.length;
+  const snapshots: {
+    readonly projectId: string;
+    readonly records: readonly WorkContextRecord[];
+  }[] = [];
   const successfulProjectIds: string[] = [];
   const failedProjectIds: string[] = [];
   for (
     let index = 0;
-    index < scope.projectRoots.length;
+    index < admittedProjectRoots.length;
     index += MAX_WORKSPACE_PROJECT_CONCURRENCY
   ) {
-    const batch = scope.projectRoots.slice(
+    const batch = admittedProjectRoots.slice(
       index,
       index + MAX_WORKSPACE_PROJECT_CONCURRENCY,
     );
@@ -466,7 +467,7 @@ export async function buildWorkspaceServerCatalog(
       const read = reads[offset]!;
       const project = batch[offset]!;
       if (read.status === 'fulfilled') {
-        records.push(...read.value);
+        snapshots.push({ projectId: project, records: read.value });
         successfulProjectIds.push(project);
       } else {
         failedProjectIds.push(project);
@@ -474,13 +475,118 @@ export async function buildWorkspaceServerCatalog(
     }
   }
   const failedProjectCount = failedProjectIds.length;
-  if (records.length === 0 && failedProjectCount > 0) {
+  if (snapshots.length === 0 && failedProjectCount > 0) {
     throw new Error('workspace_catalog_projects_unavailable');
   }
-  const allWorkspaceGraphs = graphs(records);
-  const workspaceGraphs = allWorkspaceGraphs.slice(0, MAX_WORKSPACES);
-  const omittedWorkspaceCount =
-    allWorkspaceGraphs.length - workspaceGraphs.length;
+
+  const inventories = snapshots.map((snapshot) => {
+    const project = snapshot.records.find(
+      (candidate) =>
+        candidate.identity.kind === 'project' &&
+        recordId(candidate) === snapshot.projectId,
+    );
+    if (project === undefined) {
+      throw new Error('workspace_catalog_project_graph_invalid');
+    }
+    const workspaceGraphs = graphs(snapshot.records);
+    const hostRecords = new Map<string, WorkContextRecord>();
+    // Hosts that back a visible workspace are selected before idle hosts. This
+    // remains a linear, project-root/record-order selection and maximizes the
+    // coherent workspace projection within the fixed global host ceiling.
+    for (const graph of workspaceGraphs) {
+      hostRecords.set(recordId(graph.host), graph.host);
+    }
+    for (const candidate of snapshot.records) {
+      if (candidate.identity.kind !== 'host_setup') continue;
+      const target = relation(candidate, 'host_setup_project', 'project');
+      if (target?.kind === 'project' && target.id === snapshot.projectId) {
+        hostRecords.set(recordId(candidate), candidate);
+      }
+    }
+    return {
+      projectId: snapshot.projectId,
+      project,
+      hosts: [...hostRecords.values()],
+      graphs: workspaceGraphs,
+    };
+  });
+
+  const admittedHostRecords: WorkContextRecord[] = [];
+  const admittedHostOwners = new Map<string, string>();
+  let hostCandidateCount = 0;
+  for (const inventory of inventories) {
+    for (const host of inventory.hosts) {
+      hostCandidateCount += 1;
+      const hostId = recordId(host);
+      if (
+        admittedHostRecords.length >= MAX_WORKSPACE_HOSTS ||
+        admittedHostOwners.has(hostId)
+      )
+        continue;
+      admittedHostOwners.set(hostId, inventory.projectId);
+      admittedHostRecords.push(host);
+    }
+  }
+  const omittedHostCount = hostCandidateCount - admittedHostRecords.length;
+  const hosts: AuthorizedHost[] = admittedHostRecords.map((host) => ({
+    id: recordId(host),
+    label: host.label,
+    state: hostState(host.lifecycle),
+    freshness: unknownFreshness(now()),
+  }));
+
+  const projects: AuthorizedProject[] = [];
+  const admittedProjectIds = new Set<string>();
+  for (const inventory of inventories) {
+    const hostIds = inventory.hosts
+      .map(recordId)
+      .filter(
+        (hostId) => admittedHostOwners.get(hostId) === inventory.projectId,
+      );
+    if (hostIds.length === 0) continue;
+    admittedProjectIds.add(inventory.projectId);
+    projects.push({
+      id: inventory.projectId,
+      hostIds,
+      label: inventory.project.label,
+    });
+  }
+  const omittedProjectCount =
+    omittedRootCount + inventories.length - projects.length;
+
+  const workspaceGraphs: WorkspaceGraph[] = [];
+  const admittedWorkspaceIds = new Set<string>();
+  let omittedWorkspaceCount = 0;
+  let omittedSessionCount = 0;
+  let admittedSessionCount = 0;
+  for (const inventory of inventories) {
+    for (const graph of inventory.graphs) {
+      const workspaceId = recordId(graph.workspace);
+      const projectId = recordId(graph.project);
+      const hostId = recordId(graph.host);
+      if (
+        !admittedProjectIds.has(projectId) ||
+        admittedHostOwners.get(hostId) !== projectId ||
+        admittedWorkspaceIds.has(workspaceId) ||
+        workspaceGraphs.length >= MAX_WORKSPACES
+      ) {
+        omittedWorkspaceCount += 1;
+        omittedSessionCount += graph.sessions.length;
+        continue;
+      }
+      admittedWorkspaceIds.add(workspaceId);
+      const sessions: RetainedSession[] = [];
+      for (const session of graph.sessions) {
+        if (admittedSessionCount >= MAX_WORKSPACE_SESSIONS) {
+          omittedSessionCount += 1;
+          continue;
+        }
+        sessions.push(session);
+        admittedSessionCount += 1;
+      }
+      workspaceGraphs.push({ ...graph, sessions });
+    }
+  }
   const admittedDetailGraphs = workspaceGraphs.slice(
     0,
     MAX_WORKSPACE_DETAIL_READS,
@@ -509,45 +615,6 @@ export async function buildWorkspaceServerCatalog(
     for (const value of values) detailReads.set(value.key, value.value);
   }
 
-  const hostRecords = new Map<string, WorkContextRecord>();
-  const projectRecords = new Map<string, WorkContextRecord>();
-  const projectHosts = new Map<string, Set<string>>();
-  for (const candidate of records) {
-    if (candidate.identity.kind === 'project') {
-      projectRecords.set(recordId(candidate), candidate);
-    }
-    if (candidate.identity.kind === 'host_setup') {
-      const target = relation(candidate, 'host_setup_project', 'project');
-      if (target?.kind === 'project') {
-        hostRecords.set(recordId(candidate), candidate);
-        const hostIds = projectHosts.get(target.id) ?? new Set<string>();
-        hostIds.add(recordId(candidate));
-        projectHosts.set(target.id, hostIds);
-      }
-    }
-  }
-  for (const graph of workspaceGraphs) {
-    const hostId = recordId(graph.host);
-    const projectId = recordId(graph.project);
-    hostRecords.set(hostId, graph.host);
-    projectRecords.set(projectId, graph.project);
-    const hostIds = projectHosts.get(projectId) ?? new Set<string>();
-    hostIds.add(hostId);
-    projectHosts.set(projectId, hostIds);
-  }
-  const hosts: AuthorizedHost[] = [...hostRecords.values()].map((host) => ({
-    id: recordId(host),
-    label: host.label,
-    state: hostState(host.lifecycle),
-    freshness: unknownFreshness(now()),
-  }));
-  const projects: AuthorizedProject[] = [...projectRecords.values()]
-    .filter((project) => (projectHosts.get(recordId(project))?.size ?? 0) > 0)
-    .map((project) => ({
-      id: recordId(project),
-      hostIds: [...(projectHosts.get(recordId(project)) ?? [])],
-      label: project.label,
-    }));
   let failedDetailCount = 0;
   const details: WorkspaceCatalogDetail[] = [];
   const workspaces = workspaceGraphs.map((graph): CompanionWorkspace => {
@@ -619,9 +686,9 @@ export async function buildWorkspaceServerCatalog(
               revision: decimalRevision(graph.attempt.revision.toString()),
               state: attemptState(graph.attempt.lifecycle),
             },
-      sessions: graph.sessions.map((session) => ({
-        id: graph.platformSessionTargets.get(recordId(session))!.id,
-        target: graph.platformSessionTargets.get(recordId(session))!,
+      sessions: graph.sessions.map(({ record: session, target }) => ({
+        id: target.id,
+        target,
         revision: decimalRevision(session.revision.toString()),
         title: session.label,
         state: sessionState(session.lifecycle),
@@ -663,11 +730,17 @@ export async function buildWorkspaceServerCatalog(
       failedProjectCount > 0 ||
       failedDetailCount > 0 ||
       omittedDetailCount > 0 ||
-      omittedWorkspaceCount > 0
+      omittedProjectCount > 0 ||
+      omittedHostCount > 0 ||
+      omittedWorkspaceCount > 0 ||
+      omittedSessionCount > 0
         ? 'partial'
         : 'complete',
     omittedDetailCount,
+    omittedProjectCount,
+    omittedHostCount,
     omittedWorkspaceCount,
+    omittedSessionCount,
     failedProjectCount,
     failedDetailCount,
     successfulProjectIds,
