@@ -168,7 +168,7 @@ function withWorkspaceAuthorization(value: ScopedConnection): ScopedConnection {
       tenant_id: 'tenant-mobile',
       actor_id: 'operator-mobile',
       issued_at_ms: BigInt(NOW - 1),
-      expires_at_ms: BigInt(NOW + 900_000),
+      expires_at_ms: value.authorization.expires_at_ms,
       project_roots: [ProjectId('project-mobile')],
       actions: MOBILE_V2_ACTIONS,
     },
@@ -889,6 +889,42 @@ test('hydrates and persists the dedicated server-issued Platform v2 authorizatio
 });
 
 test.each([
+  ['equal', 0, 'ready'],
+  ['shorter', -1, 'recovery_required'],
+  ['longer', 1, 'recovery_required'],
+] as const)(
+  '%s fetched v2 expiry keeps lifecycle authority fail closed',
+  async (_label, delta, expectedPhase) => {
+    const active = connection(issued(1n, 'c', NOW + 900_000));
+    const delegated = {
+      ...withWorkspaceAuthorization(active).workspaceAuthorization!,
+      expires_at_ms: active.authorization.expires_at_ms + BigInt(delta),
+    };
+    loadStored.mockResolvedValue({ kind: 'active', connection: active });
+    const lifecycle = new MobileLifecycleCoordinator({
+      now: () => NOW,
+      fetcher: jest.fn(async () => delegatedAuthorizationResponse(delegated)),
+    });
+
+    await lifecycle.hydrate();
+    expect(lifecycle.snapshot().phase).toBe(expectedPhase);
+    if (expectedPhase === 'ready') {
+      expect(lifecycle.createWorkspaceGateway()).not.toBeNull();
+      expect(saveWorkspace).toHaveBeenCalledTimes(1);
+    } else {
+      expect(lifecycle.snapshot()).toMatchObject({
+        reason: 'mobile_v2_authorization_invalid',
+      });
+      expect(lifecycle.createWorkspaceGateway()).toBeNull();
+      await expect(lifecycle.accessToken()).rejects.toThrow(
+        'mobile_credential_unavailable',
+      );
+      expect(saveWorkspace).not.toHaveBeenCalled();
+    }
+  },
+);
+
+test.each([
   [
     'future grant',
     (value: ScopedConnection) => ({
@@ -930,9 +966,11 @@ test.each([
       fetcher: platformFetch,
     });
     await lifecycle.hydrate();
-    expect(() => lifecycle.createWorkspaceGateway()).toThrow(
-      'mobile_v2_authorization_invalid',
-    );
+    expect(lifecycle.snapshot()).toMatchObject({
+      phase: 'recovery_required',
+      reason: 'mobile_v2_authorization_invalid',
+    });
+    expect(lifecycle.createWorkspaceGateway()).toBeNull();
     expect(platformFetch).not.toHaveBeenCalled();
   },
 );

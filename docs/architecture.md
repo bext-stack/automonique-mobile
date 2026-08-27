@@ -31,8 +31,11 @@ object revision.
 The provider does not infer project roots or v2 actions from the v1 session
 scope. It reads the dedicated server-issued delegated bearer principal with
 exact roots, per-action grants, identity/revisions, generation, and expiry,
-then persists only the strictly admitted document with the secure credential
-generation. A missing or invalid document disables the workspace gateway.
+then requires its expiry to equal the enclosing Platform v1 authorization
+exactly and persists only the strictly admitted document with the secure
+credential generation. A missing document disables the workspace gateway; a
+present mismatched document moves the lifecycle to a non-operational recovery
+state.
 Concurrent active multi-server credentials and live acceptance remain distinct
 work.
 

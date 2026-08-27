@@ -58,6 +58,7 @@ interface ExpectedMobileV2Authorization {
   readonly credentialId: string;
   readonly credentialRevision: bigint;
   readonly authorizationRevision: bigint;
+  readonly expiresAtMs: bigint;
   readonly now: number;
 }
 
@@ -159,6 +160,7 @@ function admitDelegatedMobileV2AuthorizationInternal(
     authorization.credential_id !== expected.credentialId ||
     authorization.credential_revision !== expected.credentialRevision ||
     authorization.authorization_revision !== expected.authorizationRevision ||
+    authorization.expires_at_ms !== expected.expiresAtMs ||
     authorization.issued_at_ms > BigInt(expected.now) ||
     (!allowExpired && authorization.expires_at_ms <= BigInt(expected.now)) ||
     authorization.issued_at_ms >= authorization.expires_at_ms ||

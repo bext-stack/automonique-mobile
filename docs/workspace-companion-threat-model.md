@@ -23,6 +23,10 @@ selection uses the exact server identity; revocation removes the profile from
 selection and presentation. A bounded persisted tombstone pins that identity
 to its tenant and HTTPS origin after omission or revocation; reauthorization
 requires a strictly newer authorization revision.
+The delegated Platform v2 grant must also expire at exactly the same millisecond
+as its enclosing current Platform v1 credential authorization. A shorter or
+longer delegated lifetime makes the lifecycle recovery-required and exposes no
+operational workspace or session gateway.
 Omitted workspaces, attempts, and sessions likewise leave bounded per-ID
 revision tombstones. Reintroducing one requires a strictly newer object
 revision, including after server revocation and reauthorization.
