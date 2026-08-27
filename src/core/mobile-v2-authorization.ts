@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-import { ProjectId, type ProjectId as ProjectIdValue } from '@automonique/sdk';
+import {
+  MAX_MOBILE_V2_PROJECT_ROOTS as SDK_MAX_MOBILE_V2_PROJECT_ROOTS,
+  MOBILE_PLATFORM_V2_ACTIONS,
+  MOBILE_PLATFORM_V2_AUTHORIZATION_MEDIA_TYPE,
+  MOBILE_PLATFORM_V2_AUTHORIZATION_SCHEMA,
+  ProjectId,
+  type MobilePlatformV2Action,
+  type ProjectId as ProjectIdValue,
+} from '@automonique/sdk';
 import * as Crypto from 'expo-crypto';
 
 export const MOBILE_V2_AUTHORIZATION_SCHEMA =
-  'automonique.mobile-platform-v2-authorization/v1' as const;
-export const MAX_MOBILE_V2_PROJECT_ROOTS = 32;
+  MOBILE_PLATFORM_V2_AUTHORIZATION_SCHEMA;
+export const MOBILE_V2_AUTHORIZATION_MEDIA_TYPE =
+  MOBILE_PLATFORM_V2_AUTHORIZATION_MEDIA_TYPE;
+export const MAX_MOBILE_V2_PROJECT_ROOTS = SDK_MAX_MOBILE_V2_PROJECT_ROOTS;
 
-export const MOBILE_V2_ACTIONS = [
-  'query_work_contexts',
-  'get_lineage',
-  'prepare_mutation',
-  'decide_mutation',
-  'submit_mutation',
-  'get_mutation_receipt',
-  'submit_workspace_intent',
-  'get_workspace_intent',
-  'get_review',
-] as const;
+export const MOBILE_V2_ACTIONS = MOBILE_PLATFORM_V2_ACTIONS;
 
-export type MobileV2Action = (typeof MOBILE_V2_ACTIONS)[number];
+export type MobileV2Action = MobilePlatformV2Action;
 
 export interface DelegatedMobileV2Authorization {
   readonly schema: typeof MOBILE_V2_AUTHORIZATION_SCHEMA;

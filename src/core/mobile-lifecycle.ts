@@ -25,6 +25,7 @@ import {
 } from './workspace-v2-gateway';
 import {
   admitDelegatedMobileV2Authorization,
+  MOBILE_V2_AUTHORIZATION_MEDIA_TYPE,
   mobileV2AuthorizationDigest,
   mobileV2AuthorizationFingerprint,
   mobileV2DelegationFamilyDigest,
@@ -79,8 +80,6 @@ export interface MobileLifecycleDependencies {
 type Listener = (state: MobileLifecycleState) => void;
 
 const PAIRING_LIFETIME_MS = 5 * 60 * 1_000;
-const MOBILE_V2_AUTHORIZATION_MEDIA_TYPE =
-  'application/vnd.automonique.mobile-platform-v2-authorization.v1+json';
 const MAX_MOBILE_V2_AUTHORIZATION_BYTES = 16 * 1024;
 
 async function readWorkspaceAuthorizationResponse(

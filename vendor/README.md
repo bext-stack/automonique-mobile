@@ -12,6 +12,12 @@ Run `npm run sdk:verify` after installation. It checks the archive hash, the
 installed package identity and license, the Platform v1 and aggregate schema
 digests across the manifest, installed `package.json`, and SDK runtime
 constants, plus the mobile and Platform v2 client surfaces.
+It also admits only the Apache-2.0 package boundary, scans every shipped
+runtime module for an Apache SPDX identifier, and requires all static or
+dynamic runtime imports—including the mobile Platform v2 authorization
+client—to resolve to relative JavaScript modules inside the package. Node- and
+Bun-specific runtime imports are refused so the archive remains React Native
+safe.
 
 Run `npm run sdk:drift` when preparing a release or reviewing upstream protocol
 work. It compares the recorded digest with the latest Automonique `main` commit
