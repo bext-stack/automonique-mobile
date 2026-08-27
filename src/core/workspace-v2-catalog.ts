@@ -58,8 +58,11 @@ export interface WorkspaceCatalogBuildResult {
   readonly details: readonly WorkspaceCatalogDetail[];
   readonly coverage: 'complete' | 'partial';
   readonly omittedDetailCount: number;
+  readonly omittedWorkspaceCount: number;
   readonly failedProjectCount: number;
   readonly failedDetailCount: number;
+  readonly successfulProjectIds: readonly string[];
+  readonly failedProjectIds: readonly string[];
 }
 
 interface BuildOptions {
@@ -264,7 +267,13 @@ interface WorkspaceGraph {
   readonly workspace: WorkContextRecord;
   readonly attempt: WorkContextRecord | null;
   readonly sessions: readonly WorkContextRecord[];
-  readonly platformSessionIds: ReadonlyMap<string, string>;
+  readonly platformSessionTargets: ReadonlyMap<
+    string,
+    Extract<
+      WorkContextRecord['relations'][number]['target'],
+      { readonly kind: 'platform_session' }
+    >['resource']
+  >;
   readonly repositoryId: string | null;
 }
 
@@ -274,6 +283,33 @@ function graphs(
   const keyed = new Map<string, WorkContextRecord>();
   for (const record of records)
     keyed.set(`${record.identity.kind}:${recordId(record)}`, record);
+  const attemptsByWorkspace = new Map<string, WorkContextRecord[]>();
+  const sessionsByAttempt = new Map<string, WorkContextRecord[]>();
+  for (const record of records) {
+    if (record.identity.kind === 'attempt_workspace') {
+      const target = relation(
+        record,
+        'attempt_user_workspace',
+        'user_workspace',
+      );
+      if (target?.kind === 'user_workspace') {
+        const values = attemptsByWorkspace.get(target.id) ?? [];
+        values.push(record);
+        attemptsByWorkspace.set(target.id, values);
+      }
+    } else if (record.identity.kind === 'session') {
+      const target = relation(
+        record,
+        'session_attempt_workspace',
+        'attempt_workspace',
+      );
+      if (target?.kind === 'attempt_workspace') {
+        const values = sessionsByAttempt.get(target.id) ?? [];
+        values.push(record);
+        sessionsByAttempt.set(target.id, values);
+      }
+    }
+  }
   const result: WorkspaceGraph[] = [];
   for (const workspace of records.filter(
     (record) => record.identity.kind === 'user_workspace',
@@ -303,38 +339,27 @@ function graphs(
     const host = keyed.get(`host_setup:${hostTarget.id}`);
     if (host === undefined) continue;
     const attempt =
-      records
-        .filter((record) => record.identity.kind === 'attempt_workspace')
-        .filter((record) => {
-          const target = relation(
-            record,
-            'attempt_user_workspace',
-            'user_workspace',
-          );
-          return (
-            target?.kind === 'user_workspace' &&
-            target.id === workspaceIdentity.id
-          );
-        })
-        .sort((left, right) => (right.revision > left.revision ? 1 : -1))[0] ??
-      null;
+      [...(attemptsByWorkspace.get(workspaceIdentity.id) ?? [])].sort(
+        (left, right) =>
+          right.revision === left.revision
+            ? recordId(left).localeCompare(recordId(right))
+            : right.revision > left.revision
+              ? 1
+              : -1,
+      )[0] ?? null;
     const sessions =
       attempt === null
         ? []
-        : records.filter((record) => {
-            if (attempt.identity.kind !== 'attempt_workspace') return false;
-            const attemptId = attempt.identity.id;
-            if (record.identity.kind !== 'session') return false;
-            const target = relation(
-              record,
-              'session_attempt_workspace',
-              'attempt_workspace',
-            );
-            return (
-              target?.kind === 'attempt_workspace' && target.id === attemptId
-            );
-          });
-    const platformSessionIds = new Map<string, string>();
+        : [...(sessionsByAttempt.get(recordId(attempt)) ?? [])].sort((a, b) =>
+            recordId(a).localeCompare(recordId(b)),
+          );
+    const platformSessionTargets = new Map<
+      string,
+      Extract<
+        WorkContextRecord['relations'][number]['target'],
+        { readonly kind: 'platform_session' }
+      >['resource']
+    >();
     for (const session of sessions) {
       const target = relation(
         session,
@@ -342,7 +367,7 @@ function graphs(
         'platform_session',
       );
       if (target?.kind === 'platform_session') {
-        platformSessionIds.set(recordId(session), target.resource.id);
+        platformSessionTargets.set(recordId(session), target.resource);
       }
     }
     const repository = relation(checkout, 'checkout_repository', 'repository');
@@ -353,12 +378,19 @@ function graphs(
       workspace,
       attempt,
       sessions,
-      platformSessionIds,
+      platformSessionTargets,
       repositoryId:
         repository?.kind === 'repository' ? repository.resource.id : null,
     });
   }
-  return result;
+  return result.sort((left, right) => {
+    const project = recordId(left.project).localeCompare(
+      recordId(right.project),
+    );
+    return project === 0
+      ? recordId(left.workspace).localeCompare(recordId(right.workspace))
+      : project;
+  });
 }
 
 interface DetailRead {
@@ -412,7 +444,8 @@ export async function buildWorkspaceServerCatalog(
   }
   await options.gateway.negotiate(options.signal);
   const records: WorkContextRecord[] = [];
-  let failedProjectCount = 0;
+  const successfulProjectIds: string[] = [];
+  const failedProjectIds: string[] = [];
   for (
     let index = 0;
     index < scope.projectRoots.length;
@@ -429,15 +462,25 @@ export async function buildWorkspaceServerCatalog(
         ),
       ),
     );
-    for (const read of reads) {
-      if (read.status === 'fulfilled') records.push(...read.value);
-      else failedProjectCount += 1;
+    for (let offset = 0; offset < reads.length; offset += 1) {
+      const read = reads[offset]!;
+      const project = batch[offset]!;
+      if (read.status === 'fulfilled') {
+        records.push(...read.value);
+        successfulProjectIds.push(project);
+      } else {
+        failedProjectIds.push(project);
+      }
     }
   }
+  const failedProjectCount = failedProjectIds.length;
   if (records.length === 0 && failedProjectCount > 0) {
     throw new Error('workspace_catalog_projects_unavailable');
   }
-  const workspaceGraphs = graphs(records).slice(0, MAX_WORKSPACES);
+  const allWorkspaceGraphs = graphs(records);
+  const workspaceGraphs = allWorkspaceGraphs.slice(0, MAX_WORKSPACES);
+  const omittedWorkspaceCount =
+    allWorkspaceGraphs.length - workspaceGraphs.length;
   const admittedDetailGraphs = workspaceGraphs.slice(
     0,
     MAX_WORKSPACE_DETAIL_READS,
@@ -454,7 +497,7 @@ export async function buildWorkspaceServerCatalog(
     );
     const values = await Promise.all(
       batch.map(async (graph) => ({
-        key: recordId(graph.workspace),
+        key: `${recordId(graph.project)}\u0000${recordId(graph.workspace)}`,
         value: await readDetail(
           options.gateway,
           recordId(graph.project),
@@ -509,7 +552,9 @@ export async function buildWorkspaceServerCatalog(
   const details: WorkspaceCatalogDetail[] = [];
   const workspaces = workspaceGraphs.map((graph): CompanionWorkspace => {
     const workspaceId = recordId(graph.workspace);
-    const detail = detailReads.get(workspaceId);
+    const detail = detailReads.get(
+      `${recordId(graph.project)}\u0000${workspaceId}`,
+    );
     failedDetailCount += detail?.failures ?? 0;
     const review = detail?.review ?? null;
     const reviewRead = review === null ? null : reviewProjection(review);
@@ -575,8 +620,8 @@ export async function buildWorkspaceServerCatalog(
               state: attemptState(graph.attempt.lifecycle),
             },
       sessions: graph.sessions.map((session) => ({
-        id:
-          graph.platformSessionIds.get(recordId(session)) ?? recordId(session),
+        id: graph.platformSessionTargets.get(recordId(session))!.id,
+        target: graph.platformSessionTargets.get(recordId(session))!,
         revision: decimalRevision(session.revision.toString()),
         title: session.label,
         state: sessionState(session.lifecycle),
@@ -604,6 +649,10 @@ export async function buildWorkspaceServerCatalog(
       authorizationRevision: decimalRevision(
         scope.authorizationRevision.toString(),
       ),
+      principalGeneration: decimalRevision(
+        scope.principalGeneration.toString(),
+      ),
+      staleProjectIds: [],
       actions: ['workspace_read'],
       hosts,
       projects,
@@ -611,11 +660,17 @@ export async function buildWorkspaceServerCatalog(
     },
     details,
     coverage:
-      failedProjectCount > 0 || failedDetailCount > 0 || omittedDetailCount > 0
+      failedProjectCount > 0 ||
+      failedDetailCount > 0 ||
+      omittedDetailCount > 0 ||
+      omittedWorkspaceCount > 0
         ? 'partial'
         : 'complete',
     omittedDetailCount,
+    omittedWorkspaceCount,
     failedProjectCount,
     failedDetailCount,
+    successfulProjectIds,
+    failedProjectIds,
   };
 }

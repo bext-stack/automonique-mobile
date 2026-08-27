@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-import { decimalRevision, type DecimalRevision } from './types';
+import { ResourceAuthority_VALUES } from '@automonique/sdk';
+
+import {
+  decimalRevision,
+  type Coordinate,
+  type DecimalRevision,
+  type VersionedTarget,
+} from './types';
 
 export const WORKSPACE_COMPANION_SCHEMA =
   'automonique.mobile-workspace-companion/v1' as const;
@@ -53,6 +60,9 @@ export interface LinkedExternalWorkItem {
 
 export interface WorkspaceSessionReference {
   readonly id: string;
+  /** Exact v1 session coordinate issued by the typed Platform v2 relation. */
+  readonly target: Coordinate;
+  /** Revision of the Platform v2 work-session relation, not the v1 target. */
   readonly revision: DecimalRevision;
   readonly title: string;
   readonly state: 'active' | 'waiting' | 'completed' | 'lost' | 'unknown';
@@ -109,6 +119,8 @@ export interface ScopedServerProfile {
   readonly tenantId: string;
   readonly authorization: ProfileAuthorization;
   readonly authorizationRevision: DecimalRevision;
+  readonly principalGeneration: DecimalRevision;
+  readonly staleProjectIds: readonly string[];
   readonly actions: readonly WorkspaceAction[];
   readonly hosts: readonly AuthorizedHost[];
   readonly projects: readonly AuthorizedProject[];
@@ -190,7 +202,8 @@ export interface WorkspaceDeepLinkRequest {
   readonly workspaceRevision: DecimalRevision;
   readonly destination: WorkspaceDestination;
   readonly sessionId: string | null;
-  readonly sessionRevision: DecimalRevision | null;
+  readonly sessionRelationRevision: DecimalRevision | null;
+  readonly retainedTarget: VersionedTarget | null;
 }
 
 export interface AdmittedWorkspaceRoute {
@@ -412,15 +425,40 @@ function admitWorkspace(value: unknown): CompanionWorkspace {
   const sessions = candidate.sessions.map(
     (entry): WorkspaceSessionReference => {
       const value = object(entry);
-      keys(value, ['id', 'revision', 'title', 'state', 'unreadAttention']);
+      keys(value, [
+        'id',
+        'target',
+        'revision',
+        'title',
+        'state',
+        'unreadAttention',
+      ]);
       if (
         !['active', 'waiting', 'completed', 'lost', 'unknown'].includes(
           String(value.state),
         )
       )
         fail();
+      const targetValue = object(value.target);
+      keys(targetValue, ['authority', 'kind', 'id']);
+      const target: Coordinate = {
+        authority: string(
+          targetValue.authority,
+          128,
+        ) as Coordinate['authority'],
+        kind: string(targetValue.kind, 128) as Coordinate['kind'],
+        id: string(targetValue.id, 256),
+      };
+      const id = string(value.id, 256);
+      if (
+        target.id !== id ||
+        target.kind !== 'session' ||
+        !ResourceAuthority_VALUES.includes(target.authority)
+      )
+        fail();
       return {
-        id: string(value.id, 256),
+        id,
+        target,
         revision: decimalRevision(string(value.revision, 19)),
         title: string(value.title, 4_096),
         state: value.state as WorkspaceSessionReference['state'],
@@ -499,6 +537,8 @@ function admitServer(value: unknown): ScopedServerProfile {
     'tenantId',
     'authorization',
     'authorizationRevision',
+    'principalGeneration',
+    'staleProjectIds',
     'actions',
     'hosts',
     'projects',
@@ -569,6 +609,12 @@ function admitServer(value: unknown): ScopedServerProfile {
   const projectsById = new Map(
     projects.map((project) => [project.id, project]),
   );
+  if (!Array.isArray(candidate.staleProjectIds)) fail();
+  const staleProjectIds = candidate.staleProjectIds.map((value) =>
+    string(value, 256),
+  );
+  unique(staleProjectIds);
+  if (staleProjectIds.some((projectId) => !projectsById.has(projectId))) fail();
   for (const project of projects)
     if (project.hostIds.some((hostId) => !hostIds.has(hostId))) fail();
   for (const workspace of workspaces) {
@@ -585,6 +631,10 @@ function admitServer(value: unknown): ScopedServerProfile {
     authorizationRevision: decimalRevision(
       string(candidate.authorizationRevision, 19),
     ),
+    principalGeneration: decimalRevision(
+      string(candidate.principalGeneration, 19),
+    ),
+    staleProjectIds,
     actions,
     hosts,
     projects,
@@ -927,7 +977,10 @@ export function reduceWorkspaceCompanionCatalog(
         (server.origin !== previous.origin ||
           server.tenantId !== previous.tenantId ||
           BigInt(server.authorizationRevision) <
-            BigInt(previous.authorizationRevision))) ||
+            BigInt(previous.authorizationRevision) ||
+          (server.authorizationRevision === previous.authorizationRevision &&
+            BigInt(server.principalGeneration) <
+              BigInt(previous.principalGeneration)))) ||
       (tombstone !== undefined &&
         (server.origin !== tombstone.origin ||
           server.tenantId !== tombstone.tenantId ||
@@ -1165,17 +1218,21 @@ export function admitWorkspaceDeepLink(
   ) {
     throw new Error('workspace_navigation_not_authorized');
   }
+  const projectStale = server.staleProjectIds.includes(workspace.projectId);
   if (
     request.destination === 'terminal' &&
     (catalog.phase !== 'live' ||
       server.authorization !== 'active' ||
+      projectStale ||
       !server.actions.includes('terminal_relay'))
   ) {
     throw new Error('workspace_terminal_not_authorized');
   }
   if (
     request.destination !== 'chat' &&
-    (catalog.phase !== 'live' || server.authorization !== 'active')
+    (catalog.phase !== 'live' ||
+      server.authorization !== 'active' ||
+      projectStale)
   ) {
     throw new Error('workspace_navigation_not_authorized');
   }
@@ -1191,19 +1248,31 @@ export function admitWorkspaceDeepLink(
     );
     if (
       session === undefined ||
-      request.sessionRevision === null ||
-      session.revision !== request.sessionRevision
+      request.sessionRelationRevision === null ||
+      session.revision !== request.sessionRelationRevision ||
+      request.retainedTarget === null ||
+      session.target.authority !==
+        request.retainedTarget.coordinate.authority ||
+      session.target.kind !== request.retainedTarget.coordinate.kind ||
+      session.target.id !== request.retainedTarget.coordinate.id
     )
       throw new Error('workspace_navigation_not_authorized');
     params.session = session.id;
-    params.session_revision = session.revision;
+    params.relation_revision = session.revision;
+    params.session_revision = request.retainedTarget.revision;
+    params.session_authority = session.target.authority;
+    params.session_kind = session.target.kind;
     return {
       pathname: '/workspace/[server]/[workspace]/session/[session]',
       params,
       readOnly: true,
     };
   }
-  if (request.sessionId !== null || request.sessionRevision !== null)
+  if (
+    request.sessionId !== null ||
+    request.sessionRelationRevision !== null ||
+    request.retainedTarget !== null
+  )
     throw new Error('workspace_navigation_not_authorized');
   return {
     pathname: '/workspace/[server]/[workspace]',

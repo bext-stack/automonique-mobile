@@ -109,11 +109,77 @@ export function cacheWorkspaceCatalog(
 export function mergeWorkspaceCatalogServer(
   catalog: WorkspaceCompanionCatalog,
   profile: ScopedServerProfile,
+  projectCoverage: {
+    readonly successfulProjectIds: readonly string[];
+    readonly failedProjectIds: readonly string[];
+  } = {
+    successfulProjectIds: profile.projects.map((project) => project.id),
+    failedProjectIds: [],
+  },
   now = Date.now(),
 ): WorkspaceCompanionCatalog {
   const previous = catalog.servers.find(
     (server) => server.serverIdentity === profile.serverIdentity,
   );
+  const successful = new Set(projectCoverage.successfulProjectIds);
+  const failed = new Set(projectCoverage.failedProjectIds);
+  if ([...successful].some((projectId) => failed.has(projectId))) {
+    throw new Error('workspace_catalog_project_coverage_invalid');
+  }
+  if (
+    profile.projects.some(
+      (project) => failed.has(project.id) || !successful.has(project.id),
+    )
+  ) {
+    throw new Error('workspace_catalog_project_coverage_invalid');
+  }
+  const retainedProjects =
+    previous?.projects.filter((project) => failed.has(project.id)) ?? [];
+  const retainedProjectIds = new Set(
+    retainedProjects.map((project) => project.id),
+  );
+  const retainedHostIds = new Set(
+    retainedProjects.flatMap((project) => project.hostIds),
+  );
+  const combinedProfile: ScopedServerProfile = {
+    ...profile,
+    hosts: [
+      ...profile.hosts,
+      ...(previous?.hosts
+        .filter(
+          (host) =>
+            retainedHostIds.has(host.id) &&
+            !profile.hosts.some((candidate) => candidate.id === host.id),
+        )
+        .map((host) => ({
+          ...host,
+          freshness: { ...host.freshness, state: 'delayed' as const },
+        })) ?? []),
+    ],
+    projects: [
+      ...profile.projects,
+      ...retainedProjects.filter(
+        (project) =>
+          !profile.projects.some((candidate) => candidate.id === project.id),
+      ),
+    ],
+    workspaces: [
+      ...profile.workspaces,
+      ...(previous?.workspaces
+        .filter(
+          (workspace) =>
+            retainedProjectIds.has(workspace.projectId) &&
+            !profile.workspaces.some(
+              (candidate) => candidate.id === workspace.id,
+            ),
+        )
+        .map((workspace) => ({
+          ...workspace,
+          freshness: { ...workspace.freshness, state: 'delayed' as const },
+        })) ?? []),
+    ],
+    staleProjectIds: [...retainedProjectIds].sort(),
+  };
   const servers = [
     ...catalog.servers
       .filter((server) => server.serverIdentity !== profile.serverIdentity)
@@ -122,15 +188,15 @@ export function mergeWorkspaceCatalogServer(
         authorization: 'cached' as const,
         actions: ['workspace_read'] as const,
       })),
-    profile,
+    combinedProfile,
   ];
-  const visible = visibleKeys(profile);
+  const visible = visibleKeys(combinedProfile);
   const tombstones = new Map(
     catalog.revisionTombstones
       .filter((value) => !visible.has(key(value)))
       .map((value) => [key(value), value]),
   );
-  for (const value of removedTombstones(previous, profile)) {
+  for (const value of removedTombstones(previous, combinedProfile)) {
     const current = tombstones.get(key(value));
     if (
       current === undefined ||
@@ -143,10 +209,10 @@ export function mergeWorkspaceCatalogServer(
     schema: WORKSPACE_COMPANION_SCHEMA,
     phase: 'live',
     generatedAt: new Date(now).toISOString(),
-    selectedServerIdentity: profile.serverIdentity,
+    selectedServerIdentity: combinedProfile.serverIdentity,
     servers,
     serverTombstones: catalog.serverTombstones.filter(
-      (value) => value.serverIdentity !== profile.serverIdentity,
+      (value) => value.serverIdentity !== combinedProfile.serverIdentity,
     ),
     revisionTombstones: [...tombstones.values()],
   };

@@ -27,7 +27,10 @@ export interface WorkspaceCardModel {
     NonNullable<CompanionWorkspace['attempt']>['state'] | null;
   readonly sessionCount: number;
   readonly retainedSessionId: string | null;
-  readonly retainedSessionRevision: CompanionWorkspace['revision'] | null;
+  readonly retainedSessionTarget:
+    CompanionWorkspace['sessions'][number]['target'] | null;
+  readonly retainedSessionRelationRevision:
+    CompanionWorkspace['revision'] | null;
   readonly repositoryLabel: string | null;
   readonly branchLabel: string | null;
   readonly freshness: CompanionWorkspace['freshness'];
@@ -97,7 +100,8 @@ export function presentWorkspaceCatalog(
           attemptState: workspace.attempt?.state ?? null,
           sessionCount: workspace.sessions.length,
           retainedSessionId: resumableSession?.id ?? null,
-          retainedSessionRevision: resumableSession?.revision ?? null,
+          retainedSessionTarget: resumableSession?.target ?? null,
+          retainedSessionRelationRevision: resumableSession?.revision ?? null,
           repositoryLabel: workspace.repository?.label ?? null,
           branchLabel: workspace.branch?.label ?? null,
           freshness: workspace.freshness,

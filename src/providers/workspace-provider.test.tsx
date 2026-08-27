@@ -67,7 +67,7 @@ test('cold cache remains visible but read-only when no current delegated gateway
 });
 
 test('credential revocation durably removes only the exact server scope', async () => {
-  await revokeWorkspaceCatalogCache(WORKSPACE_FIXTURE_IDENTITY);
+  await revokeWorkspaceCatalogCache(WORKSPACE_FIXTURE_IDENTITY, '8');
 
   const persisted = jest.mocked(AsyncStorage.setItem).mock.calls[0]?.[1];
   expect(persisted).toEqual(expect.any(String));

@@ -24,6 +24,8 @@ import {
   VoiceDictationModule,
 } from '@/core/voice-dictation';
 import { useMobile } from '@/providers/mobile-provider';
+import { useMobileLifecycle } from '@/providers/production-mobile-provider';
+import { useWorkspaces } from '@/providers/workspace-provider';
 import { usePalette } from '@/theme/palette';
 
 function draftKey(id: string, scope: string | null): string {
@@ -33,9 +35,28 @@ function draftKey(id: string, scope: string | null): string {
 }
 
 export default function SessionScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{
+    id: string;
+    scope_server?: string;
+    scope_workspace?: string;
+    scope_workspace_revision?: string;
+    scope_relation_revision?: string;
+    scope_authority?: string;
+    scope_kind?: string;
+    scope_session_revision?: string;
+    scope_principal_generation?: string;
+    scope_authorization_revision?: string;
+  }>();
+  const { id } = params;
   const { snapshot, storageScope, busyAction, sendFollowUp, stopRun } =
     useMobile();
+  const { state: lifecycleState } = useMobileLifecycle();
+  const {
+    catalog,
+    findServer,
+    findWorkspace,
+    status: workspaceStatus,
+  } = useWorkspaces();
   const palette = usePalette();
   const [draft, setDraft] = useState('');
   const [loadedDraftKey, setLoadedDraftKey] = useState<string | null>(null);
@@ -45,9 +66,55 @@ export default function SessionScreen() {
   );
   const dictationBase = useRef('');
   const followUpLimit = snapshot.connection.limits.maxFollowUpBytes;
-  const session = snapshot.sessions.find(
+  const candidateSession = snapshot.sessions.find(
     (candidate) => candidate.target.coordinate.id === id,
   );
+  const scopeRequested = params.scope_server !== undefined;
+  const scopedServer =
+    params.scope_server === undefined ? null : findServer(params.scope_server);
+  const scopedWorkspace =
+    params.scope_server === undefined || params.scope_workspace === undefined
+      ? null
+      : findWorkspace(params.scope_server, params.scope_workspace);
+  const scopedRelation = scopedWorkspace?.sessions.find(
+    (relation) => relation.id === id,
+  );
+  const scopeValid =
+    !scopeRequested ||
+    (params.scope_server !== undefined &&
+      params.scope_workspace !== undefined &&
+      params.scope_workspace_revision !== undefined &&
+      params.scope_relation_revision !== undefined &&
+      params.scope_authority !== undefined &&
+      params.scope_kind !== undefined &&
+      params.scope_session_revision !== undefined &&
+      params.scope_principal_generation !== undefined &&
+      params.scope_authorization_revision !== undefined &&
+      lifecycleState.phase === 'ready' &&
+      lifecycleState.profile?.serverIdentity === params.scope_server &&
+      catalog.phase === 'live' &&
+      workspaceStatus.phase === 'live' &&
+      scopedServer?.authorization === 'active' &&
+      scopedServer.principalGeneration === params.scope_principal_generation &&
+      scopedServer.authorizationRevision ===
+        params.scope_authorization_revision &&
+      scopedWorkspace?.revision === params.scope_workspace_revision &&
+      !scopedServer.staleProjectIds.includes(scopedWorkspace.projectId) &&
+      scopedWorkspace.navigation.some(
+        (grant) =>
+          grant.destination === 'chat' &&
+          grant.revision === scopedWorkspace.revision,
+      ) &&
+      scopedRelation?.revision === params.scope_relation_revision &&
+      scopedRelation.target.authority === params.scope_authority &&
+      scopedRelation.target.kind === params.scope_kind &&
+      scopedRelation.target.id === id &&
+      candidateSession?.target.coordinate.authority ===
+        params.scope_authority &&
+      candidateSession.target.coordinate.kind === params.scope_kind &&
+      candidateSession.target.coordinate.id === id &&
+      candidateSession.target.revision === params.scope_session_revision);
+  const session = scopeValid ? candidateSession : undefined;
   const events = id ? (snapshot.timelines[id] ?? []) : [];
   const receipts = snapshot.receipts.filter(
     (receipt) =>
@@ -133,7 +200,9 @@ export default function SessionScreen() {
     return (
       <Screen>
         <Text style={{ color: palette.text }}>
-          Session is not present in the bounded projection.
+          {scopeRequested
+            ? 'The exact scoped session is no longer current. Return to the workspace and refresh before continuing.'
+            : 'Session is not present in the bounded projection.'}
         </Text>
       </Screen>
     );

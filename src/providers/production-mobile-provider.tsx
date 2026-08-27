@@ -143,8 +143,9 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
         },
         revokeCredential: async () => {
           const identity = state.profile?.serverIdentity;
-          if (identity !== undefined) {
-            await revokeWorkspaceCatalogCache(identity).catch(() => undefined);
+          const authorizationRevision = state.profile?.authorizationRevision;
+          if (identity !== undefined && authorizationRevision !== undefined) {
+            await revokeWorkspaceCatalogCache(identity, authorizationRevision);
           }
           await mobileLifecycle.revoke();
         },

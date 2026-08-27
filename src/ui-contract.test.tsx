@@ -31,6 +31,10 @@ jest.mock('expo-speech-recognition', () => ({
 }));
 
 const mockUseMobile = jest.fn();
+const mockUseMobileLifecycle = jest.fn();
+let mockRouteParams: Record<string, string> = {
+  id: 'session-synthetic-001',
+};
 const mockPair = jest.fn();
 const mockInspectAutomoniqueServer = jest.fn();
 const mockSpeechStart = jest
@@ -49,11 +53,14 @@ jest.mock('@/providers/mobile-provider', () => ({
   useMobile: () => mockUseMobile(),
 }));
 jest.mock('@/providers/production-mobile-provider', () => ({
-  useMobileLifecycle: () => ({
-    state: { phase: 'unpaired', profile: null },
-    refreshCredential: jest.fn(),
-    revokeCredential: jest.fn(),
-    pair: mockPair,
+  useMobileLifecycle: () => mockUseMobileLifecycle(),
+}));
+jest.mock('@/providers/workspace-provider', () => ({
+  useWorkspaces: () => ({
+    catalog: { phase: 'stale' },
+    status: { phase: 'unavailable' },
+    findServer: () => null,
+    findWorkspace: () => null,
   }),
 }));
 jest.mock('@/core/server-connection', () => ({
@@ -77,7 +84,7 @@ jest.mock('expo-router', () => ({
     }
     return children;
   },
-  useLocalSearchParams: () => ({ id: 'session-synthetic-001' }),
+  useLocalSearchParams: () => mockRouteParams,
 }));
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,
@@ -128,6 +135,13 @@ function mobileValue(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockRouteParams = { id: 'session-synthetic-001' };
+  mockUseMobileLifecycle.mockReturnValue({
+    state: { phase: 'unpaired', profile: null },
+    refreshCredential: jest.fn(),
+    revokeCredential: jest.fn(),
+    pair: mockPair,
+  });
 });
 
 test('stop-run authorization is independent from follow-up authorization', async () => {
@@ -136,6 +150,35 @@ test('stop-run authorization is independent from follow-up authorization', async
 
   expect(view.getByLabelText('Follow-up message').props.editable).toBe(false);
   expect(view.getByLabelText('Stop exact run run-synthetic-001')).toBeEnabled();
+});
+
+test('a scoped workspace redirect cannot mutate a same-id session on another server', async () => {
+  mockUseMobile.mockReturnValue(mobileValue(['follow_up', 'stop_run']));
+  mockUseMobileLifecycle.mockReturnValue({
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: `sha256:${'a'.repeat(64)}` },
+    },
+  });
+  mockRouteParams = {
+    id: 'session-synthetic-001',
+    scope_server: `sha256:${'b'.repeat(64)}`,
+    scope_workspace: 'workspace-1',
+    scope_workspace_revision: '2',
+    scope_relation_revision: '9',
+    scope_authority: 'automonique',
+    scope_kind: 'session',
+    scope_session_revision: '12',
+    scope_principal_generation: '3',
+    scope_authorization_revision: '8',
+  };
+
+  const view = await render(<SessionScreen />);
+  expect(
+    view.getByText(/exact scoped session is no longer current/),
+  ).toBeTruthy();
+  expect(view.queryByLabelText('Send follow-up')).toBeNull();
+  expect(view.queryByLabelText(/Stop exact run/)).toBeNull();
 });
 
 test('follow-up uses the negotiated UTF-8 byte limit', async () => {

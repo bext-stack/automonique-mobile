@@ -69,7 +69,8 @@ export default function WorkspacesScreen() {
           {status.coverage === 'partial' && (
             <Text style={[styles.warning, { color: palette.warning }]}>
               Partial detail coverage · {status.omittedDetailCount} bounded out
-              · {status.failedProjectCount} project reads and{' '}
+              · {status.omittedWorkspaceCount} workspaces omitted ·{' '}
+              {status.failedProjectCount} project reads and{' '}
               {status.failedDetailCount} detail reads unavailable
             </Text>
           )}

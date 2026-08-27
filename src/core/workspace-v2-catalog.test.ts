@@ -10,6 +10,7 @@ import {
   buildWorkspaceServerCatalog,
   MAX_WORKSPACE_DETAIL_READS,
 } from './workspace-v2-catalog';
+import { MAX_WORKSPACES } from './workspace-companion';
 import type { WorkspaceV2Gateway } from './workspace-v2-gateway';
 
 const serverIdentity = `sha256:${'b'.repeat(64)}`;
@@ -362,6 +363,22 @@ test('bounds inventory-wide lineage and review fanout and reports partial covera
   });
 });
 
+test('bounds the indexed inventory and reports workspace omission separately', async () => {
+  const { gateway } = fakeGateway(MAX_WORKSPACES + 3);
+  const result = await buildWorkspaceServerCatalog({
+    gateway,
+    origin: 'https://ops.example.test',
+    serverLabel: 'ops.example.test',
+  });
+
+  expect(result.profile.workspaces).toHaveLength(MAX_WORKSPACES);
+  expect(result.omittedWorkspaceCount).toBe(3);
+  expect(result.omittedDetailCount).toBe(
+    MAX_WORKSPACES - MAX_WORKSPACE_DETAIL_READS,
+  );
+  expect(result.coverage).toBe('partial');
+});
+
 test('missing detail grants never become inferred navigation authority', async () => {
   const { gateway, loadLineage, loadReview } = fakeGateway(1, [
     'query_work_contexts',
@@ -378,4 +395,32 @@ test('missing detail grants never become inferred navigation authority', async (
   expect(result.profile.workspaces[0]!.navigation).toEqual([
     { destination: 'chat', revision: '2' },
   ]);
+});
+
+test('reports exact successful and failed project scopes for partial merging', async () => {
+  const { gateway } = fakeGateway(1);
+  const records = await gateway.loadProject('project-1');
+  const partialGateway = {
+    ...gateway,
+    authorizationScope: {
+      ...gateway.authorizationScope,
+      projectRoots: ['project-1', 'project-2'],
+    },
+    loadProject: jest.fn(async (project: string) => {
+      if (project === 'project-2') throw new Error('temporarily_unavailable');
+      return records;
+    }),
+  } as WorkspaceV2Gateway;
+
+  const result = await buildWorkspaceServerCatalog({
+    gateway: partialGateway,
+    origin: 'https://ops.example.test',
+    serverLabel: 'ops.example.test',
+  });
+  expect(result).toMatchObject({
+    coverage: 'partial',
+    successfulProjectIds: ['project-1'],
+    failedProjectIds: ['project-2'],
+    failedProjectCount: 1,
+  });
 });

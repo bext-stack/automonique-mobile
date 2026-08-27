@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   createContext,
   use,
@@ -16,13 +15,8 @@ import {
   cacheWorkspaceCatalog,
   emptyWorkspaceCatalog,
   mergeWorkspaceCatalogServer,
-  revokeWorkspaceCatalogServer,
 } from '@/core/workspace-catalog-reducer';
-import {
-  decodeWorkspaceCompanionCache,
-  encodeWorkspaceCompanionCache,
-  type WorkspaceCompanionCache,
-} from '@/core/workspace-companion-cache';
+import type { WorkspaceCompanionCache } from '@/core/workspace-companion-cache';
 import type {
   CompanionWorkspace,
   ScopedServerProfile,
@@ -34,14 +28,19 @@ import {
   type WorkspaceCatalogDetail,
 } from '@/core/workspace-v2-catalog';
 import type { WorkspaceV2Gateway } from '@/core/workspace-v2-gateway';
-
-const WORKSPACE_CACHE_KEY = 'automonique.mobile.workspace-catalog.v1';
+import {
+  loadWorkspaceCatalogCache,
+  persistWorkspaceCatalogCache,
+  registerWorkspaceOperation,
+  revokeWorkspaceServerStorage,
+} from '@/core/workspace-storage';
 
 export interface WorkspaceCatalogStatus {
   readonly phase: 'loading' | 'live' | 'stale' | 'unavailable';
   readonly coverage: 'complete' | 'partial' | 'unknown';
   readonly message: string;
   readonly omittedDetailCount: number;
+  readonly omittedWorkspaceCount: number;
   readonly failedProjectCount: number;
   readonly failedDetailCount: number;
 }
@@ -76,43 +75,20 @@ const INITIAL_STATUS: WorkspaceCatalogStatus = {
   coverage: 'unknown',
   message: 'Loading the bounded workspace cache',
   omittedDetailCount: 0,
+  omittedWorkspaceCount: 0,
   failedProjectCount: 0,
   failedDetailCount: 0,
 };
 
-async function readCache(): Promise<WorkspaceCompanionCache | null> {
-  const encoded = await AsyncStorage.getItem(WORKSPACE_CACHE_KEY);
-  if (encoded === null) return null;
-  try {
-    return decodeWorkspaceCompanionCache(encoded);
-  } catch {
-    await AsyncStorage.removeItem(WORKSPACE_CACHE_KEY).catch(() => undefined);
-    return null;
-  }
-}
-
-async function persistCache(cache: WorkspaceCompanionCache): Promise<void> {
-  await AsyncStorage.setItem(
-    WORKSPACE_CACHE_KEY,
-    encodeWorkspaceCompanionCache(cache),
-  );
-}
-
 /** Remove one exact server scope before its credential is revoked. */
 export async function revokeWorkspaceCatalogCache(
   serverIdentityValue: string,
+  authorizationRevision: string,
 ): Promise<void> {
-  const cache = await readCache();
-  if (cache === null) return;
-  const serverIdentity = serverIdentityValue as ServerIdentity;
-  const catalog = revokeWorkspaceCatalogServer(cache.catalog, serverIdentity);
-  await persistCache({
-    ...cache,
-    catalog,
-    intentDrafts: cache.intentDrafts.filter(
-      (draft) => draft.serverIdentity !== serverIdentity,
-    ),
-  });
+  await revokeWorkspaceServerStorage(
+    serverIdentityValue,
+    authorizationRevision,
+  );
 }
 
 function serverLabel(profile: ConnectionProfile): string {
@@ -160,6 +136,10 @@ export function WorkspaceProvider({
       });
       return;
     }
+    const unregister = registerWorkspaceOperation(
+      gateway.authorizationScope.serverIdentity,
+      controller,
+    );
     setStatus((current) => ({
       ...current,
       phase: current.phase === 'loading' ? 'loading' : 'stale',
@@ -176,12 +156,20 @@ export function WorkspaceProvider({
       const next = mergeWorkspaceCatalogServer(
         catalogRef.current,
         built.profile,
+        {
+          successfulProjectIds: built.successfulProjectIds,
+          failedProjectIds: built.failedProjectIds,
+        },
       );
-      await persistCache({
-        schema: 'automonique.mobile-workspace-cache/v1',
-        catalog: next,
-        intentDrafts: draftsRef.current,
-      });
+      await persistWorkspaceCatalogCache(
+        {
+          schema: 'automonique.mobile-workspace-cache/v1',
+          catalog: next,
+          intentDrafts: draftsRef.current,
+        },
+        built.profile.serverIdentity,
+        built.profile.authorizationRevision,
+      );
       if (controller.signal.aborted) return;
       catalogRef.current = next;
       setCatalog(next);
@@ -194,6 +182,7 @@ export function WorkspaceProvider({
             ? 'Current delegated workspace inventory'
             : 'Current inventory with bounded or unavailable detail reads',
         omittedDetailCount: built.omittedDetailCount,
+        omittedWorkspaceCount: built.omittedWorkspaceCount,
         failedProjectCount: built.failedProjectCount,
         failedDetailCount: built.failedDetailCount,
       });
@@ -212,6 +201,8 @@ export function WorkspaceProvider({
             ? 'Workspace revisions changed unexpectedly; a clean refresh is required'
             : 'Workspace refresh unavailable; showing admitted cache read only',
       });
+    } finally {
+      unregister();
     }
   }, [gateway, profile]);
 
@@ -219,7 +210,7 @@ export function WorkspaceProvider({
     let active = true;
     void (async () => {
       if (!hydrated.current) {
-        const cache = await readCache().catch(() => null);
+        const cache = await loadWorkspaceCatalogCache().catch(() => null);
         if (!active) return;
         hydrated.current = true;
         if (cache !== null) {

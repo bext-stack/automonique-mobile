@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -9,24 +8,26 @@ import { Screen } from '@/components/screen';
 import {
   admitWorkspaceDeepLink,
   workspaceMutationAvailability,
+  type CompanionWorkspace,
+  type ScopedServerProfile,
   type ServerIdentity,
   type WorkspaceDestination,
 } from '@/core/workspace-companion';
 import { decimalRevision } from '@/core/types';
+import {
+  loadWorkspaceDraft,
+  MAX_WORKSPACE_DRAFT_BYTES,
+  persistWorkspaceDraft,
+} from '@/core/workspace-storage';
 import { useMobile } from '@/providers/mobile-provider';
+import { useMobileLifecycle } from '@/providers/production-mobile-provider';
 import { useWorkspaces } from '@/providers/workspace-provider';
 import { usePalette } from '@/theme/palette';
-
-const MAX_WORKSPACE_DRAFT_BYTES = 4_096;
 
 function destinationTitle(destination: WorkspaceDestination): string {
   return destination === 'source_control'
     ? 'Source control'
     : destination[0]!.toUpperCase() + destination.slice(1);
-}
-
-function draftKey(server: string, workspace: string, revision: string): string {
-  return `automonique.mobile.workspace-draft.v1:${server}:${workspace}:r${revision}`;
 }
 
 function DestinationControl({
@@ -105,6 +106,116 @@ function Section({
   );
 }
 
+function WorkspaceDraftEditor({
+  server,
+  workspace,
+  unavailableReason,
+}: {
+  readonly server: ScopedServerProfile;
+  readonly workspace: CompanionWorkspace;
+  readonly unavailableReason: string;
+}) {
+  const palette = usePalette();
+  const [draft, setDraft] = useState('');
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void loadWorkspaceDraft({
+      serverIdentity: server.serverIdentity,
+      authorizationRevision: server.authorizationRevision,
+      workspaceId: workspace.id,
+      workspaceRevision: workspace.revision,
+    })
+      .then((value) => {
+        if (!active) return;
+        setDraft(value);
+        setLoaded(true);
+      })
+      .catch(() => {
+        if (active) setLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [server, workspace]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (
+      new TextEncoder().encode(draft).byteLength <= MAX_WORKSPACE_DRAFT_BYTES
+    ) {
+      void persistWorkspaceDraft(
+        {
+          serverIdentity: server.serverIdentity,
+          authorizationRevision: server.authorizationRevision,
+          workspaceId: workspace.id,
+          workspaceRevision: workspace.revision,
+        },
+        draft,
+      ).catch(() => undefined);
+    }
+  }, [draft, loaded, server, workspace]);
+
+  return (
+    <Section title="Task context draft">
+      <TextInput
+        accessibilityLabel="Workspace task context draft"
+        multiline
+        onChangeText={(value) => {
+          if (
+            new TextEncoder().encode(value).byteLength <=
+            MAX_WORKSPACE_DRAFT_BYTES
+          )
+            setDraft(value);
+        }}
+        placeholder="Keep notes for a later desktop create or resume action…"
+        placeholderTextColor={palette.textMuted}
+        style={[
+          styles.draft,
+          {
+            backgroundColor: palette.background,
+            borderColor: palette.border,
+            color: palette.text,
+          },
+        ]}
+        value={draft}
+      />
+      <Text style={[styles.subtitle, { color: palette.textMuted }]}>
+        {new TextEncoder().encode(draft).byteLength} /{' '}
+        {MAX_WORKSPACE_DRAFT_BYTES} bytes · stored locally for this exact
+        workspace revision
+      </Text>
+      <View style={styles.mutations}>
+        {['Create from task', 'Resume workspace'].map((label) => (
+          <Pressable
+            key={label}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: true }}
+            accessibilityLabel={`${label}, unavailable: ${unavailableReason.replaceAll('_', ' ')}`}
+            disabled
+            style={[
+              styles.disabledMutation,
+              {
+                backgroundColor: palette.surfaceMuted,
+                borderColor: palette.border,
+              },
+            ]}
+          >
+            <Text style={{ color: palette.textMuted, fontWeight: '800' }}>
+              {label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      <Text style={[styles.subtitle, { color: palette.textMuted }]}>
+        Unavailable: the production UI has no authority-bound create/resume
+        adapter. No offline mutation is queued.
+      </Text>
+    </Section>
+  );
+}
+
 export default function WorkspaceDetailScreen() {
   const params = useLocalSearchParams<{
     server: string;
@@ -116,56 +227,12 @@ export default function WorkspaceDetailScreen() {
   const { catalog, findServer, findWorkspace, findDetail, status } =
     useWorkspaces();
   const { snapshot } = useMobile();
+  const { state: lifecycleState } = useMobileLifecycle();
   const server = findServer(params.server);
   const workspace = findWorkspace(params.server, params.workspace);
   const detail = findDetail(params.server, params.workspace);
-  const [draft, setDraft] = useState('');
-  const [draftLoaded, setDraftLoaded] = useState(false);
   const mutation = workspaceMutationAvailability();
   const exactRevision = workspace?.revision === params.revision;
-
-  useEffect(() => {
-    if (workspace === null || !exactRevision) return;
-    let active = true;
-    const key = draftKey(params.server, params.workspace, workspace.revision);
-    void AsyncStorage.getItem(key)
-      .then((value) => {
-        if (!active) return;
-        if (
-          value !== null &&
-          new TextEncoder().encode(value).byteLength <=
-            MAX_WORKSPACE_DRAFT_BYTES
-        ) {
-          setDraft(value);
-        } else if (value !== null) {
-          void AsyncStorage.removeItem(key).catch(() => undefined);
-        }
-        setDraftLoaded(true);
-      })
-      .catch(() => {
-        if (active) setDraftLoaded(true);
-      });
-    return () => {
-      active = false;
-    };
-  }, [exactRevision, params.server, params.workspace, workspace]);
-
-  useEffect(() => {
-    if (workspace === null || !draftLoaded || !exactRevision) return;
-    const key = draftKey(params.server, params.workspace, workspace.revision);
-    if (
-      new TextEncoder().encode(draft).byteLength <= MAX_WORKSPACE_DRAFT_BYTES
-    ) {
-      void AsyncStorage.setItem(key, draft).catch(() => undefined);
-    }
-  }, [
-    draft,
-    draftLoaded,
-    exactRevision,
-    params.server,
-    params.workspace,
-    workspace,
-  ]);
 
   if (server === null || workspace === null || !exactRevision) {
     return (
@@ -194,7 +261,8 @@ export default function WorkspaceDetailScreen() {
         workspaceRevision: decimalRevision(workspace.revision),
         destination,
         sessionId: null,
-        sessionRevision: null,
+        sessionRelationRevision: null,
+        retainedTarget: null,
       });
       destinationAdmitted = true;
     } catch {
@@ -296,10 +364,22 @@ export default function WorkspaceDetailScreen() {
 
       <Section title="Retained sessions">
         {workspace.sessions.map((session) => {
-          const retained = snapshot.sessions.some(
-            (candidate) => candidate.target.coordinate.id === session.id,
+          const retained = snapshot.sessions.find(
+            (candidate) =>
+              candidate.target.coordinate.authority ===
+                session.target.authority &&
+              candidate.target.coordinate.kind === session.target.kind &&
+              candidate.target.coordinate.id === session.target.id,
           );
-          const enabled = retained && granted('chat');
+          const currentServer =
+            lifecycleState.profile?.serverIdentity === server.serverIdentity;
+          const enabled =
+            retained !== undefined &&
+            currentServer &&
+            status.phase === 'live' &&
+            server.authorization === 'active' &&
+            !server.staleProjectIds.includes(workspace.projectId) &&
+            granted('chat');
           const sessionButton = (
             <Pressable
               accessibilityRole="button"
@@ -321,7 +401,9 @@ export default function WorkspaceDetailScreen() {
               </Text>
               <Text style={{ color: palette.textMuted, fontSize: 12 }}>
                 {session.state} · revision {session.revision}
-                {retained ? '' : ' · not in retained mobile projection'}
+                {retained !== undefined
+                  ? ''
+                  : ' · not in retained mobile projection'}
               </Text>
             </Pressable>
           );
@@ -336,7 +418,12 @@ export default function WorkspaceDetailScreen() {
                   workspace: workspace.id,
                   revision: workspace.revision,
                   session: session.id,
-                  session_revision: session.revision,
+                  relation_revision: session.revision,
+                  session_revision: retained!.target.revision,
+                  session_authority: session.target.authority,
+                  session_kind: session.target.kind,
+                  principal_generation: server.principalGeneration,
+                  authorization_revision: server.authorizationRevision,
                 },
               }}
             >
@@ -427,61 +514,12 @@ export default function WorkspaceDetailScreen() {
         </Section>
       )}
 
-      <Section title="Task context draft">
-        <TextInput
-          accessibilityLabel="Workspace task context draft"
-          multiline
-          onChangeText={(value) => {
-            if (
-              new TextEncoder().encode(value).byteLength <=
-              MAX_WORKSPACE_DRAFT_BYTES
-            )
-              setDraft(value);
-          }}
-          placeholder="Keep notes for a later desktop create or resume action…"
-          placeholderTextColor={palette.textMuted}
-          style={[
-            styles.draft,
-            {
-              backgroundColor: palette.background,
-              borderColor: palette.border,
-              color: palette.text,
-            },
-          ]}
-          value={draft}
-        />
-        <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          {new TextEncoder().encode(draft).byteLength} /{' '}
-          {MAX_WORKSPACE_DRAFT_BYTES} bytes · stored locally for this exact
-          workspace revision
-        </Text>
-        <View style={styles.mutations}>
-          {['Create from task', 'Resume workspace'].map((label) => (
-            <Pressable
-              key={label}
-              accessibilityRole="button"
-              accessibilityState={{ disabled: true }}
-              accessibilityLabel={`${label}, unavailable: ${mutation.reason.replaceAll('_', ' ')}`}
-              disabled
-              style={[
-                styles.disabledMutation,
-                {
-                  backgroundColor: palette.surfaceMuted,
-                  borderColor: palette.border,
-                },
-              ]}
-            >
-              <Text style={{ color: palette.textMuted, fontWeight: '800' }}>
-                {label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-        <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          Unavailable: the production UI has no authority-bound create/resume
-          adapter. No offline mutation is queued.
-        </Text>
-      </Section>
+      <WorkspaceDraftEditor
+        key={`${server.serverIdentity}:${server.authorizationRevision}:${workspace.id}:${workspace.revision}`}
+        server={server}
+        unavailableReason={mutation.reason}
+        workspace={workspace}
+      />
     </Screen>
   );
 }
