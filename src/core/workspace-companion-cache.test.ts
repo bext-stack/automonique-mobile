@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: Elastic-2.0
+
+import {
+  WORKSPACE_FIXTURE_IDENTITY,
+  workspaceCompanionFixture,
+} from './workspace-fixtures';
+import {
+  MAX_WORKSPACE_COMPANION_CACHE_BYTES,
+  decodeWorkspaceCompanionCache,
+  encodeWorkspaceCompanionCache,
+} from './workspace-companion-cache';
+
+test('cached workspace reads restore stale with mutation and terminal authority removed', () => {
+  const encoded = encodeWorkspaceCompanionCache({
+    schema: 'automonique.mobile-workspace-cache/v1',
+    catalog: {
+      ...workspaceCompanionFixture,
+      servers: workspaceCompanionFixture.servers.map((server) => ({
+        ...server,
+        actions: [...server.actions, 'terminal_relay'],
+      })),
+    },
+    intentDrafts: [
+      {
+        kind: 'create',
+        serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+        hostId: 'host-fr-1',
+        projectId: 'project-mobile',
+        task: { provider: 'GitHub', key: '#34', title: 'Workspace companion' },
+        idempotencyKey: 'draft-34',
+      },
+    ],
+  });
+  const restored = decodeWorkspaceCompanionCache(encoded);
+
+  expect(restored.catalog.phase).toBe('stale');
+  expect(restored.catalog.servers[0]).toMatchObject({
+    authorization: 'cached',
+    actions: ['workspace_read'],
+  });
+  expect(restored.intentDrafts).toHaveLength(1);
+});
+
+test('cache rejects authority previews, unknown fields, and oversized input', () => {
+  const hiddenAuthority = {
+    schema: 'automonique.mobile-workspace-cache/v1',
+    catalog: workspaceCompanionFixture,
+    intentDrafts: [],
+    authorityPreview: { summary: ['must not persist'] },
+  };
+  expect(() =>
+    decodeWorkspaceCompanionCache(JSON.stringify(hiddenAuthority)),
+  ).toThrow('workspace_companion_cache_invalid');
+  expect(() =>
+    decodeWorkspaceCompanionCache(
+      'x'.repeat(MAX_WORKSPACE_COMPANION_CACHE_BYTES + 1),
+    ),
+  ).toThrow('workspace_companion_cache_too_large');
+});

@@ -17,6 +17,20 @@ Connectivity loss immediately disables mutations. Drafts survive locally, but
 the operator must submit after a fresh capability and revision check. An
 ambiguous request is reconciled by idempotency key and is not blindly retried.
 
+## Workspace visibility is not execution authority
+
+The workspace companion admits only server-scoped, revocable read profiles.
+Repository and branch values are display labels, never local paths or an
+invitation to infer Git operations. External work-item status and Automonique
+orchestration status remain separate typed values.
+
+Create/resume requests and authority previews are data-only protocol seams
+until canonical Platform v2 SDK/auth support exists. Deep links use a finite
+internal destination vocabulary and an exact workspace revision. Terminal
+requires both a workspace navigation grant and a separate live
+`terminal_relay` actor action; neither workspace visibility nor cached
+authority can supply it.
+
 ## Exact decimal revisions
 
 Revisions and event sequences are validated canonical decimal strings in the

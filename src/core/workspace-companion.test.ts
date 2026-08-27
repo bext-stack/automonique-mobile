@@ -1,0 +1,278 @@
+// SPDX-License-Identifier: Elastic-2.0
+
+import { decimalRevision } from './types';
+import {
+  WORKSPACE_FIXTURE_IDENTITY,
+  workspaceCompanionFixture,
+} from './workspace-fixtures';
+import {
+  admitWorkspaceAuthorityPreview,
+  admitWorkspaceCompanionCatalog,
+  admitWorkspaceDeepLink,
+  admitWorkspaceIntentRequest,
+  bindWorkspaceIntentPreview,
+  reduceWorkspaceCompanionCatalog,
+  selectScopedServer,
+  workspaceMutationAvailability,
+  type ServerIdentity,
+} from './workspace-companion';
+
+test('admits a bounded server-owned workspace projection', () => {
+  const admitted = admitWorkspaceCompanionCatalog(
+    JSON.parse(JSON.stringify(workspaceCompanionFixture)),
+  );
+  const workspace = admitted.servers[0]?.workspaces[0];
+
+  expect(workspace).toMatchObject({
+    externalWorkItem: { key: '#34', status: 'open' },
+    orchestrationStatus: 'review',
+    attempt: { state: 'waiting' },
+    unreadAttention: 2,
+  });
+  expect(workspace?.repository).toEqual({
+    label: 'bext-stack/automonique-mobile',
+    webUrl: 'https://github.com/bext-stack/automonique-mobile',
+  });
+});
+
+test('external work status never substitutes for orchestration status', () => {
+  const value = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  value.servers[0].workspaces[0].externalWorkItem.status = 'done';
+  value.servers[0].workspaces[0].orchestrationStatus = 'running';
+
+  const workspace =
+    admitWorkspaceCompanionCatalog(value).servers[0]?.workspaces[0];
+  expect(workspace?.externalWorkItem?.status).toBe('done');
+  expect(workspace?.orchestrationStatus).toBe('running');
+});
+
+test('rejects hidden capabilities, host paths, malformed origins, and scope breaks', () => {
+  const credential = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  credential.servers[0].credential = 'secret';
+  expect(() => admitWorkspaceCompanionCatalog(credential)).toThrow(
+    'workspace_companion_invalid',
+  );
+
+  const hostPath = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  hostPath.servers[0].workspaces[0].repository.hostPath = '/srv/customer';
+  expect(() => admitWorkspaceCompanionCatalog(hostPath)).toThrow(
+    'workspace_companion_invalid',
+  );
+
+  const origin = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  origin.servers[0].origin = 'https://operator:password@example.test';
+  expect(() => admitWorkspaceCompanionCatalog(origin)).toThrow(
+    'workspace_companion_invalid',
+  );
+
+  const crossHost = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  crossHost.servers[0].workspaces[0].hostId = 'unscoped-host';
+  expect(() => admitWorkspaceCompanionCatalog(crossHost)).toThrow(
+    'workspace_companion_invalid',
+  );
+});
+
+test('server selection uses the exact identity and refuses revocation', () => {
+  const unknown = `sha256:${'b'.repeat(64)}` as ServerIdentity;
+  expect(() => selectScopedServer(workspaceCompanionFixture, unknown)).toThrow(
+    'workspace_server_not_authorized',
+  );
+  const revoked = {
+    ...workspaceCompanionFixture,
+    selectedServerIdentity: null,
+    servers: workspaceCompanionFixture.servers.map((server) => ({
+      ...server,
+      authorization: 'revoked' as const,
+    })),
+  };
+  expect(() => selectScopedServer(revoked, WORKSPACE_FIXTURE_IDENTITY)).toThrow(
+    'workspace_server_not_authorized',
+  );
+});
+
+test('deep links bind server, workspace revision and retained session', () => {
+  expect(
+    admitWorkspaceDeepLink(workspaceCompanionFixture, {
+      serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      workspaceId: 'workspace-34',
+      workspaceRevision: decimalRevision('12'),
+      destination: 'chat',
+      sessionId: 'session-34',
+    }),
+  ).toEqual({
+    pathname: '/workspace/[server]/[workspace]/session/[session]',
+    params: {
+      server: WORKSPACE_FIXTURE_IDENTITY,
+      workspace: 'workspace-34',
+      revision: '12',
+      destination: 'chat',
+      session: 'session-34',
+    },
+    readOnly: true,
+  });
+
+  expect(() =>
+    admitWorkspaceDeepLink(workspaceCompanionFixture, {
+      serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      workspaceId: 'workspace-34',
+      workspaceRevision: decimalRevision('11'),
+      destination: 'chat',
+      sessionId: 'session-34',
+    }),
+  ).toThrow('workspace_navigation_not_authorized');
+});
+
+test('replacement reduction rejects revision rollback and strips live authority', () => {
+  const rollback = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  rollback.generatedAt = '2026-08-27T10:01:00Z';
+  rollback.servers[0].workspaces[0].revision = '11';
+
+  const result = reduceWorkspaceCompanionCatalog(
+    workspaceCompanionFixture,
+    rollback,
+  );
+  expect(result.resyncRequired).toBe(true);
+  expect(result.catalog.phase).toBe('stale');
+  expect(result.catalog.servers[0]).toMatchObject({
+    authorization: 'cached',
+    actions: ['workspace_read'],
+  });
+});
+
+test('workspace visibility never infers terminal authority', () => {
+  const withTerminalNavigation = {
+    ...workspaceCompanionFixture,
+    servers: workspaceCompanionFixture.servers.map((server) => ({
+      ...server,
+      workspaces: server.workspaces.map((workspace) => ({
+        ...workspace,
+        navigation: [
+          ...workspace.navigation,
+          { destination: 'terminal' as const, revision: workspace.revision },
+        ],
+      })),
+    })),
+  };
+  expect(() =>
+    admitWorkspaceDeepLink(withTerminalNavigation, {
+      serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      workspaceId: 'workspace-34',
+      workspaceRevision: decimalRevision('12'),
+      destination: 'terminal',
+      sessionId: null,
+    }),
+  ).toThrow('workspace_terminal_not_authorized');
+});
+
+test('terminal navigation requires both an exact grant and separate live action', () => {
+  const authorized = {
+    ...workspaceCompanionFixture,
+    servers: workspaceCompanionFixture.servers.map((server) => ({
+      ...server,
+      actions: [...server.actions, 'terminal_relay' as const],
+      workspaces: server.workspaces.map((workspace) => ({
+        ...workspace,
+        navigation: [
+          ...workspace.navigation,
+          { destination: 'terminal' as const, revision: workspace.revision },
+        ],
+      })),
+    })),
+  };
+  expect(
+    admitWorkspaceDeepLink(authorized, {
+      serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      workspaceId: 'workspace-34',
+      workspaceRevision: decimalRevision('12'),
+      destination: 'terminal',
+      sessionId: null,
+    }),
+  ).toMatchObject({ readOnly: false });
+
+  expect(() =>
+    admitWorkspaceDeepLink(
+      { ...authorized, phase: 'stale' },
+      {
+        serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+        workspaceId: 'workspace-34',
+        workspaceRevision: decimalRevision('12'),
+        destination: 'terminal',
+        sessionId: null,
+      },
+    ),
+  ).toThrow('workspace_terminal_not_authorized');
+});
+
+test('task-prefilled intents and authority previews are strict data, not execution', () => {
+  const request = admitWorkspaceIntentRequest({
+    kind: 'create',
+    serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+    hostId: 'host-fr-1',
+    projectId: 'project-mobile',
+    task: { provider: 'GitHub', key: '#34', title: 'Workspace companion' },
+    idempotencyKey: 'mobile-workspace-34',
+  });
+  const preview = admitWorkspaceAuthorityPreview({
+    schema: 'automonique.workspace-authority-preview/v1',
+    action: 'create',
+    serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+    requestIdempotencyKey: 'mobile-workspace-34',
+    authorityRevision: '8',
+    summary: ['May create one workspace on Paris builder'],
+    expiresAt: '2026-08-27T10:05:00Z',
+  });
+
+  expect(request.kind).toBe('create');
+  expect(preview.requestIdempotencyKey).toBe(request.idempotencyKey);
+  expect(
+    bindWorkspaceIntentPreview(
+      workspaceCompanionFixture,
+      request,
+      preview,
+      Date.parse('2026-08-27T10:00:00Z'),
+    ),
+  ).toMatchObject({ executable: false });
+  expect(workspaceMutationAvailability()).toEqual({
+    enabled: false,
+    reason: 'platform_v2_sdk_and_auth_required',
+  });
+  expect(() =>
+    admitWorkspaceIntentRequest({ ...request, shell: 'git status' }),
+  ).toThrow('workspace_companion_invalid');
+});
+
+test('intent previews bind exact live scope and expiry', () => {
+  const request = admitWorkspaceIntentRequest({
+    kind: 'resume',
+    serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+    workspaceId: 'workspace-34',
+    workspaceRevision: '12',
+    sessionId: 'session-34',
+    idempotencyKey: 'resume-34',
+  });
+  const preview = admitWorkspaceAuthorityPreview({
+    schema: 'automonique.workspace-authority-preview/v1',
+    action: 'resume',
+    serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+    requestIdempotencyKey: 'resume-34',
+    authorityRevision: '8',
+    summary: ['May resume session-34'],
+    expiresAt: '2026-08-27T10:05:00Z',
+  });
+  expect(
+    bindWorkspaceIntentPreview(
+      workspaceCompanionFixture,
+      request,
+      preview,
+      Date.parse('2026-08-27T10:00:00Z'),
+    ).executable,
+  ).toBe(false);
+  expect(() =>
+    bindWorkspaceIntentPreview(
+      workspaceCompanionFixture,
+      request,
+      preview,
+      Date.parse('2026-08-27T10:06:00Z'),
+    ),
+  ).toThrow('workspace_intent_preview_not_authorized');
+});
