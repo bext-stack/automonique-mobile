@@ -63,7 +63,20 @@ jest.mock('@/core/server-connection', () => ({
 }));
 
 jest.mock('expo-router', () => ({
-  Link: ({ children }: { readonly children: ReactNode }) => children,
+  Link: ({ children }: { readonly children: ReactNode }) => {
+    const { isValidElement } =
+      jest.requireActual<typeof import('react')>('react');
+    if (
+      isValidElement<{ readonly style?: unknown }>(children) &&
+      (Array.isArray(children.props.style) ||
+        typeof children.props.style === 'function')
+    ) {
+      throw new Error(
+        'Link asChild children must receive a flattened style object',
+      );
+    }
+    return children;
+  },
   useLocalSearchParams: () => ({ id: 'session-synthetic-001' }),
 }));
 jest.mock('@react-native-async-storage/async-storage', () => ({
