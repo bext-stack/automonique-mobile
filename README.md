@@ -32,14 +32,14 @@ credential lifecycle constructs its exact `/api/platform/v2` HTTPS transport,
 renegotiates it per credential generation, and exposes bounded project reads,
 lineage, read-only review, lifecycle preview/confirmation, and exact intent
 cancellation behind a narrow companion gateway. Production workspace screens
-remain fail-closed because today's mobile authorization document does not issue
-the delegated Platform v2 principal required by the bridge. That future
-server-issued document must bind the mobile bearer to an opaque server
-principal, exact project roots, each v2 action, identity, revisions,
-generation, and expiry. The current bridge is Basic-integration-only; mobile
-never translates its bearer into Basic or derives authority from a session,
-label, or external task. Project grants, production UI/cache integration, and
-live acceptance remain separate blockers after that auth contract exists.
+remain fail-closed until the dedicated server endpoint issues a delegated
+Platform v2 principal binding the bearer to server-owned tenant/actor,
+credential identity and revisions, generation, expiry, exact project roots,
+and per-operation actions. The lifecycle strictly admits and persists that
+document with the secure credential generation; refresh retrieves its rotated
+generation. Mobile never translates its bearer into Basic or derives authority
+from a session, label, or external task. Operator project provisioning,
+production UI/cache integration, and live acceptance remain separate work.
 
 The connection screen is a self-host onboarding flow rather than a fixture
 selector: it checks an existing server's public mobile discovery contract,

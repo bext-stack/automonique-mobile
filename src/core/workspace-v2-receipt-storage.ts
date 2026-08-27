@@ -9,10 +9,26 @@ import {
   type WorkspaceV2ReceiptStore,
 } from './workspace-v2-receipts';
 
-const RECEIPT_STORAGE_PREFIX = 'automonique.mobile.workspace-v2-receipts.v2';
+const LEGACY_RECEIPT_STORAGE_PREFIX =
+  'automonique.mobile.workspace-v2-receipts.v2';
+const RECEIPT_STORAGE_PREFIX = 'automonique.mobile.workspace-v2-receipts.v3';
+const RECEIPT_INDEX_SCHEMA = 'automonique.mobile-workspace-v2-receipt-index/v3';
 const MAX_RECEIPT_HANDLES = 20;
 const MAX_RECEIPT_STORAGE_BYTES = 16 * 1024;
 const storageTails = new Map<string, Promise<void>>();
+
+interface ReceiptIndex {
+  readonly schema: typeof RECEIPT_INDEX_SCHEMA;
+  readonly authorization_digests: readonly string[];
+  readonly handles: readonly WorkspaceV2ReceiptHandle[];
+}
+
+function admitDigest(value: unknown): string {
+  if (typeof value !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(value)) {
+    throw new Error('workspace_v2_receipt_store_scope_invalid');
+  }
+  return value;
+}
 
 async function withStorageLock<T>(
   key: string,
@@ -34,91 +50,176 @@ async function withStorageLock<T>(
   }
 }
 
+function parseEncoded(value: string): unknown {
+  if (new TextEncoder().encode(value).byteLength > MAX_RECEIPT_STORAGE_BYTES) {
+    throw new Error('workspace_v2_receipt_store_too_large');
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error('workspace_v2_receipt_store_invalid');
+  }
+}
+
+function admitHandles(value: unknown): readonly WorkspaceV2ReceiptHandle[] {
+  if (!Array.isArray(value) || value.length > MAX_RECEIPT_HANDLES) {
+    throw new Error('workspace_v2_receipt_store_invalid');
+  }
+  try {
+    const handles = value.map(admitWorkspaceV2ReceiptHandle);
+    if (
+      new Set(handles.map((handle) => handle.idempotency_key)).size !==
+      handles.length
+    ) {
+      throw new Error('workspace_v2_receipt_store_invalid');
+    }
+    return handles;
+  } catch {
+    throw new Error('workspace_v2_receipt_store_invalid');
+  }
+}
+
+function admitIndex(value: unknown): ReceiptIndex {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('workspace_v2_receipt_store_invalid');
+  }
+  const candidate = value as Readonly<Record<string, unknown>>;
+  const keys = Object.keys(candidate);
+  if (
+    keys.length !== 3 ||
+    !['schema', 'authorization_digests', 'handles'].every((key) =>
+      Object.hasOwn(candidate, key),
+    ) ||
+    candidate.schema !== RECEIPT_INDEX_SCHEMA ||
+    !Array.isArray(candidate.authorization_digests) ||
+    candidate.authorization_digests.length > MAX_RECEIPT_HANDLES
+  ) {
+    throw new Error('workspace_v2_receipt_store_invalid');
+  }
+  const authorizationDigests = candidate.authorization_digests.map(admitDigest);
+  const handles = admitHandles(candidate.handles);
+  const usedDigests = [
+    ...new Set(handles.map((handle) => handle.authorization_digest)),
+  ].sort();
+  if (
+    new Set(authorizationDigests).size !== authorizationDigests.length ||
+    authorizationDigests.some(
+      (digest, index) =>
+        index > 0 && authorizationDigests[index - 1]! >= digest,
+    ) ||
+    authorizationDigests.length !== usedDigests.length ||
+    authorizationDigests.some((digest, index) => digest !== usedDigests[index])
+  ) {
+    throw new Error('workspace_v2_receipt_store_invalid');
+  }
+  return {
+    schema: RECEIPT_INDEX_SCHEMA,
+    authorization_digests: authorizationDigests,
+    handles,
+  };
+}
+
+function indexFor(handles: readonly WorkspaceV2ReceiptHandle[]): ReceiptIndex {
+  return {
+    schema: RECEIPT_INDEX_SCHEMA,
+    authorization_digests: [
+      ...new Set(handles.map((handle) => handle.authorization_digest)),
+    ].sort(),
+    handles,
+  };
+}
+
+async function writeIndex(key: string, index: ReceiptIndex): Promise<void> {
+  if (index.handles.length > MAX_RECEIPT_HANDLES) {
+    throw new Error('workspace_v2_receipt_store_full');
+  }
+  const encoded = JSON.stringify(index);
+  if (
+    new TextEncoder().encode(encoded).byteLength > MAX_RECEIPT_STORAGE_BYTES
+  ) {
+    throw new Error('workspace_v2_receipt_store_too_large');
+  }
+  await AsyncStorage.setItem(key, encoded);
+}
+
 export function createWorkspaceV2ReceiptStore(
+  credentialFamilyDigest: () => Promise<string>,
   authorizationDigest: () => Promise<string>,
 ): WorkspaceV2ReceiptStore {
-  let admittedDigest: Promise<string> | null = null;
-  async function digest(): Promise<string> {
-    admittedDigest ??= authorizationDigest().then((value) => {
-      if (!/^sha256:[0-9a-f]{64}$/u.test(value)) {
-        throw new Error('workspace_v2_receipt_store_scope_invalid');
-      }
-      return value;
-    });
-    return admittedDigest;
-  }
+  let admittedFamily: Promise<string> | null = null;
+  let admittedAuthorization: Promise<string> | null = null;
+  const familyDigest = (): Promise<string> => {
+    admittedFamily ??= credentialFamilyDigest().then(admitDigest);
+    return admittedFamily;
+  };
+  const currentAuthorizationDigest = (): Promise<string> => {
+    admittedAuthorization ??= authorizationDigest().then(admitDigest);
+    return admittedAuthorization;
+  };
 
-  async function storageKey(): Promise<string> {
-    return `${RECEIPT_STORAGE_PREFIX}.${await digest()}`;
-  }
-
-  async function read(
+  async function load(
     key: string,
-    expectedDigest: string,
-  ): Promise<readonly WorkspaceV2ReceiptHandle[]> {
+    currentDigest: string,
+  ): Promise<ReceiptIndex> {
     const encoded = await AsyncStorage.getItem(key);
-    if (encoded === null) return [];
+    let index =
+      encoded === null ? indexFor([]) : admitIndex(parseEncoded(encoded));
+    const legacyKey = `${LEGACY_RECEIPT_STORAGE_PREFIX}.${currentDigest}`;
+    const legacyEncoded = await AsyncStorage.getItem(legacyKey);
+    if (legacyEncoded === null) return index;
+    const legacy = admitHandles(parseEncoded(legacyEncoded));
     if (
-      new TextEncoder().encode(encoded).byteLength > MAX_RECEIPT_STORAGE_BYTES
+      legacy.some((handle) => handle.authorization_digest !== currentDigest)
     ) {
-      throw new Error('workspace_v2_receipt_store_too_large');
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(encoded);
-    } catch {
       throw new Error('workspace_v2_receipt_store_invalid');
     }
-    if (!Array.isArray(parsed) || parsed.length > MAX_RECEIPT_HANDLES) {
-      throw new Error('workspace_v2_receipt_store_invalid');
-    }
-    try {
-      const handles = parsed.map(admitWorkspaceV2ReceiptHandle);
-      if (
-        new Set(handles.map((handle) => handle.idempotency_key)).size !==
-          handles.length ||
-        handles.some((handle) => handle.authorization_digest !== expectedDigest)
-      ) {
-        throw new Error('workspace_v2_receipt_store_invalid');
+    const merged = [...index.handles];
+    for (const handle of legacy) {
+      const existing = merged.find(
+        (candidate) => candidate.idempotency_key === handle.idempotency_key,
+      );
+      if (existing === undefined) merged.push(handle);
+      else if (JSON.stringify(existing) !== JSON.stringify(handle)) {
+        throw new Error('workspace_v2_receipt_handle_collision');
       }
-      return handles;
-    } catch {
-      throw new Error('workspace_v2_receipt_store_invalid');
     }
+    index = indexFor(merged);
+    await writeIndex(key, index);
+    await AsyncStorage.removeItem(legacyKey);
+    return index;
   }
 
-  async function write(
-    key: string,
-    handles: readonly WorkspaceV2ReceiptHandle[],
-  ): Promise<void> {
-    if (handles.length > MAX_RECEIPT_HANDLES) {
-      throw new Error('workspace_v2_receipt_store_full');
-    }
-    const encoded = JSON.stringify(handles);
-    if (
-      new TextEncoder().encode(encoded).byteLength > MAX_RECEIPT_STORAGE_BYTES
-    ) {
-      throw new Error('workspace_v2_receipt_store_too_large');
-    }
-    await AsyncStorage.setItem(key, encoded);
+  async function coordinates(): Promise<{
+    readonly key: string;
+    readonly currentDigest: string;
+  }> {
+    const [family, currentDigest] = await Promise.all([
+      familyDigest(),
+      currentAuthorizationDigest(),
+    ]);
+    return {
+      key: `${RECEIPT_STORAGE_PREFIX}.${family}`,
+      currentDigest,
+    };
   }
 
   return {
     async list() {
-      const expectedDigest = await digest();
-      const key = await storageKey();
-      return withStorageLock(key, () => read(key, expectedDigest));
+      const { key, currentDigest } = await coordinates();
+      return withStorageLock(
+        key,
+        async () => (await load(key, currentDigest)).handles,
+      );
     },
     async put(value) {
       const handle = admitWorkspaceV2ReceiptHandle(value);
-      const expectedDigest = await digest();
-      if (handle.authorization_digest !== expectedDigest) {
+      const { key, currentDigest } = await coordinates();
+      if (handle.authorization_digest !== currentDigest) {
         throw new Error('workspace_v2_receipt_handle_scope_mismatch');
       }
-      const key = await storageKey();
       return withStorageLock(key, async () => {
-        const handles = await read(key, expectedDigest);
-        const existing = handles.find(
+        const index = await load(key, currentDigest);
+        const existing = index.handles.find(
           (candidate) => candidate.idempotency_key === handle.idempotency_key,
         );
         if (existing !== undefined) {
@@ -127,19 +228,23 @@ export function createWorkspaceV2ReceiptStore(
           }
           return false;
         }
-        await write(key, [...handles, handle]);
+        await writeIndex(key, indexFor([...index.handles, handle]));
         return true;
       });
     },
     async remove(idempotencyKey) {
       IdempotencyKey(idempotencyKey);
-      const expectedDigest = await digest();
-      const key = await storageKey();
+      const { key, currentDigest } = await coordinates();
       await withStorageLock(key, async () => {
-        const handles = (await read(key, expectedDigest)).filter(
-          (handle) => handle.idempotency_key !== idempotencyKey,
+        const index = await load(key, currentDigest);
+        await writeIndex(
+          key,
+          indexFor(
+            index.handles.filter(
+              (handle) => handle.idempotency_key !== idempotencyKey,
+            ),
+          ),
         );
-        await write(key, handles);
       });
     },
   };

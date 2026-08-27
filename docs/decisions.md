@@ -42,14 +42,14 @@ Terminal requires both a workspace navigation grant and a separate live
 authority can supply it.
 
 Platform v2 inventory queries require an exact project root and every operation
-requires its own v2 action. The current mobile authorization schema grants
-sessions, not a bridge-validated delegated v2 bearer principal. The current
-bridge accepts Basic integration principals only; mobile never converts a
-bearer into Basic. A future server-issued grant must bind tenant, actor, opaque
-principal mapping, server/credential identity and revisions, generation,
-expiry, sorted project roots, and sorted per-operation actions. Until then the
-gateway is fail-closed. Bridge authentication support, project/action grants,
-production UI/cache integration, and live acceptance are independent blockers.
+requires its own v2 action. A dedicated versioned server response binds the
+mobile bearer to server-owned tenant/actor, server and credential identity,
+revisions, generation, expiry, sorted project roots, and sorted per-operation
+actions. The credential lifecycle admits and stores that response in the
+secure generation and refreshes it after token rotation. Mobile never converts
+a bearer into Basic. Missing, malformed, stale, or ungranted responses leave
+the workspace gateway unavailable; production UI/cache integration and live
+acceptance remain independent work.
 
 ## Exact decimal revisions
 

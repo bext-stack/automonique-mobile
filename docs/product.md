@@ -168,12 +168,12 @@ orchestration status.
 The expansion now ships the canonical Platform v2 SDK archive and a production
 authenticated gateway for negotiated project reads, lineage, read-only review,
 typed task intents, exact cancellation, and lifecycle preview/confirmation.
-It does not yet expose those operations in the production navigation: the
-current mobile authorization document has session scope but no server-issued
-delegated v2 bearer principal. The current bridge is Basic-integration-only,
-while mobile intentionally preserves bearer authentication. Exact project
-roots, per-operation action grants, production multi-server UI/cache work, and
-end-to-end acceptance remain distinct pending milestones; the app refuses to
-guess any of them. Terminal relay, attachments, uploads, and background
-mutation remain separate risk-reviewed work. See
+The mobile lifecycle consumes the dedicated server-issued delegated v2 bearer
+document, persists it with the secure credential generation, and keeps exact
+project roots and per-operation actions fail-closed across refresh. It does not
+yet expose those operations in production navigation: operator provisioning,
+production multi-server UI/cache work, and end-to-end acceptance remain
+distinct pending milestones; the app refuses to guess any of them. Terminal
+relay, attachments, uploads, and background mutation remain separate
+risk-reviewed work. See
 [workspace-companion-threat-model.md](workspace-companion-threat-model.md).

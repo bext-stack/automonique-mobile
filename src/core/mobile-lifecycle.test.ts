@@ -28,6 +28,7 @@ import {
   loadStoredConnection,
   revokeLocalCredential,
   saveIssuedConnection,
+  saveWorkspaceAuthorization,
   type ScopedConnection,
 } from './credential-store';
 import { MobileLifecycleCoordinator } from './mobile-lifecycle';
@@ -46,11 +47,13 @@ jest.mock('./credential-store', () => ({
   loadStoredConnection: jest.fn(),
   revokeLocalCredential: jest.fn(),
   saveIssuedConnection: jest.fn(),
+  saveWorkspaceAuthorization: jest.fn(),
 }));
 
 const loadStored = jest.mocked(loadStoredConnection);
 const removeLocal = jest.mocked(revokeLocalCredential);
 const saveIssued = jest.mocked(saveIssuedConnection);
+const saveWorkspace = jest.mocked(saveWorkspaceAuthorization);
 const NOW = 1_777_000_000_000;
 const IDENTITY = MobileServerIdentity(`sha256:${'a'.repeat(64)}`);
 const CREDENTIAL_ID = MobileCredentialId(`mc_${'b'.repeat(43)}`);
@@ -157,9 +160,44 @@ function withWorkspaceAuthorization(value: ScopedConnection): ScopedConnection {
   };
 }
 
+function workspaceAuthorizationResponse(value: ScopedConnection): Response {
+  const authorization =
+    withWorkspaceAuthorization(value).workspaceAuthorization!;
+  return new Response(
+    JSON.stringify({
+      actions: authorization.actions,
+      actor_id: authorization.actor_id,
+      authorization_revision: Number(authorization.authorization_revision),
+      credential_id: authorization.credential_id,
+      credential_revision: Number(authorization.credential_revision),
+      delegation_id: authorization.delegation_id,
+      expires_at_ms: Number(authorization.expires_at_ms),
+      issued_at_ms: Number(authorization.issued_at_ms),
+      principal_generation: Number(authorization.principal_generation),
+      project_roots: authorization.project_roots,
+      schema: authorization.schema,
+      server_identity: authorization.server_identity,
+      tenant_id: authorization.tenant_id,
+    }),
+    {
+      status: 200,
+      headers: {
+        'cache-control': 'no-store',
+        'content-type':
+          'application/vnd.automonique.mobile-platform-v2-authorization.v1+json',
+      },
+    },
+  );
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   removeLocal.mockResolvedValue();
+  saveWorkspace.mockImplementation(async (value, workspaceAuthorization) =>
+    workspaceAuthorization === undefined
+      ? value
+      : { ...value, workspaceAuthorization },
+  );
 });
 
 test('expired access calls share one refresh and one local generation commit', async () => {
@@ -322,7 +360,11 @@ test('an old gateway cannot combine its descriptor with a rotated token', async 
   await expect(oldGateway.bootstrap()).rejects.toThrow(
     'gateway_generation_replaced',
   );
-  expect(platformFetch).not.toHaveBeenCalled();
+  expect(
+    platformFetch.mock.calls.some(
+      ([input]) => String(input) === 'https://ops.example.test/api/platform/v2',
+    ),
+  ).toBe(false);
   expect(lifecycle.snapshot()).toMatchObject({
     phase: 'ready',
     profile: { credentialRevision: '2' },
@@ -425,6 +467,42 @@ test('Platform v2 remains unavailable without an exact server-issued delegated p
   expect(lifecycle.createWorkspaceGateway()).toBeNull();
 });
 
+test('hydrates and persists the dedicated server-issued Platform v2 authorization', async () => {
+  const active = connection(issued(1n, 'c', NOW + 900_000));
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  const platformFetch = jest.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      workspaceAuthorizationResponse(active),
+  ) as jest.MockedFunction<typeof fetch>;
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+  });
+
+  await lifecycle.hydrate();
+  expect(lifecycle.createWorkspaceGateway()).not.toBeNull();
+  expect(platformFetch).toHaveBeenCalledWith(
+    'https://ops.example.test/api/mobile/platform-v2/authorization',
+    expect.objectContaining({
+      credentials: 'omit',
+      headers: expect.objectContaining({
+        authorization: `Bearer ma_${'c'.repeat(43)}`,
+      }),
+      method: 'GET',
+      redirect: 'error',
+    }),
+  );
+  expect(saveWorkspace).toHaveBeenCalledWith(
+    active,
+    expect.objectContaining({
+      credential_revision: 1n,
+      principal_generation: 1n,
+      project_roots: ['project-mobile'],
+    }),
+    NOW,
+  );
+});
+
 test.each([
   [
     'future grant',
@@ -522,7 +600,11 @@ test('an old Platform v2 gateway cannot read a rotated credential', async () => 
   const oldGateway = lifecycle.createWorkspaceGateway()!;
   clock = NOW + 1;
   await expect(oldGateway.negotiate()).rejects.toThrow();
-  expect(platformFetch).not.toHaveBeenCalled();
+  expect(
+    platformFetch.mock.calls.some(
+      ([input]) => String(input) === 'https://ops.example.test/api/platform/v2',
+    ),
+  ).toBe(false);
   expect(lifecycle.snapshot()).toMatchObject({
     phase: 'ready',
     profile: { credentialRevision: '2' },

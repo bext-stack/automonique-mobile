@@ -22,12 +22,16 @@ import {
   type MobileAuthorization,
   type MobileDiscovery,
 } from '@automonique/sdk';
-import type { DelegatedMobileV2Authorization } from './mobile-v2-authorization';
+import {
+  admitDelegatedMobileV2Authorization,
+  type DelegatedMobileV2Authorization,
+} from './mobile-v2-authorization';
 
 const PROFILE_KEY = 'automonique.mobile.connection-profile.v3';
 const CREDENTIAL_KEY = 'automonique.mobile.scoped-credential.v3';
 const PROFILE_SCHEMA = 'automonique.mobile.connection-profile/v3';
-const CREDENTIAL_SCHEMA = 'automonique.mobile.scoped-credential/v3';
+const LEGACY_CREDENTIAL_SCHEMA = 'automonique.mobile.scoped-credential/v3';
+const CREDENTIAL_SCHEMA = 'automonique.mobile.scoped-credential/v4';
 
 export interface ConnectionProfile {
   readonly origin: string;
@@ -50,10 +54,6 @@ export interface ScopedConnection {
   readonly accessToken: string;
   readonly refreshToken: string;
   readonly authorization: MobileAuthorization;
-  /**
-   * Reserved for a future canonical mobile-auth response. Current SDK/server
-   * responses do not issue this document, so production remains v2-disabled.
-   */
   readonly workspaceAuthorization?: DelegatedMobileV2Authorization;
 }
 
@@ -79,6 +79,22 @@ interface PersistedAuthorization {
   };
   readonly server_identity: string;
   readonly session_scope: readonly string[];
+}
+
+interface PersistedWorkspaceAuthorization {
+  readonly schema: string;
+  readonly server_identity: string;
+  readonly credential_id: string;
+  readonly credential_revision: string;
+  readonly authorization_revision: string;
+  readonly principal_generation: string;
+  readonly delegation_id: string;
+  readonly tenant_id: string;
+  readonly actor_id: string;
+  readonly issued_at_ms: string;
+  readonly expires_at_ms: string;
+  readonly project_roots: readonly string[];
+  readonly actions: readonly string[];
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -125,6 +141,72 @@ function persistAuthorization(
     server_identity: authorization.server_identity,
     session_scope: authorization.session_scope,
   };
+}
+
+function persistWorkspaceAuthorization(
+  authorization: DelegatedMobileV2Authorization,
+): PersistedWorkspaceAuthorization {
+  return {
+    schema: authorization.schema,
+    server_identity: authorization.server_identity,
+    credential_id: authorization.credential_id,
+    credential_revision: authorization.credential_revision.toString(),
+    authorization_revision: authorization.authorization_revision.toString(),
+    principal_generation: authorization.principal_generation.toString(),
+    delegation_id: authorization.delegation_id,
+    tenant_id: authorization.tenant_id,
+    actor_id: authorization.actor_id,
+    issued_at_ms: authorization.issued_at_ms.toString(),
+    expires_at_ms: authorization.expires_at_ms.toString(),
+    project_roots: authorization.project_roots,
+    actions: authorization.actions,
+  };
+}
+
+function admitWorkspaceAuthorization(
+  value: unknown,
+  authorization: MobileAuthorization,
+  now: number,
+): DelegatedMobileV2Authorization {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schema',
+      'server_identity',
+      'credential_id',
+      'credential_revision',
+      'authorization_revision',
+      'principal_generation',
+      'delegation_id',
+      'tenant_id',
+      'actor_id',
+      'issued_at_ms',
+      'expires_at_ms',
+      'project_roots',
+      'actions',
+    ]) ||
+    !Array.isArray(value.project_roots) ||
+    !Array.isArray(value.actions)
+  ) {
+    throw new Error('persisted_connection_invalid');
+  }
+  return admitDelegatedMobileV2Authorization(
+    {
+      ...value,
+      credential_revision: exactDecimal(value.credential_revision, false),
+      authorization_revision: exactDecimal(value.authorization_revision, false),
+      principal_generation: exactDecimal(value.principal_generation, false),
+      issued_at_ms: exactDecimal(value.issued_at_ms, true),
+      expires_at_ms: exactDecimal(value.expires_at_ms, true),
+    },
+    {
+      serverIdentity: authorization.server_identity,
+      credentialId: authorization.credential_id,
+      credentialRevision: authorization.credential_revision,
+      authorizationRevision: authorization.authorization_revision,
+      now,
+    },
+  );
 }
 
 function admitAuthorization(value: unknown): MobileAuthorization {
@@ -386,6 +468,7 @@ export async function saveIssuedConnection(
     accessToken,
     refreshToken,
     authorization: persistAuthorization(authorization),
+    workspaceAuthorization: null,
   } as const;
 
   // The secure record is the generation commit. Removing the public mirror
@@ -411,6 +494,43 @@ export async function saveIssuedConnection(
   return { profile, accessToken, refreshToken, authorization };
 }
 
+/** Persist only the server-issued v2 grant for the current credential family. */
+export async function saveWorkspaceAuthorization(
+  connection: ScopedConnection,
+  value: DelegatedMobileV2Authorization | undefined,
+  now = Date.now(),
+): Promise<ScopedConnection> {
+  if (!(await secureStoreAvailable())) {
+    throw new Error('secure_store_unavailable');
+  }
+  const workspaceAuthorization =
+    value === undefined
+      ? undefined
+      : admitWorkspaceAuthorization(
+          persistWorkspaceAuthorization(value),
+          connection.authorization,
+          now,
+        );
+  const privateValue = {
+    schema: CREDENTIAL_SCHEMA,
+    profile: connection.profile,
+    accessToken: MobileAccessToken(connection.accessToken),
+    refreshToken: MobileRefreshToken(connection.refreshToken),
+    authorization: persistAuthorization(connection.authorization),
+    workspaceAuthorization:
+      workspaceAuthorization === undefined
+        ? null
+        : persistWorkspaceAuthorization(workspaceAuthorization),
+  } as const;
+  await SecureStore.setItemAsync(CREDENTIAL_KEY, JSON.stringify(privateValue), {
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  });
+  const { workspaceAuthorization: _previous, ...base } = connection;
+  return workspaceAuthorization === undefined
+    ? base
+    : { ...base, workspaceAuthorization };
+}
+
 /** Load an admitted pair without discarding an expired access token's refresh path. */
 export async function loadStoredConnection(
   now = Date.now(),
@@ -430,16 +550,30 @@ export async function loadStoredConnection(
 
   try {
     const privateValue: unknown = JSON.parse(credentialJson);
-    if (
-      !isRecord(privateValue) ||
-      !hasExactKeys(privateValue, [
+    const legacyPrivateValue =
+      isRecord(privateValue) &&
+      privateValue.schema === LEGACY_CREDENTIAL_SCHEMA &&
+      hasExactKeys(privateValue, [
         'schema',
         'profile',
         'accessToken',
         'refreshToken',
         'authorization',
-      ]) ||
-      privateValue.schema !== CREDENTIAL_SCHEMA ||
+      ]);
+    const currentPrivateValue =
+      isRecord(privateValue) &&
+      privateValue.schema === CREDENTIAL_SCHEMA &&
+      hasExactKeys(privateValue, [
+        'schema',
+        'profile',
+        'accessToken',
+        'refreshToken',
+        'authorization',
+        'workspaceAuthorization',
+      ]);
+    if (
+      !isRecord(privateValue) ||
+      (!legacyPrivateValue && !currentPrivateValue) ||
       typeof privateValue.accessToken !== 'string' ||
       typeof privateValue.refreshToken !== 'string'
     ) {
@@ -447,6 +581,14 @@ export async function loadStoredConnection(
     }
     const privateProfile = admitProfile(privateValue.profile);
     const authorization = admitAuthorization(privateValue.authorization);
+    const workspaceAuthorization =
+      currentPrivateValue && privateValue.workspaceAuthorization !== null
+        ? admitWorkspaceAuthorization(
+            privateValue.workspaceAuthorization,
+            authorization,
+            now,
+          )
+        : undefined;
     const expectedProfile = profileFor(
       {
         origin: MobileHttpsOrigin(privateProfile.origin),
@@ -488,6 +630,9 @@ export async function loadStoredConnection(
       accessToken: MobileAccessToken(privateValue.accessToken),
       refreshToken: MobileRefreshToken(privateValue.refreshToken),
       authorization,
+      ...(workspaceAuthorization === undefined
+        ? {}
+        : { workspaceAuthorization }),
     };
     return authorization.expires_at_ms <= BigInt(now)
       ? { kind: 'refresh_required', connection }

@@ -68,9 +68,12 @@ Drafts remain inert data. Authority previews are never cached.
 - A cached or offline profile cannot recover mutation authority from its prior
   live state.
 - Durable v2 receipt lookup handles contain only a fixed SHA-256 principal
-  binding and exact receipt coordinates. Project roots, action grants, tenant
-  and actor metadata, previews, intents, and replayable payloads are excluded;
-  the complete encoded set is capped at 16 KiB.
+  binding and exact receipt coordinates. A bounded non-authority index uses a
+  stable server-identity/credential-ID digest to retain handles across token
+  rotation; reconciliation still requires the current live action and project
+  grants. Project roots, action grants, tenant and actor metadata, previews,
+  intents, and replayable payloads are excluded; the complete encoded set is
+  capped at 16 KiB.
 
 ## Deferred evidence
 
@@ -80,9 +83,7 @@ cover negotiation, bounded paging, refusal/downgrade/resync, malformed and
 future grants, authorization loss and generation races, preview
 expiry/replay/app reload, exact approval decisions, durable receipt lookup
 without replay, generation-fenced local persistence, explicit confirmation,
-project ancestry, and exact lineage cancellation. End-to-end use remains
-blocked by multiple independent gaps: the
-bridge does not yet validate a delegated mobile bearer principal; no
-server-issued document supplies exact project roots and per-v2-action grants;
-production multi-server UI/cache integration is not complete; and live
-acceptance has not run. Terminal relay and device evidence remain separate work.
+project ancestry, exact lineage cancellation, dedicated bearer-grant
+admission/persistence, and receipt discovery across rotation. Production
+multi-server UI/cache integration is not complete and live acceptance has not
+run. Terminal relay and device evidence remain separate work.

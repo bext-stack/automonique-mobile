@@ -198,3 +198,24 @@ export async function mobileV2AuthorizationDigest(
   }
   return `sha256:${digest}`;
 }
+
+/** Stable, non-authority receipt namespace for one origin-bound credential. */
+export async function mobileV2CredentialFamilyDigest(
+  value: Pick<
+    DelegatedMobileV2Authorization,
+    'server_identity' | 'credential_id'
+  >,
+): Promise<string> {
+  const digest = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    JSON.stringify({
+      schema: 'automonique.mobile-workspace-v2-receipt-family/v1',
+      serverIdentity: value.server_identity,
+      credentialId: value.credential_id,
+    }),
+  );
+  if (!/^[0-9a-f]{64}$/u.test(digest)) {
+    throw new Error('mobile_v2_credential_family_digest_invalid');
+  }
+  return `sha256:${digest}`;
+}

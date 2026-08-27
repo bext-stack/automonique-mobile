@@ -19,12 +19,11 @@ Bounded per-object revision tombstones also retain workspace, attempt, and
 session rollback fences across omission; reintroduction must advance the exact
 object revision.
 The provider does not infer project roots or v2 actions from the v1 session
-scope. Until the server issues a delegated bearer principal with exact roots,
-per-action grants, identity/revisions, generation, and expiry—and the bridge
-validates that principal—no production screen can start inventory reads or a
-workspace mutation. This authentication incompatibility, project/action
-authorization, production UI/cache integration, and live acceptance are
-distinct blockers.
+scope. It reads the dedicated server-issued delegated bearer principal with
+exact roots, per-action grants, identity/revisions, generation, and expiry,
+then persists only the strictly admitted document with the secure credential
+generation. A missing or invalid document disables the workspace gateway.
+Production UI/cache integration and live acceptance remain distinct work.
 
 ## System boundary
 
@@ -68,7 +67,11 @@ refresh, and 401/403/410 responses move the process-wide lifecycle to
 are single-use; app reload, credential replacement, expiry, denial, or replay
 cannot submit them. Before submit, mobile persists only a bounded receipt
 lookup handle carrying a fixed SHA-256 digest of the principal—never the
-principal grant, preview, intent, authority, or an outbox. Canonical receipts
+principal grant, preview, intent, authority, or an outbox. A bounded
+non-authority index is keyed by a stable digest of server identity plus
+credential ID, so exact old-generation handles remain discoverable after a
+legitimate rotation while the current live grant remains the only authority.
+Canonical receipts
 must match the exact project-bound
 handle, preview, digests, idempotency key, approval, and resulting revision.
 Accepted or transport-lost submissions remain explicitly reconcilable across

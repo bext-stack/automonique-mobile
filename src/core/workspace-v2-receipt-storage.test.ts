@@ -15,6 +15,8 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 
 const digest = `sha256:${'c'.repeat(64)}`;
 const digestProvider = async () => digest;
+const familyDigest = `sha256:${'f'.repeat(64)}`;
+const familyDigestProvider = async () => familyDigest;
 const handle: WorkspaceV2ReceiptHandle = {
   schema: WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
   authorization_digest: digest,
@@ -34,9 +36,14 @@ beforeEach(async () => {
 });
 
 test('persists only a bounded lookup handle across store recreation', async () => {
-  await createWorkspaceV2ReceiptStore(digestProvider).put(handle);
+  await createWorkspaceV2ReceiptStore(familyDigestProvider, digestProvider).put(
+    handle,
+  );
   const encoded = JSON.stringify(
-    await createWorkspaceV2ReceiptStore(digestProvider).list(),
+    await createWorkspaceV2ReceiptStore(
+      familyDigestProvider,
+      digestProvider,
+    ).list(),
   );
   expect(JSON.parse(encoded)).toEqual([handle]);
   expect(encoded).not.toContain('resolved_parents');
@@ -45,12 +52,15 @@ test('persists only a bounded lookup handle across store recreation', async () =
   expect(encoded).not.toContain('get_mutation_receipt');
   const keys = await AsyncStorage.getAllKeys();
   expect(keys).toEqual([
-    `automonique.mobile.workspace-v2-receipts.v2.${digest}`,
+    `automonique.mobile.workspace-v2-receipts.v3.${familyDigest}`,
   ]);
 });
 
 test('refuses collisions, foreign authorization scope, and malformed storage', async () => {
-  const store = createWorkspaceV2ReceiptStore(digestProvider);
+  const store = createWorkspaceV2ReceiptStore(
+    familyDigestProvider,
+    digestProvider,
+  );
   await store.put(handle);
   await expect(
     store.put({ ...handle, project: 'project-other' }),
@@ -77,7 +87,10 @@ test('refuses collisions, foreign authorization scope, and malformed storage', a
 });
 
 test('keeps the bounded store intact when capacity is exhausted', async () => {
-  const store = createWorkspaceV2ReceiptStore(digestProvider);
+  const store = createWorkspaceV2ReceiptStore(
+    familyDigestProvider,
+    digestProvider,
+  );
   for (let index = 0; index < 20; index += 1) {
     await store.put({
       ...handle,
@@ -96,8 +109,14 @@ test('keeps the bounded store intact when capacity is exhausted', async () => {
 });
 
 test('serializes concurrent mutations across store instances for one durable key', async () => {
-  const first = createWorkspaceV2ReceiptStore(digestProvider);
-  const second = createWorkspaceV2ReceiptStore(digestProvider);
+  const first = createWorkspaceV2ReceiptStore(
+    familyDigestProvider,
+    digestProvider,
+  );
+  const second = createWorkspaceV2ReceiptStore(
+    familyDigestProvider,
+    digestProvider,
+  );
   const other = {
     ...handle,
     idempotency_key: 'workspace-create-2',
@@ -123,4 +142,30 @@ test('serializes concurrent mutations across store instances for one durable key
       preview_id: 'preview-workspace-3',
     },
   ]);
+});
+
+test('migrates the legacy digest key and preserves handles across rotation', async () => {
+  const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${digest}`;
+  await AsyncStorage.setItem(legacyKey, JSON.stringify([handle]));
+  const current = createWorkspaceV2ReceiptStore(
+    familyDigestProvider,
+    digestProvider,
+  );
+  await expect(current.list()).resolves.toEqual([handle]);
+  await expect(AsyncStorage.getItem(legacyKey)).resolves.toBeNull();
+
+  const rotatedDigest = `sha256:${'d'.repeat(64)}`;
+  const rotated = createWorkspaceV2ReceiptStore(
+    familyDigestProvider,
+    async () => rotatedDigest,
+  );
+  await expect(rotated.list()).resolves.toEqual([handle]);
+  const rotatedHandle = {
+    ...handle,
+    authorization_digest: rotatedDigest,
+    idempotency_key: 'workspace-create-rotated',
+    preview_id: 'preview-workspace-rotated',
+  };
+  await rotated.put(rotatedHandle);
+  await expect(rotated.list()).resolves.toEqual([handle, rotatedHandle]);
 });
