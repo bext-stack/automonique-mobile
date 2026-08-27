@@ -6,6 +6,7 @@ import {
   describeServerConnectionError,
   inspectAutomoniqueServer,
 } from './server-connection';
+import { SUPPORTED_MOBILE_PROTOCOL_VERSIONS } from './negotiation';
 
 const IDENTITY = `sha256:${'a'.repeat(64)}`;
 
@@ -81,12 +82,12 @@ test('admits a server that advertises a newer version alongside a supported one'
     inspectAutomoniqueServer('https://ops.example.test', undefined, {
       discover,
     }),
-  ).resolves.toMatchObject({ protocolVersion: '1' });
+  ).resolves.toMatchObject({ protocolVersion: '2' });
 });
 
 test('refuses a server whose advertised versions this build cannot speak', async () => {
   const discover = jest.fn(async (origin: string) => ({
-    discovery: discovery(origin, [2n]),
+    discovery: discovery(origin, [SUPPORTED_MOBILE_PROTOCOL_VERSIONS.max + 1n]),
   }));
 
   await expect(

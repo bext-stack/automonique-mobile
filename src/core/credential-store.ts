@@ -22,11 +22,20 @@ import {
   type MobileAuthorization,
   type MobileDiscovery,
 } from '@automonique/sdk';
+import {
+  admitDelegatedMobileV2Authorization,
+  admitMobileV2ReceiptMigrationMetadata,
+  deriveMobileV2ReceiptMigrationMetadata,
+  type DelegatedMobileV2Authorization,
+  type MobileV2ReceiptMigrationMetadata,
+} from './mobile-v2-authorization';
 
 const PROFILE_KEY = 'automonique.mobile.connection-profile.v3';
 const CREDENTIAL_KEY = 'automonique.mobile.scoped-credential.v3';
 const PROFILE_SCHEMA = 'automonique.mobile.connection-profile/v3';
-const CREDENTIAL_SCHEMA = 'automonique.mobile.scoped-credential/v3';
+const LEGACY_CREDENTIAL_SCHEMA = 'automonique.mobile.scoped-credential/v3';
+const PREVIOUS_CREDENTIAL_SCHEMA = 'automonique.mobile.scoped-credential/v4';
+const CREDENTIAL_SCHEMA = 'automonique.mobile.scoped-credential/v5';
 
 export interface ConnectionProfile {
   readonly origin: string;
@@ -49,6 +58,8 @@ export interface ScopedConnection {
   readonly accessToken: string;
   readonly refreshToken: string;
   readonly authorization: MobileAuthorization;
+  readonly workspaceAuthorization?: DelegatedMobileV2Authorization;
+  readonly workspaceReceiptMigration?: MobileV2ReceiptMigrationMetadata;
 }
 
 export type StoredConnection =
@@ -73,6 +84,30 @@ interface PersistedAuthorization {
   };
   readonly server_identity: string;
   readonly session_scope: readonly string[];
+}
+
+interface PersistedWorkspaceAuthorization {
+  readonly schema: string;
+  readonly server_identity: string;
+  readonly credential_id: string;
+  readonly credential_revision: string;
+  readonly authorization_revision: string;
+  readonly principal_generation: string;
+  readonly delegation_id: string;
+  readonly tenant_id: string;
+  readonly actor_id: string;
+  readonly issued_at_ms: string;
+  readonly expires_at_ms: string;
+  readonly project_roots: readonly string[];
+  readonly actions: readonly string[];
+}
+
+interface PersistedWorkspaceReceiptMigration {
+  readonly schema: string;
+  readonly server_identity: string;
+  readonly credential_id: string;
+  readonly delegation_id: string;
+  readonly authorization_digest: string;
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -119,6 +154,135 @@ function persistAuthorization(
     server_identity: authorization.server_identity,
     session_scope: authorization.session_scope,
   };
+}
+
+function persistWorkspaceAuthorization(
+  authorization: DelegatedMobileV2Authorization,
+): PersistedWorkspaceAuthorization {
+  return {
+    schema: authorization.schema,
+    server_identity: authorization.server_identity,
+    credential_id: authorization.credential_id,
+    credential_revision: authorization.credential_revision.toString(),
+    authorization_revision: authorization.authorization_revision.toString(),
+    principal_generation: authorization.principal_generation.toString(),
+    delegation_id: authorization.delegation_id,
+    tenant_id: authorization.tenant_id,
+    actor_id: authorization.actor_id,
+    issued_at_ms: authorization.issued_at_ms.toString(),
+    expires_at_ms: authorization.expires_at_ms.toString(),
+    project_roots: authorization.project_roots,
+    actions: authorization.actions,
+  };
+}
+
+function persistWorkspaceReceiptMigration(
+  metadata: MobileV2ReceiptMigrationMetadata,
+): PersistedWorkspaceReceiptMigration {
+  return { ...metadata };
+}
+
+function expectedWorkspaceAuthorization(
+  authorization: MobileAuthorization,
+  now: number,
+) {
+  return {
+    serverIdentity: authorization.server_identity,
+    credentialId: authorization.credential_id,
+    credentialRevision: authorization.credential_revision,
+    authorizationRevision: authorization.authorization_revision,
+    now,
+  };
+}
+
+function admitWorkspaceAuthorization(
+  value: unknown,
+  authorization: MobileAuthorization,
+  now: number,
+): DelegatedMobileV2Authorization {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schema',
+      'server_identity',
+      'credential_id',
+      'credential_revision',
+      'authorization_revision',
+      'principal_generation',
+      'delegation_id',
+      'tenant_id',
+      'actor_id',
+      'issued_at_ms',
+      'expires_at_ms',
+      'project_roots',
+      'actions',
+    ]) ||
+    !Array.isArray(value.project_roots) ||
+    !Array.isArray(value.actions)
+  ) {
+    throw new Error('persisted_connection_invalid');
+  }
+  return admitDelegatedMobileV2Authorization(
+    {
+      ...value,
+      credential_revision: exactDecimal(value.credential_revision, false),
+      authorization_revision: exactDecimal(value.authorization_revision, false),
+      principal_generation: exactDecimal(value.principal_generation, false),
+      issued_at_ms: exactDecimal(value.issued_at_ms, true),
+      expires_at_ms: exactDecimal(value.expires_at_ms, true),
+    },
+    expectedWorkspaceAuthorization(authorization, now),
+  );
+}
+
+async function deriveWorkspaceReceiptMigration(
+  value: unknown,
+  authorization: MobileAuthorization,
+  now: number,
+): Promise<MobileV2ReceiptMigrationMetadata> {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schema',
+      'server_identity',
+      'credential_id',
+      'credential_revision',
+      'authorization_revision',
+      'principal_generation',
+      'delegation_id',
+      'tenant_id',
+      'actor_id',
+      'issued_at_ms',
+      'expires_at_ms',
+      'project_roots',
+      'actions',
+    ]) ||
+    !Array.isArray(value.project_roots) ||
+    !Array.isArray(value.actions)
+  ) {
+    throw new Error('persisted_connection_invalid');
+  }
+  return deriveMobileV2ReceiptMigrationMetadata(
+    {
+      ...value,
+      credential_revision: exactDecimal(value.credential_revision, false),
+      authorization_revision: exactDecimal(value.authorization_revision, false),
+      principal_generation: exactDecimal(value.principal_generation, false),
+      issued_at_ms: exactDecimal(value.issued_at_ms, true),
+      expires_at_ms: exactDecimal(value.expires_at_ms, true),
+    },
+    expectedWorkspaceAuthorization(authorization, now),
+  );
+}
+
+function admitWorkspaceReceiptMigration(
+  value: unknown,
+  authorization: MobileAuthorization,
+): MobileV2ReceiptMigrationMetadata {
+  return admitMobileV2ReceiptMigrationMetadata(value, {
+    serverIdentity: authorization.server_identity,
+    credentialId: authorization.credential_id,
+  });
 }
 
 function admitAuthorization(value: unknown): MobileAuthorization {
@@ -380,6 +544,8 @@ export async function saveIssuedConnection(
     accessToken,
     refreshToken,
     authorization: persistAuthorization(authorization),
+    workspaceAuthorization: null,
+    workspaceReceiptMigration: null,
   } as const;
 
   // The secure record is the generation commit. Removing the public mirror
@@ -405,6 +571,62 @@ export async function saveIssuedConnection(
   return { profile, accessToken, refreshToken, authorization };
 }
 
+/** Persist only the server-issued v2 grant for the current credential family. */
+export async function saveWorkspaceAuthorization(
+  connection: ScopedConnection,
+  value: DelegatedMobileV2Authorization | undefined,
+  now = Date.now(),
+): Promise<ScopedConnection> {
+  if (!(await secureStoreAvailable())) {
+    throw new Error('secure_store_unavailable');
+  }
+  const workspaceAuthorization =
+    value === undefined
+      ? undefined
+      : admitWorkspaceAuthorization(
+          persistWorkspaceAuthorization(value),
+          connection.authorization,
+          now,
+        );
+  const workspaceReceiptMigration =
+    workspaceAuthorization === undefined
+      ? undefined
+      : await deriveMobileV2ReceiptMigrationMetadata(
+          workspaceAuthorization,
+          expectedWorkspaceAuthorization(connection.authorization, now),
+        );
+  const privateValue = {
+    schema: CREDENTIAL_SCHEMA,
+    profile: connection.profile,
+    accessToken: MobileAccessToken(connection.accessToken),
+    refreshToken: MobileRefreshToken(connection.refreshToken),
+    authorization: persistAuthorization(connection.authorization),
+    workspaceAuthorization:
+      workspaceAuthorization === undefined
+        ? null
+        : persistWorkspaceAuthorization(workspaceAuthorization),
+    workspaceReceiptMigration:
+      workspaceReceiptMigration === undefined
+        ? null
+        : persistWorkspaceReceiptMigration(workspaceReceiptMigration),
+  } as const;
+  await SecureStore.setItemAsync(CREDENTIAL_KEY, JSON.stringify(privateValue), {
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  });
+  const {
+    workspaceAuthorization: _previous,
+    workspaceReceiptMigration: _previousMigration,
+    ...base
+  } = connection;
+  if (
+    workspaceAuthorization === undefined ||
+    workspaceReceiptMigration === undefined
+  ) {
+    return base;
+  }
+  return { ...base, workspaceAuthorization, workspaceReceiptMigration };
+}
+
 /** Load an admitted pair without discarding an expired access token's refresh path. */
 export async function loadStoredConnection(
   now = Date.now(),
@@ -424,16 +646,42 @@ export async function loadStoredConnection(
 
   try {
     const privateValue: unknown = JSON.parse(credentialJson);
-    if (
-      !isRecord(privateValue) ||
-      !hasExactKeys(privateValue, [
+    const legacyPrivateValue =
+      isRecord(privateValue) &&
+      privateValue.schema === LEGACY_CREDENTIAL_SCHEMA &&
+      hasExactKeys(privateValue, [
         'schema',
         'profile',
         'accessToken',
         'refreshToken',
         'authorization',
-      ]) ||
-      privateValue.schema !== CREDENTIAL_SCHEMA ||
+      ]);
+    const previousPrivateValue =
+      isRecord(privateValue) &&
+      privateValue.schema === PREVIOUS_CREDENTIAL_SCHEMA &&
+      hasExactKeys(privateValue, [
+        'schema',
+        'profile',
+        'accessToken',
+        'refreshToken',
+        'authorization',
+        'workspaceAuthorization',
+      ]);
+    const currentPrivateValue =
+      isRecord(privateValue) &&
+      privateValue.schema === CREDENTIAL_SCHEMA &&
+      hasExactKeys(privateValue, [
+        'schema',
+        'profile',
+        'accessToken',
+        'refreshToken',
+        'authorization',
+        'workspaceAuthorization',
+        'workspaceReceiptMigration',
+      ]);
+    if (
+      !isRecord(privateValue) ||
+      (!legacyPrivateValue && !previousPrivateValue && !currentPrivateValue) ||
       typeof privateValue.accessToken !== 'string' ||
       typeof privateValue.refreshToken !== 'string'
     ) {
@@ -441,6 +689,71 @@ export async function loadStoredConnection(
     }
     const privateProfile = admitProfile(privateValue.profile);
     const authorization = admitAuthorization(privateValue.authorization);
+    let workspaceAuthorization: DelegatedMobileV2Authorization | undefined;
+    let workspaceReceiptMigration: MobileV2ReceiptMigrationMetadata | undefined;
+    if (
+      currentPrivateValue &&
+      privateValue.workspaceReceiptMigration !== null
+    ) {
+      try {
+        workspaceReceiptMigration = admitWorkspaceReceiptMigration(
+          privateValue.workspaceReceiptMigration,
+          authorization,
+        );
+      } catch {
+        // Optional non-authority metadata can never invalidate the refresh
+        // credential. A live grant below can reconstruct an exact copy.
+      }
+    }
+    if (
+      (previousPrivateValue || currentPrivateValue) &&
+      privateValue.workspaceAuthorization !== null
+    ) {
+      try {
+        workspaceAuthorization = admitWorkspaceAuthorization(
+          privateValue.workspaceAuthorization,
+          authorization,
+          now,
+        );
+        const derived = await deriveWorkspaceReceiptMigration(
+          privateValue.workspaceAuthorization,
+          authorization,
+          now,
+        );
+        if (
+          workspaceReceiptMigration !== undefined &&
+          JSON.stringify(workspaceReceiptMigration) !== JSON.stringify(derived)
+        ) {
+          workspaceAuthorization = undefined;
+          workspaceReceiptMigration = undefined;
+        } else {
+          workspaceReceiptMigration = derived;
+        }
+      } catch {
+        try {
+          // An expired old grant is admitted only through this derivation. Its
+          // authority object is never returned to the lifecycle or gateway.
+          const derived = await deriveWorkspaceReceiptMigration(
+            privateValue.workspaceAuthorization,
+            authorization,
+            now,
+          );
+          if (
+            workspaceReceiptMigration !== undefined &&
+            JSON.stringify(workspaceReceiptMigration) !==
+              JSON.stringify(derived)
+          ) {
+            workspaceReceiptMigration = undefined;
+          } else {
+            workspaceReceiptMigration = derived;
+          }
+        } catch {
+          // Malformed optional state is discarded without erasing a valid
+          // primary access/refresh generation.
+          workspaceReceiptMigration = undefined;
+        }
+      }
+    }
     const expectedProfile = profileFor(
       {
         origin: MobileHttpsOrigin(privateProfile.origin),
@@ -482,7 +795,36 @@ export async function loadStoredConnection(
       accessToken: MobileAccessToken(privateValue.accessToken),
       refreshToken: MobileRefreshToken(privateValue.refreshToken),
       authorization,
+      ...(workspaceAuthorization === undefined
+        ? {}
+        : { workspaceAuthorization }),
+      ...(workspaceReceiptMigration === undefined
+        ? {}
+        : { workspaceReceiptMigration }),
     };
+    if (!legacyPrivateValue) {
+      const sanitizedPrivateValue = {
+        schema: CREDENTIAL_SCHEMA,
+        profile: privateProfile,
+        accessToken: connection.accessToken,
+        refreshToken: connection.refreshToken,
+        authorization: persistAuthorization(authorization),
+        workspaceAuthorization:
+          workspaceAuthorization === undefined
+            ? null
+            : persistWorkspaceAuthorization(workspaceAuthorization),
+        workspaceReceiptMigration:
+          workspaceReceiptMigration === undefined
+            ? null
+            : persistWorkspaceReceiptMigration(workspaceReceiptMigration),
+      } as const;
+      const sanitized = JSON.stringify(sanitizedPrivateValue);
+      if (sanitized !== credentialJson) {
+        await SecureStore.setItemAsync(CREDENTIAL_KEY, sanitized, {
+          keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+        }).catch(() => undefined);
+      }
+    }
     return authorization.expires_at_ms <= BigInt(now)
       ? { kind: 'refresh_required', connection }
       : { kind: 'active', connection };

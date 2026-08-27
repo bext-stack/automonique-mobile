@@ -18,29 +18,57 @@ import {
   MobileRevision,
   MobileServerIdentity,
   MobileSessionId,
+  ProjectId,
   type IssuedMobileCredentials,
   type MobileDiscovery,
   type MobilePairingOffer,
 } from '@automonique/sdk';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
   loadStoredConnection,
   revokeLocalCredential,
   saveIssuedConnection,
+  saveWorkspaceAuthorization,
   type ScopedConnection,
 } from './credential-store';
 import { MobileLifecycleCoordinator } from './mobile-lifecycle';
 import { SUPPORTED_MOBILE_PROTOCOL_VERSIONS } from './negotiation';
+import {
+  MOBILE_V2_ACTIONS,
+  MOBILE_V2_AUTHORIZATION_SCHEMA,
+  mobileV2AuthorizationDigest,
+  mobileV2DelegationFamilyDigest,
+  type DelegatedMobileV2Authorization,
+} from './mobile-v2-authorization';
+import { createWorkspaceV2ReceiptStore } from './workspace-v2-receipt-storage';
+
+jest.mock('@react-native-async-storage/async-storage', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+
+jest.mock('expo-crypto', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const crypto = require('node:crypto') as typeof import('node:crypto');
+  return {
+    CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+    digestStringAsync: async (_algorithm: string, value: string) =>
+      crypto.createHash('sha256').update(value).digest('hex'),
+  };
+});
 
 jest.mock('./credential-store', () => ({
   loadStoredConnection: jest.fn(),
   revokeLocalCredential: jest.fn(),
   saveIssuedConnection: jest.fn(),
+  saveWorkspaceAuthorization: jest.fn(),
 }));
 
 const loadStored = jest.mocked(loadStoredConnection);
 const removeLocal = jest.mocked(revokeLocalCredential);
 const saveIssued = jest.mocked(saveIssuedConnection);
+const saveWorkspace = jest.mocked(saveWorkspaceAuthorization);
 const NOW = 1_777_000_000_000;
 const IDENTITY = MobileServerIdentity(`sha256:${'a'.repeat(64)}`);
 const CREDENTIAL_ID = MobileCredentialId(`mc_${'b'.repeat(43)}`);
@@ -126,9 +154,72 @@ function connection(value: IssuedMobileCredentials): ScopedConnection {
   };
 }
 
-beforeEach(() => {
+function withWorkspaceAuthorization(value: ScopedConnection): ScopedConnection {
+  return {
+    ...value,
+    workspaceAuthorization: {
+      schema: MOBILE_V2_AUTHORIZATION_SCHEMA,
+      server_identity: value.authorization.server_identity,
+      credential_id: value.authorization.credential_id,
+      credential_revision: value.authorization.credential_revision,
+      authorization_revision: value.authorization.authorization_revision,
+      principal_generation: 1n,
+      delegation_id: 'delegation-mobile',
+      tenant_id: 'tenant-mobile',
+      actor_id: 'operator-mobile',
+      issued_at_ms: BigInt(NOW - 1),
+      expires_at_ms: BigInt(NOW + 900_000),
+      project_roots: [ProjectId('project-mobile')],
+      actions: MOBILE_V2_ACTIONS,
+    },
+  };
+}
+
+function delegatedAuthorizationResponse(
+  authorization: DelegatedMobileV2Authorization,
+): Response {
+  return new Response(
+    JSON.stringify({
+      actions: authorization.actions,
+      actor_id: authorization.actor_id,
+      authorization_revision: Number(authorization.authorization_revision),
+      credential_id: authorization.credential_id,
+      credential_revision: Number(authorization.credential_revision),
+      delegation_id: authorization.delegation_id,
+      expires_at_ms: Number(authorization.expires_at_ms),
+      issued_at_ms: Number(authorization.issued_at_ms),
+      principal_generation: Number(authorization.principal_generation),
+      project_roots: authorization.project_roots,
+      schema: authorization.schema,
+      server_identity: authorization.server_identity,
+      tenant_id: authorization.tenant_id,
+    }),
+    {
+      status: 200,
+      headers: {
+        'cache-control': 'no-store',
+        'content-type':
+          'application/vnd.automonique.mobile-platform-v2-authorization.v1+json',
+      },
+    },
+  );
+}
+
+function workspaceAuthorizationResponse(value: ScopedConnection): Response {
+  return delegatedAuthorizationResponse(
+    withWorkspaceAuthorization(value).workspaceAuthorization!,
+  );
+}
+
+beforeEach(async () => {
   jest.clearAllMocks();
+  await AsyncStorage.clear();
   removeLocal.mockResolvedValue();
+  saveWorkspace.mockImplementation(async (value, workspaceAuthorization) =>
+    workspaceAuthorization === undefined
+      ? value
+      : { ...value, workspaceAuthorization },
+  );
 });
 
 test('expired access calls share one refresh and one local generation commit', async () => {
@@ -167,6 +258,273 @@ test('expired access calls share one refresh and one local generation commit', a
   expect(refresh).toHaveBeenCalledTimes(1);
   expect(saveIssued).toHaveBeenCalledTimes(1);
   expect(lifecycle.snapshot()).toMatchObject({ phase: 'ready' });
+});
+
+test('refresh migrates the old receipt digest before remote rotation and reloads it under the new grant', async () => {
+  const active = withWorkspaceAuthorization(
+    connection(issued(1n, 'c', NOW + 60_000)),
+  );
+  const oldAuthorization = active.workspaceAuthorization!;
+  const oldDigest = await mobileV2AuthorizationDigest(oldAuthorization);
+  const familyDigest = await mobileV2DelegationFamilyDigest(oldAuthorization);
+  const handle = {
+    schema: 'automonique.mobile-workspace-v2-receipt-handle/v2' as const,
+    authorization_digest: oldDigest,
+    project: 'project-mobile',
+    idempotency_key: 'workspace-create-before-rotation',
+    preview_id: 'preview-before-rotation',
+    preview_revision: '1',
+    preview_digest: `sha256:${'a'.repeat(64)}`,
+    request_digest: `sha256:${'b'.repeat(64)}`,
+    approval_id: null,
+    expected_resulting_revision: '1',
+    created_at_ms: String(NOW),
+  };
+  const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${oldDigest}`;
+  const familyKey = `automonique.mobile.workspace-v2-receipts.v4.${familyDigest}`;
+  await AsyncStorage.setItem(legacyKey, JSON.stringify([handle]));
+
+  const rotatedIssued = issued(2n, 'd', NOW + 900_000);
+  const rotated = connection(rotatedIssued);
+  const rotatedAuthorization =
+    withWorkspaceAuthorization(rotated).workspaceAuthorization!;
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  saveIssued.mockResolvedValue(rotated);
+  const refresh = jest.fn(async () => {
+    // This is the irreversible remote rotation boundary. The only legacy copy
+    // must already be committed to its exact stable family before it runs.
+    expect(await AsyncStorage.getItem(legacyKey)).toBeNull();
+    expect(await AsyncStorage.getItem(familyKey)).not.toBeNull();
+    return rotatedIssued;
+  });
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: jest.fn(async () => workspaceAuthorizationResponse(rotated)),
+    discover: jest.fn(async () => ({
+      discovery: DISCOVERY,
+      refresh,
+      revoke: jest.fn(),
+    })),
+  });
+  await lifecycle.hydrate();
+  await lifecycle.refresh();
+  expect(refresh).toHaveBeenCalledTimes(1);
+
+  // Recreate the store as an app reload would, using only the rotated grant.
+  const reloaded = createWorkspaceV2ReceiptStore(
+    () => mobileV2DelegationFamilyDigest(rotatedAuthorization),
+    () => mobileV2AuthorizationDigest(rotatedAuthorization),
+  );
+  await expect(reloaded.list()).resolves.toEqual([handle]);
+});
+
+test('refresh migrates legacy custody only into the old delegation family and a regrant cannot adopt it', async () => {
+  const active = withWorkspaceAuthorization(
+    connection(issued(1n, 'c', NOW + 60_000)),
+  );
+  const oldAuthorization = active.workspaceAuthorization!;
+  const oldDigest = await mobileV2AuthorizationDigest(oldAuthorization);
+  const oldFamilyDigest =
+    await mobileV2DelegationFamilyDigest(oldAuthorization);
+  const handle = {
+    schema: 'automonique.mobile-workspace-v2-receipt-handle/v2' as const,
+    authorization_digest: oldDigest,
+    project: 'project-mobile',
+    idempotency_key: 'workspace-create-before-regrant',
+    preview_id: 'preview-before-regrant',
+    preview_revision: '1',
+    preview_digest: `sha256:${'a'.repeat(64)}`,
+    request_digest: `sha256:${'b'.repeat(64)}`,
+    approval_id: null,
+    expected_resulting_revision: '1',
+    created_at_ms: String(NOW),
+  };
+  const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${oldDigest}`;
+  await AsyncStorage.setItem(legacyKey, JSON.stringify([handle]));
+
+  const rotatedIssued = issued(2n, 'd', NOW + 900_000);
+  const rotated = connection(rotatedIssued);
+  const ordinaryRotatedAuthorization =
+    withWorkspaceAuthorization(rotated).workspaceAuthorization!;
+  const regrantedAuthorization = {
+    ...ordinaryRotatedAuthorization,
+    principal_generation: 3n,
+    delegation_id: 'delegation-regranted',
+  };
+  const regrantedFamilyDigest = await mobileV2DelegationFamilyDigest(
+    regrantedAuthorization,
+  );
+  expect(regrantedFamilyDigest).not.toBe(oldFamilyDigest);
+
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  saveIssued.mockResolvedValue(rotated);
+  const refresh = jest.fn(async () => {
+    expect(await AsyncStorage.getItem(legacyKey)).toBeNull();
+    expect(
+      await AsyncStorage.getItem(
+        `automonique.mobile.workspace-v2-receipts.v4.${oldFamilyDigest}`,
+      ),
+    ).not.toBeNull();
+    expect(
+      await AsyncStorage.getItem(
+        `automonique.mobile.workspace-v2-receipts.v4.${regrantedFamilyDigest}`,
+      ),
+    ).toBeNull();
+    return rotatedIssued;
+  });
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: jest.fn(async () =>
+      delegatedAuthorizationResponse(regrantedAuthorization),
+    ),
+    discover: jest.fn(async () => ({
+      discovery: DISCOVERY,
+      refresh,
+      revoke: jest.fn(),
+    })),
+  });
+  await lifecycle.hydrate();
+  await lifecycle.refresh();
+
+  const regrantedStore = createWorkspaceV2ReceiptStore(
+    () => mobileV2DelegationFamilyDigest(regrantedAuthorization),
+    () => mobileV2AuthorizationDigest(regrantedAuthorization),
+  );
+  await expect(regrantedStore.list()).resolves.toEqual([]);
+  const oldFamilyStore = createWorkspaceV2ReceiptStore(
+    () => mobileV2DelegationFamilyDigest(oldAuthorization),
+    () => mobileV2AuthorizationDigest(oldAuthorization),
+  );
+  await expect(oldFamilyStore.list()).resolves.toEqual([handle]);
+});
+
+test('cold expiry reload migrates the exact old family, refreshes, and reconciles once without submit', async () => {
+  const oldAuthorization = {
+    ...withWorkspaceAuthorization(connection(issued(1n, 'c', NOW)))
+      .workspaceAuthorization!,
+    expires_at_ms: BigInt(NOW),
+  };
+  const oldDigest = await mobileV2AuthorizationDigest(oldAuthorization);
+  const familyDigest = await mobileV2DelegationFamilyDigest(oldAuthorization);
+  const handle = {
+    schema: 'automonique.mobile-workspace-v2-receipt-handle/v2' as const,
+    authorization_digest: oldDigest,
+    project: 'project-mobile',
+    idempotency_key: 'workspace-cold-expiry',
+    preview_id: 'preview-cold-expiry',
+    preview_revision: '1',
+    preview_digest: `sha256:${'a'.repeat(64)}`,
+    request_digest: `sha256:${'b'.repeat(64)}`,
+    approval_id: null,
+    expected_resulting_revision: '1',
+    created_at_ms: String(NOW - 1),
+  };
+  const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${oldDigest}`;
+  const familyKey = `automonique.mobile.workspace-v2-receipts.v4.${familyDigest}`;
+  await AsyncStorage.setItem(legacyKey, JSON.stringify([handle]));
+
+  const expired = {
+    ...connection(issued(1n, 'c', NOW)),
+    workspaceReceiptMigration: {
+      schema: 'automonique.mobile-platform-v2-receipt-migration/v1' as const,
+      server_identity: oldAuthorization.server_identity,
+      credential_id: oldAuthorization.credential_id,
+      delegation_id: oldAuthorization.delegation_id,
+      authorization_digest: oldDigest,
+    },
+  };
+  loadStored.mockResolvedValue({
+    kind: 'refresh_required',
+    connection: expired,
+  });
+  const rotatedIssued = issued(2n, 'd', NOW + 900_000);
+  const rotated = connection(rotatedIssued);
+  const rotatedAuthorization = {
+    ...withWorkspaceAuthorization(rotated).workspaceAuthorization!,
+    principal_generation: 2n,
+  };
+  saveIssued.mockResolvedValue(rotated);
+  const observedKinds: string[] = [];
+  const platformFetch = jest.fn(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (
+        String(input) ===
+        'https://ops.example.test/api/mobile/platform-v2/authorization'
+      ) {
+        return delegatedAuthorizationResponse(rotatedAuthorization);
+      }
+      const request = JSON.parse(String(init?.body)) as {
+        kind: string;
+        protocol: string;
+        request_id: string;
+        version: number;
+      };
+      observedKinds.push(request.kind);
+      const mediaType = String(
+        (init?.headers as Record<string, string>)['content-type'],
+      );
+      const body =
+        request.kind === 'negotiate'
+          ? {
+              schema: 'automonique.platform/v2',
+              version: 2,
+              work_context: 'v2_structured',
+            }
+          : {
+              approval_id: null,
+              id: 'receipt-cold-expiry',
+              idempotency_key: handle.idempotency_key,
+              outcome: 'accepted',
+              preview: { id: handle.preview_id, revision: 1 },
+              preview_digest: handle.preview_digest,
+              recorded_at_ms: NOW,
+              request_digest: handle.request_digest,
+              resulting_revision: null,
+              schema: 'automonique.platform/v2',
+            };
+      return new Response(
+        JSON.stringify({
+          body,
+          kind:
+            request.kind === 'negotiate' ? 'negotiated' : 'mutation_receipt',
+          protocol: request.protocol,
+          request_id: request.request_id,
+          version: request.version,
+        }),
+        {
+          status: 200,
+          headers: { 'cache-control': 'no-store', 'content-type': mediaType },
+        },
+      );
+    },
+  ) as jest.MockedFunction<typeof fetch>;
+  const refresh = jest.fn(async () => {
+    expect(await AsyncStorage.getItem(legacyKey)).toBeNull();
+    expect(await AsyncStorage.getItem(familyKey)).not.toBeNull();
+    return rotatedIssued;
+  });
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+    discover: jest.fn(async () => ({
+      discovery: DISCOVERY,
+      refresh,
+      revoke: jest.fn(),
+    })),
+  });
+
+  await lifecycle.hydrate();
+  expect(lifecycle.createWorkspaceGateway()).toBeNull();
+  await lifecycle.refresh();
+  const gateway = lifecycle.createWorkspaceGateway()!;
+  await gateway.negotiate();
+  await expect(gateway.pendingMutationReceipts()).resolves.toEqual([handle]);
+  await expect(
+    gateway.reconcileMutation(handle.idempotency_key),
+  ).resolves.toMatchObject({ kind: 'accepted', handle });
+  expect(observedKinds).toEqual(['negotiate', 'get_mutation_receipt']);
+  expect(observedKinds).not.toContain('submit_mutation');
+  expect(refresh).toHaveBeenCalledTimes(1);
 });
 
 test('a consumed remote refresh plus failed secure commit requires re-pairing', async () => {
@@ -291,7 +649,11 @@ test('an old gateway cannot combine its descriptor with a rotated token', async 
   await expect(oldGateway.bootstrap()).rejects.toThrow(
     'gateway_generation_replaced',
   );
-  expect(platformFetch).not.toHaveBeenCalled();
+  expect(
+    platformFetch.mock.calls.some(
+      ([input]) => String(input) === 'https://ops.example.test/api/platform/v2',
+    ),
+  ).toBe(false);
   expect(lifecycle.snapshot()).toMatchObject({
     phase: 'ready',
     profile: { credentialRevision: '2' },
@@ -384,6 +746,295 @@ test('a Platform authorization refusal immediately makes the lifecycle read only
 
   await expect(lifecycle.createGateway().bootstrap()).rejects.toThrow();
   expect(lifecycle.snapshot()).toMatchObject({ phase: 'refresh_required' });
+});
+
+test('Platform v2 remains unavailable without an exact server-issued delegated principal', async () => {
+  const active = connection(issued(1n, 'c', NOW + 900_000));
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  const lifecycle = new MobileLifecycleCoordinator({ now: () => NOW });
+  await lifecycle.hydrate();
+  expect(lifecycle.createWorkspaceGateway()).toBeNull();
+});
+
+test('expired receipt migration metadata never exposes a Platform v2 gateway', async () => {
+  const expired = {
+    ...connection(issued(1n, 'c', NOW)),
+    workspaceReceiptMigration: {
+      schema: 'automonique.mobile-platform-v2-receipt-migration/v1' as const,
+      server_identity: IDENTITY,
+      credential_id: CREDENTIAL_ID,
+      delegation_id: 'delegation-mobile',
+      authorization_digest: `sha256:${'c'.repeat(64)}`,
+    },
+  };
+  loadStored.mockResolvedValue({
+    kind: 'refresh_required',
+    connection: expired,
+  });
+  const platformFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+  });
+
+  await lifecycle.hydrate();
+  expect(lifecycle.snapshot()).toMatchObject({ phase: 'refresh_required' });
+  expect(lifecycle.createWorkspaceGateway()).toBeNull();
+  expect(platformFetch).not.toHaveBeenCalled();
+});
+
+test('active reauthorization migrates old receipt custody before replacing delegation metadata', async () => {
+  const active = connection(issued(1n, 'c', NOW + 900_000));
+  const oldAuthorization =
+    withWorkspaceAuthorization(active).workspaceAuthorization!;
+  const oldDigest = await mobileV2AuthorizationDigest(oldAuthorization);
+  const oldFamily = await mobileV2DelegationFamilyDigest(oldAuthorization);
+  const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${oldDigest}`;
+  await AsyncStorage.setItem(
+    legacyKey,
+    JSON.stringify([
+      {
+        schema: 'automonique.mobile-workspace-v2-receipt-handle/v2',
+        authorization_digest: oldDigest,
+        project: 'project-mobile',
+        idempotency_key: 'workspace-before-reauthorization',
+        preview_id: 'preview-before-reauthorization',
+        preview_revision: '1',
+        preview_digest: `sha256:${'a'.repeat(64)}`,
+        request_digest: `sha256:${'b'.repeat(64)}`,
+        approval_id: null,
+        expected_resulting_revision: '1',
+        created_at_ms: String(NOW),
+      },
+    ]),
+  );
+  loadStored.mockResolvedValue({
+    kind: 'active',
+    connection: {
+      ...active,
+      workspaceReceiptMigration: {
+        schema: 'automonique.mobile-platform-v2-receipt-migration/v1',
+        server_identity: oldAuthorization.server_identity,
+        credential_id: oldAuthorization.credential_id,
+        delegation_id: oldAuthorization.delegation_id,
+        authorization_digest: oldDigest,
+      },
+    },
+  });
+  const regranted = {
+    ...oldAuthorization,
+    delegation_id: 'delegation-regranted',
+    principal_generation: 2n,
+  };
+  const platformFetch = jest.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      expect(await AsyncStorage.getItem(legacyKey)).toBeNull();
+      expect(
+        await AsyncStorage.getItem(
+          `automonique.mobile.workspace-v2-receipts.v4.${oldFamily}`,
+        ),
+      ).not.toBeNull();
+      return delegatedAuthorizationResponse(regranted);
+    },
+  ) as jest.MockedFunction<typeof fetch>;
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+  });
+
+  await lifecycle.hydrate();
+  expect(platformFetch).toHaveBeenCalledTimes(1);
+  expect(lifecycle.createWorkspaceGateway()).not.toBeNull();
+  const regrantedStore = createWorkspaceV2ReceiptStore(
+    () => mobileV2DelegationFamilyDigest(regranted),
+    () => mobileV2AuthorizationDigest(regranted),
+  );
+  await expect(regrantedStore.list()).resolves.toEqual([]);
+});
+
+test('hydrates and persists the dedicated server-issued Platform v2 authorization', async () => {
+  const active = connection(issued(1n, 'c', NOW + 900_000));
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  const platformFetch = jest.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      workspaceAuthorizationResponse(active),
+  ) as jest.MockedFunction<typeof fetch>;
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+  });
+
+  await lifecycle.hydrate();
+  expect(lifecycle.createWorkspaceGateway()).not.toBeNull();
+  expect(platformFetch).toHaveBeenCalledWith(
+    'https://ops.example.test/api/mobile/platform-v2/authorization',
+    expect.objectContaining({
+      credentials: 'omit',
+      headers: expect.objectContaining({
+        authorization: `Bearer ma_${'c'.repeat(43)}`,
+      }),
+      method: 'GET',
+      redirect: 'error',
+    }),
+  );
+  expect(saveWorkspace).toHaveBeenCalledWith(
+    active,
+    expect.objectContaining({
+      credential_revision: 1n,
+      principal_generation: 1n,
+      project_roots: ['project-mobile'],
+    }),
+    NOW,
+  );
+});
+
+test.each([
+  [
+    'future grant',
+    (value: ScopedConnection) => ({
+      ...withWorkspaceAuthorization(value),
+      workspaceAuthorization: {
+        ...withWorkspaceAuthorization(value).workspaceAuthorization!,
+        issued_at_ms: BigInt(NOW + 1),
+      },
+    }),
+  ],
+  [
+    'mismatched credential',
+    (value: ScopedConnection) => ({
+      ...withWorkspaceAuthorization(value),
+      workspaceAuthorization: {
+        ...withWorkspaceAuthorization(value).workspaceAuthorization!,
+        credential_revision: 2n,
+      },
+    }),
+  ],
+  [
+    'unsorted actions',
+    (value: ScopedConnection) => ({
+      ...withWorkspaceAuthorization(value),
+      workspaceAuthorization: {
+        ...withWorkspaceAuthorization(value).workspaceAuthorization!,
+        actions: [...MOBILE_V2_ACTIONS].reverse(),
+      },
+    }),
+  ],
+])(
+  'refuses a %s before constructing any v2 transport',
+  async (_label, alter) => {
+    const active = alter(connection(issued(1n, 'c', NOW + 900_000)));
+    loadStored.mockResolvedValue({ kind: 'active', connection: active });
+    const platformFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+    const lifecycle = new MobileLifecycleCoordinator({
+      now: () => NOW,
+      fetcher: platformFetch,
+    });
+    await lifecycle.hydrate();
+    expect(() => lifecycle.createWorkspaceGateway()).toThrow(
+      'mobile_v2_authorization_invalid',
+    );
+    expect(platformFetch).not.toHaveBeenCalled();
+  },
+);
+
+test('a Platform v2 authorization refusal also gates the shared lifecycle', async () => {
+  const active = withWorkspaceAuthorization(
+    connection(issued(1n, 'c', NOW + 900_000)),
+  );
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  const platformFetch = jest.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response('', { status: 403 }),
+  ) as jest.MockedFunction<typeof fetch>;
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+  });
+  await lifecycle.hydrate();
+
+  await expect(
+    lifecycle.createWorkspaceGateway()!.negotiate(),
+  ).rejects.toThrow();
+  expect(platformFetch).toHaveBeenCalledWith(
+    'https://ops.example.test/api/platform/v2',
+    expect.objectContaining({ method: 'POST', redirect: 'error' }),
+  );
+  expect(lifecycle.snapshot()).toMatchObject({ phase: 'refresh_required' });
+});
+
+test('an old Platform v2 gateway cannot read a rotated credential', async () => {
+  let clock = NOW;
+  const active = withWorkspaceAuthorization(
+    connection(issued(1n, 'c', NOW + 1)),
+  );
+  const rotatedIssued = issued(2n, 'd', NOW + 900_000);
+  const rotated = connection(rotatedIssued);
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  saveIssued.mockResolvedValue(rotated);
+  const platformFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => clock,
+    fetcher: platformFetch,
+    discover: jest.fn(async () => ({
+      discovery: DISCOVERY,
+      refresh: jest.fn(async () => rotatedIssued),
+      revoke: jest.fn(),
+    })),
+  });
+  await lifecycle.hydrate();
+  const oldGateway = lifecycle.createWorkspaceGateway()!;
+  clock = NOW + 1;
+  await expect(oldGateway.negotiate()).rejects.toThrow();
+  // The old request observes generation replacement immediately; wait for the
+  // shared rotation task before asserting its committed successor.
+  await lifecycle.accessToken();
+  expect(
+    platformFetch.mock.calls.some(
+      ([input]) => String(input) === 'https://ops.example.test/api/platform/v2',
+    ),
+  ).toBe(false);
+  expect(lifecycle.snapshot()).toMatchObject({
+    phase: 'ready',
+    profile: { credentialRevision: '2' },
+  });
+});
+
+test('revocation aborts an in-flight Platform v2 call before any late response can be admitted', async () => {
+  const active = withWorkspaceAuthorization(
+    connection(issued(1n, 'c', NOW + 900_000)),
+  );
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  let fetchStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    fetchStarted = resolve;
+  });
+  const platformFetch = jest.fn(
+    async (_input: RequestInfo | URL, init?: RequestInit) => {
+      fetchStarted();
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          'abort',
+          () => reject(new Error('fetch_aborted')),
+          { once: true },
+        );
+      });
+    },
+  ) as jest.MockedFunction<typeof fetch>;
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+    discover: jest.fn(async () => ({
+      discovery: DISCOVERY,
+      refresh: jest.fn(),
+      revoke: jest.fn(async () => undefined),
+    })),
+  });
+  await lifecycle.hydrate();
+  const oldRequest = lifecycle.createWorkspaceGateway()!.negotiate();
+  await started;
+  await lifecycle.revoke();
+  await expect(oldRequest).rejects.toThrow();
+  expect(lifecycle.snapshot()).toEqual({ phase: 'unpaired', profile: null });
 });
 
 test('one-time pairing pins discovery, exchanges once, and commits the issued pair', async () => {

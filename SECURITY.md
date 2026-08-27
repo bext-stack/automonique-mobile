@@ -24,6 +24,10 @@ first-slice non-goal are reviewed in
 [docs/workspace-companion-threat-model.md](docs/workspace-companion-threat-model.md).
 Workspace visibility never implies host paths, credentials, shell, terminal,
 or repository mutation authority.
+The Platform v2 client is bound to the current credential generation and exact
+HTTPS endpoint. It negotiates before use, requires explicit project roots,
+keeps authority previews memory-only and single-use, and treats submission as a
+refresh obligation rather than local proof of success.
 The Expo SDK 57 native tooling hardens the pinned `xcode@3.0.1` dependency at
 install time: an exact-digest patch replaces its CommonJS `uuid.v4()` call with
 Node's `crypto.randomUUID()`, while npm resolves `uuid@14.0.2`. Installation and

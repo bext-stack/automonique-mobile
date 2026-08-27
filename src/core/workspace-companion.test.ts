@@ -505,7 +505,7 @@ test('task-prefilled intents and authority previews are strict data, not executi
   ).toMatchObject({ executable: false });
   expect(workspaceMutationAvailability()).toEqual({
     enabled: false,
-    reason: 'platform_v2_sdk_and_auth_required',
+    reason: 'server_project_scope_required',
   });
   expect(() =>
     admitWorkspaceIntentRequest({ ...request, shell: 'git status' }),

@@ -12,12 +12,28 @@ import {
   loadStoredConnection,
   revokeLocalCredential,
   saveIssuedConnection,
+  saveWorkspaceAuthorization,
   type ConnectionProfile,
   type ScopedConnection,
 } from './credential-store';
 import { negotiateMobileProtocolVersion } from './negotiation';
 import { createAuthorizedHttpsGateway } from './sdk-gateway';
 import type { MobileAutomoniqueGateway } from './types';
+import {
+  createAuthorizedWorkspaceV2Gateway,
+  type WorkspaceV2Gateway,
+} from './workspace-v2-gateway';
+import {
+  admitDelegatedMobileV2Authorization,
+  MOBILE_V2_AUTHORIZATION_MEDIA_TYPE,
+  mobileV2AuthorizationDigest,
+  mobileV2AuthorizationFingerprint,
+  mobileV2DelegationFamilyDigest,
+} from './mobile-v2-authorization';
+import {
+  createWorkspaceV2ReceiptStore,
+  migrateLegacyWorkspaceV2Receipts,
+} from './workspace-v2-receipt-storage';
 
 export type MobileLifecycleState =
   | { readonly phase: 'loading'; readonly profile: null }
@@ -64,6 +80,134 @@ export interface MobileLifecycleDependencies {
 type Listener = (state: MobileLifecycleState) => void;
 
 const PAIRING_LIFETIME_MS = 5 * 60 * 1_000;
+const MAX_MOBILE_V2_AUTHORIZATION_BYTES = 16 * 1024;
+
+async function readWorkspaceAuthorizationResponse(
+  response: Response,
+): Promise<string> {
+  const declared = response.headers.get('content-length');
+  if (
+    declared !== null &&
+    (!/^[0-9]+$/u.test(declared) ||
+      BigInt(declared) > BigInt(MAX_MOBILE_V2_AUTHORIZATION_BYTES))
+  ) {
+    throw new Error('mobile_v2_authorization_response_too_large');
+  }
+  const reader = response.body?.getReader();
+  if (reader === undefined) {
+    throw new Error('mobile_v2_authorization_response_stream_unavailable');
+  }
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value.byteLength > MAX_MOBILE_V2_AUTHORIZATION_BYTES - length) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error('mobile_v2_authorization_response_too_large');
+      }
+      chunks.push(value);
+      length += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const payload = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    payload.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder('utf-8', { fatal: true }).decode(payload);
+}
+
+async function fetchWorkspaceAuthorization(
+  connection: Pick<
+    ScopedConnection,
+    'profile' | 'accessToken' | 'authorization'
+  >,
+  fetcher: typeof fetch,
+  now: number,
+  signal?: AbortSignal,
+) {
+  const endpoint = `${connection.profile.origin}/api/mobile/platform-v2/authorization`;
+  const response = await fetcher(endpoint, {
+    method: 'GET',
+    credentials: 'omit',
+    headers: {
+      accept: MOBILE_V2_AUTHORIZATION_MEDIA_TYPE,
+      authorization: `Bearer ${connection.accessToken}`,
+    },
+    redirect: 'error',
+    ...(signal === undefined ? {} : { signal }),
+  });
+  if (
+    (typeof response.url === 'string' &&
+      response.url !== '' &&
+      response.url !== endpoint) ||
+    response.headers.get('content-type')?.trim() !==
+      MOBILE_V2_AUTHORIZATION_MEDIA_TYPE ||
+    !response.headers
+      .get('cache-control')
+      ?.split(',')
+      .map((value) => value.trim().toLowerCase())
+      .includes('no-store')
+  ) {
+    throw new Error('mobile_v2_authorization_response_invalid');
+  }
+  const encoded = await readWorkspaceAuthorizationResponse(response);
+  if (response.status === 401 || response.status === 404) return undefined;
+  if (response.status !== 200 || !response.ok) {
+    throw new Error('mobile_v2_authorization_response_refused');
+  }
+  let document: unknown;
+  try {
+    document = JSON.parse(encoded);
+  } catch {
+    throw new Error('mobile_v2_authorization_response_invalid');
+  }
+  if (
+    document === null ||
+    typeof document !== 'object' ||
+    Array.isArray(document) ||
+    JSON.stringify(document) !== encoded
+  ) {
+    throw new Error('mobile_v2_authorization_response_invalid');
+  }
+  const candidate = document as Readonly<Record<string, unknown>>;
+  for (const field of [
+    'credential_revision',
+    'authorization_revision',
+    'principal_generation',
+    'issued_at_ms',
+    'expires_at_ms',
+  ] as const) {
+    const value = candidate[field];
+    if (!Number.isSafeInteger(value) || (value as number) < 0) {
+      throw new Error('mobile_v2_authorization_response_invalid');
+    }
+  }
+  return admitDelegatedMobileV2Authorization(
+    {
+      ...candidate,
+      credential_revision: BigInt(candidate.credential_revision as number),
+      authorization_revision: BigInt(
+        candidate.authorization_revision as number,
+      ),
+      principal_generation: BigInt(candidate.principal_generation as number),
+      issued_at_ms: BigInt(candidate.issued_at_ms as number),
+      expires_at_ms: BigInt(candidate.expires_at_ms as number),
+    },
+    {
+      serverIdentity: connection.authorization.server_identity,
+      credentialId: connection.authorization.credential_id,
+      credentialRevision: connection.authorization.credential_revision,
+      authorizationRevision: connection.authorization.authorization_revision,
+      now,
+    },
+  );
+}
 
 function failureReason(error: unknown): string {
   if (error instanceof MobileLifecycleError) return error.category;
@@ -89,7 +233,34 @@ function gatewayFingerprint(connection: ScopedConnection): string {
     sessionScope: authorization.session_scope,
     maxPageEvents: authorization.limits.max_page_events.toString(),
     maxFollowUpBytes: authorization.limits.max_follow_up_bytes.toString(),
+    workspaceAuthorization:
+      connection.workspaceAuthorization === undefined
+        ? null
+        : mobileV2AuthorizationFingerprint(connection.workspaceAuthorization),
   });
+}
+
+function withoutWorkspaceAuthorization(
+  connection: ScopedConnection,
+): ScopedConnection {
+  const { workspaceAuthorization: _workspaceAuthorization, ...current } =
+    connection;
+  return current;
+}
+
+async function migrateLegacyReceiptCustody(
+  connection: ScopedConnection,
+): Promise<void> {
+  const metadata = connection.workspaceReceiptMigration;
+  const authorization = connection.workspaceAuthorization;
+  if (metadata === undefined && authorization === undefined) return;
+  await migrateLegacyWorkspaceV2Receipts(
+    () => mobileV2DelegationFamilyDigest(metadata ?? authorization!),
+    () =>
+      metadata === undefined
+        ? mobileV2AuthorizationDigest(authorization!)
+        : Promise.resolve(metadata.authorization_digest),
+  );
 }
 
 /**
@@ -245,13 +416,41 @@ export class MobileLifecycleCoordinator {
       this.publish({ phase: 'unpaired', profile: null });
       return this.state;
     }
-    this.connection = stored.connection;
+    let connection = stored.connection;
+    if (
+      stored.kind === 'active' &&
+      connection.workspaceAuthorization === undefined
+    ) {
+      try {
+        // Reauthorization may rotate or replace the delegation. Preserve the
+        // exact old family before accepting its successor.
+        await migrateLegacyReceiptCustody(connection);
+        if (!this.isCurrent(operation.generation)) return this.state;
+        const workspaceAuthorization = await fetchWorkspaceAuthorization(
+          connection,
+          this.fetcher,
+          this.now(),
+          operation.signal,
+        );
+        if (!this.isCurrent(operation.generation)) return this.state;
+        connection = await saveWorkspaceAuthorization(
+          connection,
+          workspaceAuthorization,
+          this.now(),
+        );
+      } catch {
+        // An offline authorization refresh cannot widen persisted authority.
+        // The web bridge reauthorizes the stored generation on every request.
+      }
+    }
+    if (!this.isCurrent(operation.generation)) return this.state;
+    this.connection = connection;
     if (stored.kind === 'active') {
-      this.publishCredentialState(stored.connection);
+      this.publishCredentialState(connection);
     } else {
       this.publish({
         phase: 'refresh_required',
-        profile: stored.connection.profile,
+        profile: connection.profile,
       });
     }
     return this.state;
@@ -302,11 +501,26 @@ export class MobileLifecycleCoordinator {
         operation.signal,
       );
       exchanged = true;
-      const connection = await saveIssuedConnection(
+      let connection = await saveIssuedConnection(
         client.discovery,
         issued,
         this.now(),
       );
+      try {
+        const workspaceAuthorization = await fetchWorkspaceAuthorization(
+          connection,
+          this.fetcher,
+          this.now(),
+          operation.signal,
+        );
+        connection = await saveWorkspaceAuthorization(
+          connection,
+          workspaceAuthorization,
+          this.now(),
+        );
+      } catch {
+        connection = withoutWorkspaceAuthorization(connection);
+      }
       if (!this.isCurrent(operation.generation)) {
         throw new Error('mobile_lifecycle_generation_replaced');
       }
@@ -389,6 +603,91 @@ export class MobileLifecycleCoordinator {
     });
   }
 
+  /**
+   * Construct the generation-scoped Platform v2 companion boundary. Project
+   * roots are deliberately not inferred from the v1 session authorization;
+   * callers must obtain an exact root from a future server-issued mobile grant.
+   */
+  createWorkspaceGateway(): WorkspaceV2Gateway | null {
+    if (this.connection === null) throw new Error('mobile_pairing_required');
+    const connection = this.connection;
+    if (connection.workspaceAuthorization === undefined) return null;
+    const workspaceAuthorization = admitDelegatedMobileV2Authorization(
+      connection.workspaceAuthorization,
+      {
+        serverIdentity: connection.authorization.server_identity,
+        credentialId: connection.authorization.credential_id,
+        credentialRevision: connection.authorization.credential_revision,
+        authorizationRevision: connection.authorization.authorization_revision,
+        now: this.now(),
+      },
+    );
+    const expectedFingerprint = gatewayFingerprint(connection);
+    const generation = this.generation;
+    const generationSignal = this.activeController?.signal;
+    if (this.state.phase !== 'ready' || generationSignal === undefined) {
+      throw new Error('mobile_credential_unavailable');
+    }
+    const endpoint = new URL(connection.profile.platformEndpoint);
+    endpoint.pathname = '/api/platform/v2';
+    endpoint.search = '';
+    endpoint.hash = '';
+    const lifecycleFetcher: typeof fetch = async (input, init) => {
+      const response = await this.fetcher(input, init);
+      if (
+        (response.status === 401 ||
+          response.status === 403 ||
+          response.status === 410) &&
+        this.connection !== null &&
+        gatewayFingerprint(this.connection) === expectedFingerprint
+      ) {
+        this.clearExpiryTimer();
+        this.activeController?.abort();
+        this.publish({
+          phase: 'refresh_required',
+          profile: this.connection.profile,
+        });
+      }
+      return response;
+    };
+    return createAuthorizedWorkspaceV2Gateway({
+      authorization: workspaceAuthorization,
+      endpoint: endpoint.toString(),
+      fetcher: lifecycleFetcher,
+      now: this.now,
+      operationGuard: {
+        signal: generationSignal,
+        admit: () => {
+          if (
+            generationSignal.aborted ||
+            this.state.phase !== 'ready' ||
+            this.replacementPending > 0 ||
+            this.connection !== connection ||
+            this.generation !== generation ||
+            gatewayFingerprint(connection) !== expectedFingerprint ||
+            workspaceAuthorization.expires_at_ms <= BigInt(this.now())
+          ) {
+            throw new Error('gateway_generation_replaced');
+          }
+        },
+      },
+      receiptStore: createWorkspaceV2ReceiptStore(
+        () => mobileV2DelegationFamilyDigest(workspaceAuthorization),
+        () => mobileV2AuthorizationDigest(workspaceAuthorization),
+      ),
+      token: async () => {
+        const token = await this.accessToken();
+        if (
+          this.connection === null ||
+          gatewayFingerprint(this.connection) !== expectedFingerprint
+        ) {
+          throw new Error('gateway_generation_replaced');
+        }
+        return token;
+      },
+    });
+  }
+
   async refresh(): Promise<ScopedConnection> {
     if (this.refreshInFlight !== null) return this.refreshInFlight;
     const task = this.exclusive(() => this.refreshExclusive());
@@ -406,6 +705,19 @@ export class MobileLifecycleCoordinator {
     const operation = this.replaceGeneration();
     this.publish({ phase: 'refreshing', profile: current.profile });
     try {
+      // The legacy receipt namespace used the complete authorization digest,
+      // which changes on rotation. Migrate it while the old secure generation
+      // is still admitted and can identify its exact stable delegation family.
+      // No unrelated Async Storage keys are enumerated or adopted.
+      if (
+        current.workspaceReceiptMigration !== undefined ||
+        current.workspaceAuthorization !== undefined
+      ) {
+        await migrateLegacyReceiptCustody(current);
+        if (!this.isCurrent(operation.generation)) {
+          throw new Error('mobile_lifecycle_generation_replaced');
+        }
+      }
       const client = await this.discover(
         current.profile.origin,
         this.fetcher,
@@ -424,6 +736,21 @@ export class MobileLifecycleCoordinator {
           this.now(),
           current,
         );
+        try {
+          const workspaceAuthorization = await fetchWorkspaceAuthorization(
+            rotated,
+            this.fetcher,
+            this.now(),
+            operation.signal,
+          );
+          rotated = await saveWorkspaceAuthorization(
+            rotated,
+            workspaceAuthorization,
+            this.now(),
+          );
+        } catch {
+          rotated = withoutWorkspaceAuthorization(rotated);
+        }
       } catch (error) {
         // The server consumed the previous refresh token. If the local commit
         // is uncertain, replaying it could revoke the entire successor family.

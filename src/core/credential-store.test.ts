@@ -17,6 +17,7 @@ import {
   MobileRevision,
   MobileServerIdentity,
   MobileSessionId,
+  ProjectId,
   type IssuedMobileCredentials,
   type MobileDiscovery,
 } from '@automonique/sdk';
@@ -25,7 +26,13 @@ import {
   loadStoredConnection,
   revokeLocalCredential,
   saveIssuedConnection,
+  saveWorkspaceAuthorization,
 } from './credential-store';
+import {
+  MOBILE_V2_ACTIONS,
+  MOBILE_V2_AUTHORIZATION_SCHEMA,
+  type DelegatedMobileV2Authorization,
+} from './mobile-v2-authorization';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   jest.requireActual(
@@ -39,6 +46,15 @@ jest.mock('expo-secure-store', () => ({
   isAvailableAsync: jest.fn(),
   setItemAsync: jest.fn(),
 }));
+jest.mock('expo-crypto', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const crypto = require('node:crypto') as typeof import('node:crypto');
+  return {
+    CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+    digestStringAsync: async (_algorithm: string, value: string) =>
+      crypto.createHash('sha256').update(value).digest('hex'),
+  };
+});
 
 const secureStore = jest.mocked(SecureStore);
 const storage = jest.mocked(AsyncStorage);
@@ -92,6 +108,24 @@ function issued(
   };
 }
 
+function workspaceAuthorization(revision = 1n): DelegatedMobileV2Authorization {
+  return {
+    schema: MOBILE_V2_AUTHORIZATION_SCHEMA,
+    server_identity: IDENTITY,
+    credential_id: CREDENTIAL_ID,
+    credential_revision: revision,
+    authorization_revision: 1n,
+    principal_generation: revision,
+    delegation_id: `md_${'e'.repeat(43)}`,
+    tenant_id: 'tenant-mobile',
+    actor_id: 'operator-1',
+    issued_at_ms: BigInt(NOW),
+    expires_at_ms: BigInt(NOW + 900_000),
+    project_roots: [ProjectId('project-mobile')],
+    actions: MOBILE_V2_ACTIONS,
+  };
+}
+
 let secureValue: string | null;
 
 beforeEach(async () => {
@@ -137,6 +171,117 @@ test('retains an expired access generation for refresh', async () => {
     connection: { profile: { credentialId: CREDENTIAL_ID } },
   });
   expect(secureValue).not.toBeNull();
+});
+
+test('cold reload retains only receipt migration metadata when both grants expire', async () => {
+  const connection = await saveIssuedConnection(
+    DISCOVERY,
+    issued(NOW + 1),
+    NOW,
+  );
+  await saveWorkspaceAuthorization(
+    connection,
+    { ...workspaceAuthorization(), expires_at_ms: BigInt(NOW + 1) },
+    NOW,
+  );
+  const previous = JSON.parse(secureValue!) as Record<string, unknown>;
+  previous.schema = 'automonique.mobile.scoped-credential/v4';
+  delete previous.workspaceReceiptMigration;
+  secureValue = JSON.stringify(previous);
+
+  await expect(loadStoredConnection(NOW + 1)).resolves.toMatchObject({
+    kind: 'refresh_required',
+    connection: {
+      refreshToken: `mr_${'d'.repeat(43)}`,
+      workspaceReceiptMigration: {
+        schema: 'automonique.mobile-platform-v2-receipt-migration/v1',
+        server_identity: IDENTITY,
+        credential_id: CREDENTIAL_ID,
+        delegation_id: `md_${'e'.repeat(43)}`,
+        authorization_digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+      },
+    },
+  });
+  const loaded = await loadStoredConnection(NOW + 1);
+  expect(loaded?.connection.workspaceAuthorization).toBeUndefined();
+  expect(secureValue).not.toBeNull();
+  expect(JSON.parse(secureValue!)).toMatchObject({
+    schema: 'automonique.mobile.scoped-credential/v5',
+    workspaceAuthorization: null,
+    workspaceReceiptMigration: {
+      delegation_id: `md_${'e'.repeat(43)}`,
+    },
+  });
+});
+
+test('discards malformed optional v2 state without erasing the refresh credential', async () => {
+  const connection = await saveIssuedConnection(DISCOVERY, issued(), NOW);
+  await saveWorkspaceAuthorization(connection, workspaceAuthorization(), NOW);
+  const privateValue = JSON.parse(secureValue!) as Record<string, unknown>;
+  privateValue.workspaceAuthorization = {
+    ...(privateValue.workspaceAuthorization as Record<string, unknown>),
+    credential_id: `mc_${'f'.repeat(43)}`,
+  };
+  secureValue = JSON.stringify(privateValue);
+
+  const loaded = await loadStoredConnection(NOW);
+  expect(loaded).toMatchObject({
+    kind: 'active',
+    connection: { refreshToken: `mr_${'d'.repeat(43)}` },
+  });
+  expect(loaded?.connection.workspaceAuthorization).toBeUndefined();
+  expect(loaded?.connection.workspaceReceiptMigration).toBeUndefined();
+  expect(secureValue).not.toBeNull();
+  expect(JSON.parse(secureValue!)).toMatchObject({
+    schema: 'automonique.mobile.scoped-credential/v5',
+    workspaceAuthorization: null,
+    workspaceReceiptMigration: null,
+  });
+  expect(secureStore.deleteItemAsync).not.toHaveBeenCalled();
+});
+
+test('persists and reloads only an exactly admitted server-issued v2 grant', async () => {
+  const connection = await saveIssuedConnection(DISCOVERY, issued(), NOW);
+  await saveWorkspaceAuthorization(connection, workspaceAuthorization(), NOW);
+  await expect(loadStoredConnection(NOW)).resolves.toMatchObject({
+    kind: 'active',
+    connection: {
+      workspaceAuthorization: {
+        credential_id: CREDENTIAL_ID,
+        credential_revision: 1n,
+        principal_generation: 1n,
+        project_roots: ['project-mobile'],
+      },
+    },
+  });
+  expect(secureValue).toContain('workspaceAuthorization');
+  expect(
+    await AsyncStorage.getItem('automonique.mobile.connection-profile.v3'),
+  ).not.toContain('project-mobile');
+
+  await expect(
+    saveWorkspaceAuthorization(
+      connection,
+      { ...workspaceAuthorization(), credential_revision: 2n },
+      NOW,
+    ),
+  ).rejects.toThrow('mobile_v2_authorization_invalid');
+});
+
+test('loads the exact legacy v3 secure generation without inventing a v2 grant', async () => {
+  await saveIssuedConnection(DISCOVERY, issued(), NOW);
+  const legacy = JSON.parse(secureValue!) as Record<string, unknown>;
+  legacy.schema = 'automonique.mobile.scoped-credential/v3';
+  delete legacy.workspaceAuthorization;
+  delete legacy.workspaceReceiptMigration;
+  secureValue = JSON.stringify(legacy);
+
+  await expect(loadStoredConnection(NOW)).resolves.toMatchObject({
+    kind: 'active',
+    connection: { profile: { credentialId: CREDENTIAL_ID } },
+  });
+  const loaded = await loadStoredConnection(NOW);
+  expect(loaded?.connection.workspaceAuthorization).toBeUndefined();
 });
 
 test('rotation requires the same credential and commits its new revision', async () => {

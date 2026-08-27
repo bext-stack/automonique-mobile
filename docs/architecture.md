@@ -4,18 +4,26 @@ Automonique Mobile is a presentation client, not an execution node. The server
 owns identity, authority, policy, execution, canonical history, and mutation
 outcomes.
 
-The workspace-companion foundation adds a second, SDK-independent read model
+The workspace-companion foundation adds a second, strictly admitted read model
 for multiple authorized server identities. Its strict admission layer binds
 hosts, projects, workspaces, attempts, retained sessions, and navigation grants
 to one server profile. Cached profiles reopen stale and retain only
-`workspace_read`; typed create/resume requests and authority previews are inert
-seams until Platform v2 SDK/auth support lands. Exact request coordinates are
-echoed by each preview. Persisted authorization tombstones pin omitted or
+`workspace_read`. The canonical Platform v2 SDK is now vendored and the
+production lifecycle constructs a generation-scoped authenticated v2 gateway.
+It negotiates v2 before reads, consumes exact project-root queries, exposes
+typed lineage and read-only review snapshots, and performs create/resume only
+through an ephemeral server preview and a separate confirmation. Persisted
+authorization tombstones pin omitted or
 revoked identities to their tenant, origin, and last authorization revision.
 Bounded per-object revision tombstones also retain workspace, attempt, and
 session rollback fences across omission; reintroduction must advance the exact
 object revision.
-The production provider does not construct or execute a workspace mutation.
+The provider does not infer project roots or v2 actions from the v1 session
+scope. It reads the dedicated server-issued delegated bearer principal with
+exact roots, per-action grants, identity/revisions, generation, and expiry,
+then persists only the strictly admitted document with the secure credential
+generation. A missing or invalid document disables the workspace gateway.
+Production UI/cache integration and live acceptance remain distinct work.
 
 ## System boundary
 
@@ -35,6 +43,10 @@ ProductionMobileProvider / MobileProvider
    │                                    ▼
    │                              Automonique server
    │
+   ├── WorkspaceV2Gateway ───────── @automonique/sdk Platform v2 over HTTPS
+   │       negotiated reads, lineage, review reads, typed lifecycle preview,
+   │       explicit confirm/deny, and exact lineage cancellation
+   │
    ├── bounded read cache and reconciliation handles ── Async Storage
    ├── endpoint/profile metadata and message drafts ─── Async Storage
    └── scoped mobile credential ──────────────────────── OS Secure Store
@@ -47,6 +59,37 @@ method in the mobile gateway. Runtime SDK imports are confined to core
 protocol-boundary modules: the adapter, protocol metadata, shared type
 vocabulary, and persistence admission. Screens and the provider never receive
 Platform transport or raw execution primitives.
+
+The v2 gateway is recreated with every credential generation. Its credential
+provider rechecks the original authorization fingerprint after asynchronous
+refresh, and 401/403/410 responses move the process-wide lifecycle to
+`refresh_required`. Prepared lifecycle previews are held only in memory and
+are single-use; app reload, credential replacement, expiry, denial, or replay
+cannot submit them. Before submit, mobile persists only a bounded receipt
+lookup handle carrying a fixed SHA-256 digest of the principal—never the
+principal grant, preview, intent, authority, or an outbox. A bounded
+non-authority index is keyed by a stable digest of server identity, credential
+ID, and delegation ID, so exact old-generation handles remain discoverable
+after a same-delegation token rotation while the current live grant remains the
+only authority. A regrant changes the delegation family, making prior handles
+invisible; current project roots also filter every recovery listing and lookup.
+Before remote credential rotation, the lifecycle uses the still-admitted old
+secure grant to migrate only its exact legacy full-authorization-digest key
+into that exact old delegation family; it never enumerates or adopts another
+credential or delegation's keys. The stable copy commits before the legacy copy
+is removed, making an interrupted migration idempotently recoverable. On a
+cold reload after expiry, the secure generation retains only a fixed
+server-identity, credential-ID, delegation-ID, and authorization-digest
+migration record. The expired grant is not returned as authority and cannot
+construct a gateway, while the primary refresh token remains available. A
+malformed optional grant or migration record is discarded without erasing an
+otherwise valid primary credential.
+Canonical receipts
+must match the exact project-bound
+handle, preview, digests, idempotency key, approval, and resulting revision.
+Accepted or transport-lost submissions remain explicitly reconcilable across
+reload without replay, and settled receipts require an authoritative
+projection refresh.
 
 The synthetic and SDK gateways implement the same interface. Synthetic data
 must pass through gateway bootstrap, attachment, cursor reduction, mutation,
@@ -180,6 +223,7 @@ mobile actions in the first slice.
 | Data                                     | Store                 | Ceiling/lifetime                                                 | Rule                                                           |
 | ---------------------------------------- | --------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
 | Scoped access and refresh credentials    | OS Secure Store       | Server expiry/rotation/revocation                                | Never Async Storage; pairing proof is never persisted          |
+| v2 receipt migration coordinates         | OS Secure Store       | Current/expired credential family; fixed digest only             | Non-authority; cannot construct a gateway or mutation          |
 | Endpoint, actor, expiry, server identity | Async Storage profile | One active profile                                               | Metadata only; endpoint must pass HTTPS policy                 |
 | Endpoint draft                           | Async Storage         | One draft; 2 KiB                                                 | Re-admitted on load; validation makes no network call          |
 | Read projection                          | Async Storage         | 256 KiB; 100 sessions; 1,000 events; 100 approvals; 200 receipts | Schema-admitted and always restored stale/read-only            |
@@ -240,16 +284,13 @@ a server. Both rules are stated in [decisions.md](decisions.md) and covered by
 `src/core/negotiation.test.ts`, `src/core/server-connection.test.ts` and
 `src/core/mobile-lifecycle.test.ts`.
 
-The negotiation this repository performs is currently narrower in effect than
-it is in statement, because the canonical SDK's `MobileLifecycleClient.discover`
-refuses a discovery document that does not advertise exactly `[1]`, and the
-generated `MobileProtocolVersion` domain is bounded to `1..1`, while the wire
-schema already allows up to `MAX_MOBILE_PROTOCOL_VERSIONS` (8) entries. Until
-the canonical SDK widens both, a server advertising `[1, 2]` is refused inside
-the SDK before this repository's rule is reached. The rule is written and tested
-here so that widening the canonical bound is the only change needed.
-[Automonique #149](https://github.com/bext-stack/automonique/issues/149) tracks
-that widening.
+The re-vendored canonical SDK completes the multi-version discovery work from
+[Automonique #149](https://github.com/bext-stack/automonique/issues/149).
+`MobileLifecycleClient.discover` now admits bounded ordered advertisements and
+the generated mobile protocol domain supports versions 1 through 2. Mobile
+selects the highest shared version and ignores versions above this build's
+ceiling; an empty, repeated, malformed, or non-overlapping offer still fails
+closed.
 
 The server contracts and production composition root are implemented and
 verified by automated Rust-to-TypeScript, mobile, and bundle gates. An

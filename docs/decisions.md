@@ -24,9 +24,14 @@ Repository and branch values are display labels, never local paths or an
 invitation to infer Git operations. External work-item status and Automonique
 orchestration status remain separate typed values.
 
-Create/resume requests and authority previews are data-only protocol seams
-until canonical Platform v2 SDK/auth support exists. A preview echoes the exact
-admitted request coordinates rather than relying on an idempotency key alone.
+Create/resume uses the canonical Platform v2 lifecycle client. A server preview
+echoes the exact admitted request, parent revisions, inherited ceiling,
+effective authority, expiry, and idempotency key. It remains ephemeral and
+single-use; a distinct confirmation action is required, and a submit outcome
+forces an authoritative refresh instead of manufacturing local success.
+Task-prefilled create/resume and cancellation use the typed lineage intent
+surface. Cancellation names the exact project, workspace, durable revision,
+new intent ID, and target intent ID.
 Deep links use a finite internal destination vocabulary and exact workspace
 and retained-session revisions. Server omission or revocation persists a
 bounded identity/tenant/origin/authorization-revision tombstone.
@@ -35,6 +40,16 @@ tombstones, so a later equal or older object cannot bypass rollback detection.
 Terminal requires both a workspace navigation grant and a separate live
 `terminal_relay` actor action; neither workspace visibility nor cached
 authority can supply it.
+
+Platform v2 inventory queries require an exact project root and every operation
+requires its own v2 action. A dedicated versioned server response binds the
+mobile bearer to server-owned tenant/actor, server and credential identity,
+revisions, generation, expiry, sorted project roots, and sorted per-operation
+actions. The credential lifecycle admits and stores that response in the
+secure generation and refreshes it after token rotation. Mobile never converts
+a bearer into Basic. Missing, malformed, stale, or ungranted responses leave
+the workspace gateway unavailable; production UI/cache integration and live
+acceptance remain independent work.
 
 ## Exact decimal revisions
 
@@ -94,9 +109,9 @@ example: it moved the digest from `sha256:3e58e47e…` to `sha256:183a1131…`
 while `platform.ts` and `mobile-auth.ts`, the only generated modules the mobile
 client uses, stayed byte-identical.
 
-Automonique #149 tracks widening the canonical SDK so a server may advertise
-more than one version; until then the SDK refuses such a document before this
-app's rule is reached.
+Automonique #149 widened the canonical SDK so a server may advertise multiple
+bounded versions. This archive supports mobile protocol versions 1 through 2
+and selects the highest shared version without using schema-digest equality.
 
 The consequence is deliberate: a server change does not require a mobile
 re-vendor and a new build. A re-vendor is required when the mobile protocol

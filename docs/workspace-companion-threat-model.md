@@ -34,18 +34,18 @@ Drafts remain inert data. Authority previews are never cached.
 
 ## Expansion decisions
 
-| Expansion beyond the original non-goals                                                            | Decision                                                                                       | Required control                                                                                                                                                                                                          |
-| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Multi-server cockpit                                                                               | Approved for bounded reads                                                                     | At most eight profiles; each exact, scoped, revocable server identity is admitted independently. No ambient host discovery.                                                                                               |
-| Host, project, task, workspace, attempt, branch, repository, freshness, and attention presentation | Approved for sanitized reads                                                                   | Strict DTO keys, ceilings, referential scope checks, HTTPS-only repository links, and no host path or credential field.                                                                                                   |
-| External task integration                                                                          | Approved for display and task prefill                                                          | External work-item status is a separate type and field from Automonique orchestration state. It grants no host/workspace authority.                                                                                       |
-| Workspace creation and resume                                                                      | Approved only as typed request drafts and server authority previews                            | The preview echoes the exact admitted request coordinates. Production mutation remains disabled until the canonical Platform v2 SDK and scoped auth expose the exact action. No generic execute method or offline outbox. |
-| Deep links to retained chat, files, preview, and source control                                    | Approved for explicitly granted exact workspace revisions                                      | Retained chat also binds the exact session revision. Routes are internal typed destinations, not arbitrary URLs or filesystem paths. Cached routes are read-only.                                                         |
-| Terminal relay                                                                                     | Refused by workspace visibility; conditionally approvable in a separate risk-reviewed delivery | Requires an exact workspace navigation grant, active live profile, and separate `terminal_relay` actor action. No terminal transport is implemented here.                                                                 |
-| Attachments and audio uploads                                                                      | Refused in this issue                                                                          | Separate data-retention, content-scanning, size, privacy, and transport review required.                                                                                                                                  |
-| Dictation as capability expansion                                                                  | Refused                                                                                        | Existing on-device dictation may edit text locally only; it does not add an upload or action.                                                                                                                             |
-| Background mutation or offline queue                                                               | Refused                                                                                        | Connectivity loss disables mutations. Draft restoration never submits work.                                                                                                                                               |
-| Shell, repository mutation, provider credentials, routing, or privileged tools                     | Refused                                                                                        | These capabilities cannot be represented or inferred by the mobile workspace model.                                                                                                                                       |
+| Expansion beyond the original non-goals                                                            | Decision                                                                                       | Required control                                                                                                                                                                                   |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Multi-server cockpit                                                                               | Approved for bounded reads                                                                     | At most eight profiles; each exact, scoped, revocable server identity is admitted independently. No ambient host discovery.                                                                        |
+| Host, project, task, workspace, attempt, branch, repository, freshness, and attention presentation | Approved for sanitized reads                                                                   | Strict DTO keys, ceilings, referential scope checks, HTTPS-only repository links, and no host path or credential field.                                                                            |
+| External task integration                                                                          | Approved for display and task prefill                                                          | External work-item status is a separate type and field from Automonique orchestration state. It grants no host/workspace authority.                                                                |
+| Workspace creation and resume                                                                      | Approved through typed task intents or an ephemeral lifecycle preview                          | The canonical v2 SDK binds exact request coordinates, revisions, authority ceiling, expiry, and idempotency. Confirmation is separate and single-use. No generic execute method or offline outbox. |
+| Deep links to retained chat, files, preview, and source control                                    | Approved for explicitly granted exact workspace revisions                                      | Retained chat also binds the exact session revision. Routes are internal typed destinations, not arbitrary URLs or filesystem paths. Cached routes are read-only.                                  |
+| Terminal relay                                                                                     | Refused by workspace visibility; conditionally approvable in a separate risk-reviewed delivery | Requires an exact workspace navigation grant, active live profile, and separate `terminal_relay` actor action. No terminal transport is implemented here.                                          |
+| Attachments and audio uploads                                                                      | Refused in this issue                                                                          | Separate data-retention, content-scanning, size, privacy, and transport review required.                                                                                                           |
+| Dictation as capability expansion                                                                  | Refused                                                                                        | Existing on-device dictation may edit text locally only; it does not add an upload or action.                                                                                                      |
+| Background mutation or offline queue                                                               | Refused                                                                                        | Connectivity loss disables mutations. Draft restoration never submits work.                                                                                                                        |
+| Shell, repository mutation, provider credentials, routing, or privileged tools                     | Refused                                                                                        | These capabilities cannot be represented or inferred by the mobile workspace model.                                                                                                                |
 
 ## Abuse cases and fail-closed outcomes
 
@@ -67,11 +67,31 @@ Drafts remain inert data. Authority previews are never cached.
   caches are rejected or deterministically bounded.
 - A cached or offline profile cannot recover mutation authority from its prior
   live state.
+- Durable v2 receipt lookup handles contain only a fixed SHA-256 principal
+  binding and exact receipt coordinates. A bounded non-authority index uses a
+  stable server-identity/credential-ID/delegation-ID digest to retain handles
+  across same-delegation token rotation. A regrant changes that family, so
+  prior-delegation handles are neither listed nor queried; current action and
+  project grants filter every recovery surface. Legacy authorization-digest
+  handles are migrated before remote rotation using only the exact old admitted
+  secure grant and into only its old delegation family; no cross-family key scan
+  is permitted. If the app cold-starts after expiry, only fixed receipt-migration
+  coordinates survive beside the refresh credential; the expired authority is
+  withheld from the gateway. Malformed optional migration state is discarded
+  without destroying an otherwise valid refresh path. Project roots, action
+  grants, tenant and actor metadata,
+  previews, intents, and replayable payloads are excluded; the complete encoded
+  set is capped at 16 KiB.
 
 ## Deferred evidence
 
-This foundation contains no production workspace transport and does not
-re-vendor the SDK. End-to-end create/resume, live multi-server discovery,
-terminal relay, and device acceptance remain blocked on the canonical Platform
-v2 SDK/auth contract and separately approved runtime work. Fixture tests prove
-admission, reduction, presentation, navigation, and cache behavior only.
+The production lifecycle now constructs the re-vendored canonical Platform v2
+gateway and its authenticated, generation-fenced transport. Automated tests
+cover negotiation, bounded paging, refusal/downgrade/resync, malformed and
+future grants, authorization loss and generation races, preview
+expiry/replay/app reload, exact approval decisions, durable receipt lookup
+without replay, generation-fenced local persistence, explicit confirmation,
+project ancestry, exact lineage cancellation, dedicated bearer-grant
+admission/persistence, and receipt discovery across rotation. Production
+multi-server UI/cache integration is not complete and live acceptance has not
+run. Terminal relay and device evidence remain separate work.
