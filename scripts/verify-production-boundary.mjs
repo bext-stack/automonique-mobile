@@ -10,6 +10,9 @@ const forbidden = [
   'syntheticSnapshot',
   '@/core/mock-gateway',
   '@/core/fixtures',
+  '@/core/workspace-fixtures',
+  'workspace-fixtures',
+  'workspaceCompanionFixture',
 ];
 
 const sourceExtensions = ['', '.ts', '.tsx', '.js', '.jsx'];

@@ -98,6 +98,7 @@ test('deep links bind server, workspace revision and retained session', () => {
       workspaceRevision: decimalRevision('12'),
       destination: 'chat',
       sessionId: 'session-34',
+      sessionRevision: decimalRevision('9'),
     }),
   ).toEqual({
     pathname: '/workspace/[server]/[workspace]/session/[session]',
@@ -107,6 +108,7 @@ test('deep links bind server, workspace revision and retained session', () => {
       revision: '12',
       destination: 'chat',
       session: 'session-34',
+      session_revision: '9',
     },
     readOnly: true,
   });
@@ -118,6 +120,18 @@ test('deep links bind server, workspace revision and retained session', () => {
       workspaceRevision: decimalRevision('11'),
       destination: 'chat',
       sessionId: 'session-34',
+      sessionRevision: decimalRevision('9'),
+    }),
+  ).toThrow('workspace_navigation_not_authorized');
+
+  expect(() =>
+    admitWorkspaceDeepLink(workspaceCompanionFixture, {
+      serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      workspaceId: 'workspace-34',
+      workspaceRevision: decimalRevision('12'),
+      destination: 'chat',
+      sessionId: 'session-34',
+      sessionRevision: decimalRevision('8'),
     }),
   ).toThrow('workspace_navigation_not_authorized');
 });
@@ -137,6 +151,84 @@ test('replacement reduction rejects revision rollback and strips live authority'
     authorization: 'cached',
     actions: ['workspace_read'],
   });
+});
+
+test('server identity pins tenant and origin across replacements', () => {
+  for (const mutate of [
+    (server: Record<string, unknown>) => {
+      server.origin = 'https://other.example.test';
+    },
+    (server: Record<string, unknown>) => {
+      server.tenantId = 'tenant-other';
+    },
+  ]) {
+    const replacement = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+    replacement.generatedAt = '2026-08-27T10:01:00Z';
+    replacement.servers[0].authorizationRevision = '9';
+    mutate(replacement.servers[0]);
+    expect(
+      reduceWorkspaceCompanionCatalog(workspaceCompanionFixture, replacement)
+        .resyncRequired,
+    ).toBe(true);
+  }
+});
+
+test('server omission leaves a durable tombstone and reactivation needs a newer authorization', () => {
+  const omitted = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  omitted.generatedAt = '2026-08-27T10:01:00Z';
+  omitted.selectedServerIdentity = null;
+  omitted.servers = [];
+  const removal = reduceWorkspaceCompanionCatalog(
+    workspaceCompanionFixture,
+    omitted,
+  );
+
+  expect(removal.resyncRequired).toBe(false);
+  expect(removal.catalog.serverTombstones).toEqual([
+    {
+      serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      origin: 'https://ops.example.test',
+      tenantId: 'tenant-delivery',
+      authorizationRevision: '8',
+    },
+  ]);
+
+  const replay = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  replay.generatedAt = '2026-08-27T10:02:00Z';
+  replay.serverTombstones = [];
+  expect(
+    reduceWorkspaceCompanionCatalog(removal.catalog, replay).resyncRequired,
+  ).toBe(true);
+
+  replay.servers[0].authorizationRevision = '9';
+  const reauthorized = reduceWorkspaceCompanionCatalog(removal.catalog, replay);
+  expect(reauthorized.resyncRequired).toBe(false);
+  expect(reauthorized.catalog.serverTombstones).toEqual([]);
+});
+
+test('replacement reduction fences attempt and retained-session rollback', () => {
+  for (const mutate of [
+    (workspace: {
+      attempt: { revision: string };
+      sessions: { revision: string }[];
+    }) => {
+      workspace.attempt.revision = '3';
+    },
+    (workspace: {
+      attempt: { revision: string };
+      sessions: { revision: string }[];
+    }) => {
+      workspace.sessions[0]!.revision = '8';
+    },
+  ]) {
+    const replacement = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+    replacement.generatedAt = '2026-08-27T10:01:00Z';
+    mutate(replacement.servers[0].workspaces[0]);
+    expect(
+      reduceWorkspaceCompanionCatalog(workspaceCompanionFixture, replacement)
+        .resyncRequired,
+    ).toBe(true);
+  }
 });
 
 test('workspace visibility never infers terminal authority', () => {
@@ -160,6 +252,7 @@ test('workspace visibility never infers terminal authority', () => {
       workspaceRevision: decimalRevision('12'),
       destination: 'terminal',
       sessionId: null,
+      sessionRevision: null,
     }),
   ).toThrow('workspace_terminal_not_authorized');
 });
@@ -186,6 +279,7 @@ test('terminal navigation requires both an exact grant and separate live action'
       workspaceRevision: decimalRevision('12'),
       destination: 'terminal',
       sessionId: null,
+      sessionRevision: null,
     }),
   ).toMatchObject({ readOnly: false });
 
@@ -198,6 +292,7 @@ test('terminal navigation requires both an exact grant and separate live action'
         workspaceRevision: decimalRevision('12'),
         destination: 'terminal',
         sessionId: null,
+        sessionRevision: null,
       },
     ),
   ).toThrow('workspace_terminal_not_authorized');
@@ -217,6 +312,7 @@ test('task-prefilled intents and authority previews are strict data, not executi
     action: 'create',
     serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
     requestIdempotencyKey: 'mobile-workspace-34',
+    request,
     authorityRevision: '8',
     summary: ['May create one workspace on Paris builder'],
     expiresAt: '2026-08-27T10:05:00Z',
@@ -239,6 +335,18 @@ test('task-prefilled intents and authority previews are strict data, not executi
   expect(() =>
     admitWorkspaceIntentRequest({ ...request, shell: 'git status' }),
   ).toThrow('workspace_companion_invalid');
+  if (request.kind !== 'create') throw new Error('expected_create_request');
+  expect(() =>
+    bindWorkspaceIntentPreview(
+      workspaceCompanionFixture,
+      {
+        ...request,
+        task: { ...request.task, title: 'Different exact request' },
+      },
+      preview,
+      Date.parse('2026-08-27T10:00:00Z'),
+    ),
+  ).toThrow('workspace_intent_preview_not_authorized');
 });
 
 test('intent previews bind exact live scope and expiry', () => {
@@ -248,6 +356,7 @@ test('intent previews bind exact live scope and expiry', () => {
     workspaceId: 'workspace-34',
     workspaceRevision: '12',
     sessionId: 'session-34',
+    sessionRevision: '9',
     idempotencyKey: 'resume-34',
   });
   const preview = admitWorkspaceAuthorityPreview({
@@ -255,6 +364,7 @@ test('intent previews bind exact live scope and expiry', () => {
     action: 'resume',
     serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
     requestIdempotencyKey: 'resume-34',
+    request,
     authorityRevision: '8',
     summary: ['May resume session-34'],
     expiresAt: '2026-08-27T10:05:00Z',

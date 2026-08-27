@@ -3,6 +3,7 @@
 import {
   MAX_WORKSPACE_HOSTS,
   MAX_WORKSPACE_PROJECTS,
+  MAX_WORKSPACE_SERVER_TOMBSTONES,
   MAX_WORKSPACE_SERVERS,
   MAX_WORKSPACE_SESSIONS,
   MAX_WORKSPACES,
@@ -28,6 +29,10 @@ function boundCatalog(
   let remainingSessions = MAX_WORKSPACE_SESSIONS;
   return {
     ...catalog,
+    serverTombstones: catalog.serverTombstones.slice(
+      0,
+      MAX_WORKSPACE_SERVER_TOMBSTONES,
+    ),
     servers: catalog.servers.slice(0, MAX_WORKSPACE_SERVERS).map((server) => ({
       ...server,
       hosts: server.hosts.slice(0, MAX_WORKSPACE_HOSTS),

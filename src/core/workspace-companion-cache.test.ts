@@ -57,3 +57,28 @@ test('cache rejects authority previews, unknown fields, and oversized input', ()
     ),
   ).toThrow('workspace_companion_cache_too_large');
 });
+
+test('cache preserves server authorization tombstones across restart', () => {
+  const encoded = encodeWorkspaceCompanionCache({
+    schema: 'automonique.mobile-workspace-cache/v1',
+    catalog: {
+      ...workspaceCompanionFixture,
+      selectedServerIdentity: null,
+      servers: [],
+      serverTombstones: [
+        {
+          serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+          origin: 'https://ops.example.test',
+          tenantId: 'tenant-delivery',
+          authorizationRevision:
+            workspaceCompanionFixture.servers[0]!.authorizationRevision,
+        },
+      ],
+    },
+    intentDrafts: [],
+  });
+
+  expect(
+    decodeWorkspaceCompanionCache(encoded).catalog.serverTombstones,
+  ).toHaveLength(1);
+});

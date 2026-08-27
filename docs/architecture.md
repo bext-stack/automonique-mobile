@@ -9,8 +9,10 @@ for multiple authorized server identities. Its strict admission layer binds
 hosts, projects, workspaces, attempts, retained sessions, and navigation grants
 to one server profile. Cached profiles reopen stale and retain only
 `workspace_read`; typed create/resume requests and authority previews are inert
-seams until Platform v2 SDK/auth support lands. The production provider does
-not construct or execute a workspace mutation.
+seams until Platform v2 SDK/auth support lands. Exact request coordinates are
+echoed by each preview. Persisted authorization tombstones pin omitted or
+revoked identities to their tenant, origin, and last authorization revision.
+The production provider does not construct or execute a workspace mutation.
 
 ## System boundary
 
@@ -172,16 +174,16 @@ mobile actions in the first slice.
 
 ## Persistence boundaries
 
-| Data                                     | Store                 | Ceiling/lifetime                                                 | Rule                                                           |
-| ---------------------------------------- | --------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
-| Scoped access and refresh credentials    | OS Secure Store       | Server expiry/rotation/revocation                                | Never Async Storage; pairing proof is never persisted          |
-| Endpoint, actor, expiry, server identity | Async Storage profile | One active profile                                               | Metadata only; endpoint must pass HTTPS policy                 |
-| Endpoint draft                           | Async Storage         | One draft; 2 KiB                                                 | Re-admitted on load; validation makes no network call          |
-| Read projection                          | Async Storage         | 256 KiB; 100 sessions; 1,000 events; 100 approvals; 200 receipts | Schema-admitted and always restored stale/read-only            |
-| Workspace companion projection           | Async Storage         | 256 KiB; 8 servers; 32 hosts; 100 projects; 200 workspaces       | Exact-scope admitted; restored stale with read authority only  |
-| Workspace create/resume draft            | Async Storage         | 32 inert typed drafts                                            | Never contains or restores an authority preview                |
-| Message draft                            | Async Storage         | One draft per session; negotiated UTF-8 follow-up byte ceiling   | Re-admitted on load; never submitted in the background         |
-| Reconciliation handle                    | Async Storage         | 20 handles; 16 KiB encoded set                                   | Action, exact target and key only; never an executable command |
+| Data                                     | Store                 | Ceiling/lifetime                                                          | Rule                                                           |
+| ---------------------------------------- | --------------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Scoped access and refresh credentials    | OS Secure Store       | Server expiry/rotation/revocation                                         | Never Async Storage; pairing proof is never persisted          |
+| Endpoint, actor, expiry, server identity | Async Storage profile | One active profile                                                        | Metadata only; endpoint must pass HTTPS policy                 |
+| Endpoint draft                           | Async Storage         | One draft; 2 KiB                                                          | Re-admitted on load; validation makes no network call          |
+| Read projection                          | Async Storage         | 256 KiB; 100 sessions; 1,000 events; 100 approvals; 200 receipts          | Schema-admitted and always restored stale/read-only            |
+| Workspace companion projection           | Async Storage         | 256 KiB; 8 servers; 64 tombstones; 32 hosts; 100 projects; 200 workspaces | Exact-scope admitted; restored stale with read authority only  |
+| Workspace create/resume draft            | Async Storage         | 32 inert typed drafts                                                     | Never contains or restores an authority preview                |
+| Message draft                            | Async Storage         | One draft per session; negotiated UTF-8 follow-up byte ceiling            | Re-admitted on load; never submitted in the background         |
+| Reconciliation handle                    | Async Storage         | 20 handles; 16 KiB encoded set                                            | Action, exact target and key only; never an executable command |
 
 Provider credentials, raw provider/tool output, routing policy, and an offline
 mutation queue never cross or live inside the mobile boundary.

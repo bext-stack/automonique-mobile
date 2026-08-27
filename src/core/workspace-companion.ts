@@ -5,6 +5,7 @@ import { decimalRevision, type DecimalRevision } from './types';
 export const WORKSPACE_COMPANION_SCHEMA =
   'automonique.mobile-workspace-companion/v1' as const;
 export const MAX_WORKSPACE_SERVERS = 8;
+export const MAX_WORKSPACE_SERVER_TOMBSTONES = 64;
 export const MAX_WORKSPACE_HOSTS = 32;
 export const MAX_WORKSPACE_PROJECTS = 100;
 export const MAX_WORKSPACES = 200;
@@ -111,12 +112,20 @@ export interface ScopedServerProfile {
   readonly workspaces: readonly CompanionWorkspace[];
 }
 
+export interface ServerAuthorizationTombstone {
+  readonly serverIdentity: ServerIdentity;
+  readonly origin: string;
+  readonly tenantId: string;
+  readonly authorizationRevision: DecimalRevision;
+}
+
 export interface WorkspaceCompanionCatalog {
   readonly schema: typeof WORKSPACE_COMPANION_SCHEMA;
   readonly phase: CompanionPhase;
   readonly generatedAt: string;
   readonly selectedServerIdentity: ServerIdentity | null;
   readonly servers: readonly ScopedServerProfile[];
+  readonly serverTombstones: readonly ServerAuthorizationTombstone[];
 }
 
 export interface TaskPrefill {
@@ -140,6 +149,7 @@ export type WorkspaceIntentRequest =
       readonly workspaceId: string;
       readonly workspaceRevision: DecimalRevision;
       readonly sessionId: string;
+      readonly sessionRevision: DecimalRevision;
       readonly idempotencyKey: string;
     };
 
@@ -148,6 +158,7 @@ export interface WorkspaceAuthorityPreview {
   readonly action: 'create' | 'resume';
   readonly serverIdentity: ServerIdentity;
   readonly requestIdempotencyKey: string;
+  readonly request: WorkspaceIntentRequest;
   readonly authorityRevision: DecimalRevision;
   readonly summary: readonly string[];
   readonly expiresAt: string;
@@ -159,6 +170,7 @@ export interface WorkspaceDeepLinkRequest {
   readonly workspaceRevision: DecimalRevision;
   readonly destination: WorkspaceDestination;
   readonly sessionId: string | null;
+  readonly sessionRevision: DecimalRevision | null;
 }
 
 export interface AdmittedWorkspaceRoute {
@@ -549,6 +561,24 @@ function admitServer(value: unknown): ScopedServerProfile {
   };
 }
 
+function admitServerTombstone(value: unknown): ServerAuthorizationTombstone {
+  const candidate = object(value);
+  keys(candidate, [
+    'serverIdentity',
+    'origin',
+    'tenantId',
+    'authorizationRevision',
+  ]);
+  return {
+    serverIdentity: identity(candidate.serverIdentity),
+    origin: httpsOrigin(candidate.origin),
+    tenantId: string(candidate.tenantId, 256),
+    authorizationRevision: decimalRevision(
+      string(candidate.authorizationRevision, 19),
+    ),
+  };
+}
+
 export function admitWorkspaceCompanionCatalog(
   value: unknown,
 ): WorkspaceCompanionCatalog {
@@ -559,6 +589,7 @@ export function admitWorkspaceCompanionCatalog(
     'generatedAt',
     'selectedServerIdentity',
     'servers',
+    'serverTombstones',
   ]);
   if (
     candidate.schema !== WORKSPACE_COMPANION_SCHEMA ||
@@ -572,6 +603,20 @@ export function admitWorkspaceCompanionCatalog(
     fail();
   const servers = candidate.servers.map(admitServer);
   unique(servers.map((server) => server.serverIdentity));
+  if (
+    !Array.isArray(candidate.serverTombstones) ||
+    candidate.serverTombstones.length > MAX_WORKSPACE_SERVER_TOMBSTONES
+  )
+    fail();
+  const serverTombstones = candidate.serverTombstones.map(admitServerTombstone);
+  unique(serverTombstones.map((entry) => entry.serverIdentity));
+  const liveIdentities = new Set(
+    servers.map((server) => server.serverIdentity),
+  );
+  if (
+    serverTombstones.some((entry) => liveIdentities.has(entry.serverIdentity))
+  )
+    fail();
   if (
     servers.reduce((count, server) => count + server.hosts.length, 0) >
       MAX_WORKSPACE_HOSTS ||
@@ -607,6 +652,7 @@ export function admitWorkspaceCompanionCatalog(
     generatedAt: timestamp(candidate.generatedAt),
     selectedServerIdentity,
     servers,
+    serverTombstones,
   };
 }
 
@@ -659,16 +705,32 @@ export function reduceWorkspaceCompanionCatalog(
   ) {
     return { catalog: staleReadOnlyCatalog(current), resyncRequired: true };
   }
+
+  const rejectReplacement = (): WorkspaceCatalogReduction => ({
+    catalog: staleReadOnlyCatalog(current),
+    resyncRequired: true,
+  });
+  const priorTombstones = new Map(
+    current.serverTombstones.map((entry) => [entry.serverIdentity, entry]),
+  );
   for (const server of next.servers) {
     const previous = current.servers.find(
       (candidate) => candidate.serverIdentity === server.serverIdentity,
     );
+    const tombstone = priorTombstones.get(server.serverIdentity);
     if (
-      previous !== undefined &&
-      BigInt(server.authorizationRevision) <
-        BigInt(previous.authorizationRevision)
+      (previous !== undefined &&
+        (server.origin !== previous.origin ||
+          server.tenantId !== previous.tenantId ||
+          BigInt(server.authorizationRevision) <
+            BigInt(previous.authorizationRevision))) ||
+      (tombstone !== undefined &&
+        (server.origin !== tombstone.origin ||
+          server.tenantId !== tombstone.tenantId ||
+          BigInt(server.authorizationRevision) <=
+            BigInt(tombstone.authorizationRevision)))
     ) {
-      return { catalog: staleReadOnlyCatalog(current), resyncRequired: true };
+      return rejectReplacement();
     }
     for (const workspace of server.workspaces) {
       const priorWorkspace = previous?.workspaces.find(
@@ -678,11 +740,107 @@ export function reduceWorkspaceCompanionCatalog(
         priorWorkspace !== undefined &&
         BigInt(workspace.revision) < BigInt(priorWorkspace.revision)
       ) {
-        return { catalog: staleReadOnlyCatalog(current), resyncRequired: true };
+        return rejectReplacement();
+      }
+      if (
+        workspace.attempt !== null &&
+        priorWorkspace?.attempt?.id === workspace.attempt.id &&
+        BigInt(workspace.attempt.revision) <
+          BigInt(priorWorkspace.attempt.revision)
+      ) {
+        return rejectReplacement();
+      }
+      for (const session of workspace.sessions) {
+        const priorSession = priorWorkspace?.sessions.find(
+          (candidate) => candidate.id === session.id,
+        );
+        if (
+          priorSession !== undefined &&
+          BigInt(session.revision) < BigInt(priorSession.revision)
+        ) {
+          return rejectReplacement();
+        }
       }
     }
   }
-  return { catalog: next, resyncRequired: false };
+
+  const scopes = new Map<ServerIdentity, ServerAuthorizationTombstone>();
+  const retainTombstone = (entry: ServerAuthorizationTombstone): boolean => {
+    const previous = current.servers.find(
+      (candidate) => candidate.serverIdentity === entry.serverIdentity,
+    );
+    const prior = priorTombstones.get(entry.serverIdentity);
+    const expected = previous ?? prior;
+    if (
+      expected !== undefined &&
+      (entry.origin !== expected.origin ||
+        entry.tenantId !== expected.tenantId ||
+        BigInt(entry.authorizationRevision) <
+          BigInt(expected.authorizationRevision))
+    ) {
+      return false;
+    }
+    const existing = scopes.get(entry.serverIdentity);
+    if (
+      existing === undefined ||
+      BigInt(entry.authorizationRevision) >
+        BigInt(existing.authorizationRevision)
+    ) {
+      scopes.set(entry.serverIdentity, entry);
+    }
+    return true;
+  };
+  for (const entry of current.serverTombstones)
+    if (!retainTombstone(entry)) return rejectReplacement();
+  for (const entry of next.serverTombstones)
+    if (!retainTombstone(entry)) return rejectReplacement();
+
+  const replacementIdentities = new Set(
+    next.servers.map((server) => server.serverIdentity),
+  );
+  for (const previous of current.servers) {
+    if (!replacementIdentities.has(previous.serverIdentity)) {
+      if (
+        !retainTombstone({
+          serverIdentity: previous.serverIdentity,
+          origin: previous.origin,
+          tenantId: previous.tenantId,
+          authorizationRevision: previous.authorizationRevision,
+        })
+      )
+        return rejectReplacement();
+    }
+  }
+
+  const activeServers: ScopedServerProfile[] = [];
+  for (const server of next.servers) {
+    if (server.authorization === 'revoked') {
+      if (
+        !retainTombstone({
+          serverIdentity: server.serverIdentity,
+          origin: server.origin,
+          tenantId: server.tenantId,
+          authorizationRevision: server.authorizationRevision,
+        })
+      )
+        return rejectReplacement();
+    } else {
+      activeServers.push(server);
+      scopes.delete(server.serverIdentity);
+    }
+  }
+  if (scopes.size > MAX_WORKSPACE_SERVER_TOMBSTONES) return rejectReplacement();
+
+  return {
+    catalog: {
+      ...next,
+      servers: activeServers,
+      serverTombstones: [...scopes.values()].sort((left, right) =>
+        left.serverIdentity.localeCompare(right.serverIdentity),
+      ),
+    },
+    resyncRequired: false,
+  };
 }
 
 /** Build only an internal route. It never accepts host paths or arbitrary URLs. */
@@ -731,16 +889,21 @@ export function admitWorkspaceDeepLink(
     const session = workspace.sessions.find(
       (candidate) => candidate.id === request.sessionId,
     );
-    if (session === undefined)
+    if (
+      session === undefined ||
+      request.sessionRevision === null ||
+      session.revision !== request.sessionRevision
+    )
       throw new Error('workspace_navigation_not_authorized');
     params.session = session.id;
+    params.session_revision = session.revision;
     return {
       pathname: '/workspace/[server]/[workspace]/session/[session]',
       params,
       readOnly: true,
     };
   }
-  if (request.sessionId !== null)
+  if (request.sessionId !== null || request.sessionRevision !== null)
     throw new Error('workspace_navigation_not_authorized');
   return {
     pathname: '/workspace/[server]/[workspace]',
@@ -784,6 +947,7 @@ export function admitWorkspaceIntentRequest(
       'workspaceId',
       'workspaceRevision',
       'sessionId',
+      'sessionRevision',
       'idempotencyKey',
     ]);
     return {
@@ -794,6 +958,7 @@ export function admitWorkspaceIntentRequest(
         string(candidate.workspaceRevision, 19),
       ),
       sessionId: string(candidate.sessionId, 256),
+      sessionRevision: decimalRevision(string(candidate.sessionRevision, 19)),
       idempotencyKey: string(candidate.idempotencyKey, 256),
     };
   }
@@ -809,6 +974,7 @@ export function admitWorkspaceAuthorityPreview(
     'action',
     'serverIdentity',
     'requestIdempotencyKey',
+    'request',
     'authorityRevision',
     'summary',
     'expiresAt',
@@ -820,15 +986,56 @@ export function admitWorkspaceAuthorityPreview(
     candidate.summary.length > 16
   )
     fail();
+  const request = admitWorkspaceIntentRequest(candidate.request);
+  const action = candidate.action as WorkspaceAuthorityPreview['action'];
+  const serverIdentity = identity(candidate.serverIdentity);
+  const requestIdempotencyKey = string(candidate.requestIdempotencyKey, 256);
+  if (
+    request.kind !== action ||
+    request.serverIdentity !== serverIdentity ||
+    request.idempotencyKey !== requestIdempotencyKey
+  )
+    fail();
   return {
     schema: 'automonique.workspace-authority-preview/v1',
-    action: candidate.action as WorkspaceAuthorityPreview['action'],
-    serverIdentity: identity(candidate.serverIdentity),
-    requestIdempotencyKey: string(candidate.requestIdempotencyKey, 256),
+    action,
+    serverIdentity,
+    requestIdempotencyKey,
+    request,
     authorityRevision: decimalRevision(string(candidate.authorityRevision, 19)),
     summary: candidate.summary.map((entry) => string(entry, 512)),
     expiresAt: timestamp(candidate.expiresAt),
   };
+}
+
+function sameWorkspaceIntentRequest(
+  left: WorkspaceIntentRequest,
+  right: WorkspaceIntentRequest,
+): boolean {
+  if (
+    left.kind !== right.kind ||
+    left.serverIdentity !== right.serverIdentity ||
+    left.idempotencyKey !== right.idempotencyKey
+  )
+    return false;
+  if (left.kind === 'create' && right.kind === 'create') {
+    return (
+      left.hostId === right.hostId &&
+      left.projectId === right.projectId &&
+      left.task.provider === right.task.provider &&
+      left.task.key === right.task.key &&
+      left.task.title === right.task.title
+    );
+  }
+  if (left.kind === 'resume' && right.kind === 'resume') {
+    return (
+      left.workspaceId === right.workspaceId &&
+      left.workspaceRevision === right.workspaceRevision &&
+      left.sessionId === right.sessionId &&
+      left.sessionRevision === right.sessionRevision
+    );
+  }
+  return false;
 }
 
 export function bindWorkspaceIntentPreview(
@@ -837,45 +1044,56 @@ export function bindWorkspaceIntentPreview(
   preview: WorkspaceAuthorityPreview,
   now = Date.now(),
 ): AdmittedWorkspaceIntentPreview {
+  const admittedRequest = admitWorkspaceIntentRequest(request);
+  const admittedPreview = admitWorkspaceAuthorityPreview(preview);
   const server = catalog.servers.find(
-    (candidate) => candidate.serverIdentity === request.serverIdentity,
+    (candidate) => candidate.serverIdentity === admittedRequest.serverIdentity,
   );
   if (
     catalog.phase !== 'live' ||
     server?.authorization !== 'active' ||
-    preview.serverIdentity !== request.serverIdentity ||
-    preview.action !== request.kind ||
-    preview.requestIdempotencyKey !== request.idempotencyKey ||
-    preview.authorityRevision !== server.authorizationRevision ||
-    Date.parse(preview.expiresAt) <= now
+    admittedPreview.serverIdentity !== admittedRequest.serverIdentity ||
+    admittedPreview.action !== admittedRequest.kind ||
+    admittedPreview.requestIdempotencyKey !== admittedRequest.idempotencyKey ||
+    !sameWorkspaceIntentRequest(admittedPreview.request, admittedRequest) ||
+    admittedPreview.authorityRevision !== server.authorizationRevision ||
+    Date.parse(admittedPreview.expiresAt) <= now
   ) {
     throw new Error('workspace_intent_preview_not_authorized');
   }
-  if (request.kind === 'create') {
+  if (admittedRequest.kind === 'create') {
     const project = server.projects.find(
-      (candidate) => candidate.id === request.projectId,
+      (candidate) => candidate.id === admittedRequest.projectId,
     );
     if (
       !server.actions.includes('workspace_create_preview') ||
-      project?.hostId !== request.hostId ||
-      !server.hosts.some((host) => host.id === request.hostId)
+      project?.hostId !== admittedRequest.hostId ||
+      !server.hosts.some((host) => host.id === admittedRequest.hostId)
     ) {
       throw new Error('workspace_intent_preview_not_authorized');
     }
   } else {
     const workspace = server.workspaces.find(
-      (candidate) => candidate.id === request.workspaceId,
+      (candidate) => candidate.id === admittedRequest.workspaceId,
     );
     if (
       !server.actions.includes('workspace_resume_preview') ||
-      workspace?.revision !== request.workspaceRevision ||
-      !workspace.sessions.some((session) => session.id === request.sessionId)
+      workspace?.revision !== admittedRequest.workspaceRevision ||
+      !workspace.sessions.some(
+        (session) =>
+          session.id === admittedRequest.sessionId &&
+          session.revision === admittedRequest.sessionRevision,
+      )
     ) {
       throw new Error('workspace_intent_preview_not_authorized');
     }
   }
   // The v2 adapter will consume this pair later. This foundation cannot send it.
-  return { request, preview, executable: false };
+  return {
+    request: admittedRequest,
+    preview: admittedPreview,
+    executable: false,
+  };
 }
 
 /** Production execution remains unavailable until the canonical v2 SDK exists. */

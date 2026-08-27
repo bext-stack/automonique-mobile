@@ -20,7 +20,9 @@ Hosts, projects, workspaces, attempts, sessions, navigation grants, and
 authority previews are server-issued scoped data. A display label, origin,
 workspace, repository, branch, or SDK method cannot create authority. Profile
 selection uses the exact server identity; revocation removes the profile from
-selection and presentation.
+selection and presentation. A bounded persisted tombstone pins that identity
+to its tenant and HTTPS origin after omission or revocation; reauthorization
+requires a strictly newer authorization revision.
 
 Cached catalogs reopen as stale. Active authorization becomes `cached`, and
 all actions except bounded reads are removed. Cached data may navigate to
@@ -29,30 +31,31 @@ Drafts remain inert data. Authority previews are never cached.
 
 ## Expansion decisions
 
-| Expansion beyond the original non-goals                                                            | Decision                                                                                       | Required control                                                                                                                                               |
-| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Multi-server cockpit                                                                               | Approved for bounded reads                                                                     | At most eight profiles; each exact, scoped, revocable server identity is admitted independently. No ambient host discovery.                                    |
-| Host, project, task, workspace, attempt, branch, repository, freshness, and attention presentation | Approved for sanitized reads                                                                   | Strict DTO keys, ceilings, referential scope checks, HTTPS-only repository links, and no host path or credential field.                                        |
-| External task integration                                                                          | Approved for display and task prefill                                                          | External work-item status is a separate type and field from Automonique orchestration state. It grants no host/workspace authority.                            |
-| Workspace creation and resume                                                                      | Approved only as typed request drafts and server authority previews                            | Production mutation remains disabled until the canonical Platform v2 SDK and scoped auth expose the exact action. No generic execute method or offline outbox. |
-| Deep links to retained chat, files, preview, and source control                                    | Approved for explicitly granted exact workspace revisions                                      | Routes are internal typed destinations, not arbitrary URLs or filesystem paths. Cached routes are read-only.                                                   |
-| Terminal relay                                                                                     | Refused by workspace visibility; conditionally approvable in a separate risk-reviewed delivery | Requires an exact workspace navigation grant, active live profile, and separate `terminal_relay` actor action. No terminal transport is implemented here.      |
-| Attachments and audio uploads                                                                      | Refused in this issue                                                                          | Separate data-retention, content-scanning, size, privacy, and transport review required.                                                                       |
-| Dictation as capability expansion                                                                  | Refused                                                                                        | Existing on-device dictation may edit text locally only; it does not add an upload or action.                                                                  |
-| Background mutation or offline queue                                                               | Refused                                                                                        | Connectivity loss disables mutations. Draft restoration never submits work.                                                                                    |
-| Shell, repository mutation, provider credentials, routing, or privileged tools                     | Refused                                                                                        | These capabilities cannot be represented or inferred by the mobile workspace model.                                                                            |
+| Expansion beyond the original non-goals                                                            | Decision                                                                                       | Required control                                                                                                                                                                                                          |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Multi-server cockpit                                                                               | Approved for bounded reads                                                                     | At most eight profiles; each exact, scoped, revocable server identity is admitted independently. No ambient host discovery.                                                                                               |
+| Host, project, task, workspace, attempt, branch, repository, freshness, and attention presentation | Approved for sanitized reads                                                                   | Strict DTO keys, ceilings, referential scope checks, HTTPS-only repository links, and no host path or credential field.                                                                                                   |
+| External task integration                                                                          | Approved for display and task prefill                                                          | External work-item status is a separate type and field from Automonique orchestration state. It grants no host/workspace authority.                                                                                       |
+| Workspace creation and resume                                                                      | Approved only as typed request drafts and server authority previews                            | The preview echoes the exact admitted request coordinates. Production mutation remains disabled until the canonical Platform v2 SDK and scoped auth expose the exact action. No generic execute method or offline outbox. |
+| Deep links to retained chat, files, preview, and source control                                    | Approved for explicitly granted exact workspace revisions                                      | Retained chat also binds the exact session revision. Routes are internal typed destinations, not arbitrary URLs or filesystem paths. Cached routes are read-only.                                                         |
+| Terminal relay                                                                                     | Refused by workspace visibility; conditionally approvable in a separate risk-reviewed delivery | Requires an exact workspace navigation grant, active live profile, and separate `terminal_relay` actor action. No terminal transport is implemented here.                                                                 |
+| Attachments and audio uploads                                                                      | Refused in this issue                                                                          | Separate data-retention, content-scanning, size, privacy, and transport review required.                                                                                                                                  |
+| Dictation as capability expansion                                                                  | Refused                                                                                        | Existing on-device dictation may edit text locally only; it does not add an upload or action.                                                                                                                             |
+| Background mutation or offline queue                                                               | Refused                                                                                        | Connectivity loss disables mutations. Draft restoration never submits work.                                                                                                                                               |
+| Shell, repository mutation, provider credentials, routing, or privileged tools                     | Refused                                                                                        | These capabilities cannot be represented or inferred by the mobile workspace model.                                                                                                                                       |
 
 ## Abuse cases and fail-closed outcomes
 
 - A forged profile label or origin cannot select a server; only the exact
-  admitted server identity can.
+  admitted server identity can. Reusing that identity with a different tenant
+  or origin, or replaying it after a tombstone, forces resynchronization.
 - A revoked identity cannot be selected, searched, or navigated.
 - A workspace referencing a host or project outside its server profile is
   rejected as one invalid catalog.
 - Unknown fields such as credentials, host paths, commands, or raw provider
   output make admission fail rather than being ignored.
-- A stale workspace revision, missing destination grant, or unscoped retained
-  session refuses a deep link.
+- A stale workspace/session revision, missing destination grant, or unscoped
+  retained session refuses a deep link.
 - Terminal navigation is refused even when visible in a workspace unless both
   live profile authority and a separate terminal action are present.
 - Oversized catalogs, session collections, unread counts, drafts, and encoded
