@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import {
+  AttemptWorkspaceId,
   CheckoutId,
   HostSetupId,
   IdempotencyKey,
@@ -14,6 +15,7 @@ import {
   ReceiptId,
   ResourceId,
   SupportedPlatformVersionNumber,
+  WorkSessionId,
   UserWorkspaceId,
   WorkContextLabel,
   WorkContextPageLimit,
@@ -35,10 +37,19 @@ import { createElement } from 'react';
 
 import { WorkspaceMutationConfirmation } from '@/components/workspace-mutation-confirmation';
 import {
+  MOBILE_V2_ACTIONS,
+  MOBILE_V2_AUTHORIZATION_SCHEMA,
+  type DelegatedMobileV2Authorization,
+} from './mobile-v2-authorization';
+import {
   WorkspaceV2GatewayError,
   createAuthorizedWorkspaceV2Gateway,
   createWorkspaceV2Gateway,
 } from './workspace-v2-gateway';
+import type {
+  WorkspaceV2ReceiptHandle,
+  WorkspaceV2ReceiptStore,
+} from './workspace-v2-receipts';
 
 const project = ProjectId('project-mobile');
 const projectIdentity = { kind: 'project' as const, id: project };
@@ -70,6 +81,49 @@ const emptyAuthority = {
   providers: [],
   tools: [],
 } as const;
+
+function delegatedAuthorization(now = 1_500): DelegatedMobileV2Authorization {
+  return {
+    schema: MOBILE_V2_AUTHORIZATION_SCHEMA,
+    server_identity: `sha256:${'a'.repeat(64)}`,
+    credential_id: 'credential-mobile',
+    credential_revision: 1n,
+    authorization_revision: 1n,
+    principal_generation: 1n,
+    delegation_id: 'delegation-mobile',
+    tenant_id: 'tenant-mobile',
+    actor_id: 'operator-mobile',
+    issued_at_ms: BigInt(now - 1),
+    expires_at_ms: BigInt(now + 60_000),
+    project_roots: [project],
+    actions: MOBILE_V2_ACTIONS,
+  };
+}
+
+function memoryReceiptStore(): WorkspaceV2ReceiptStore & {
+  readonly handles: WorkspaceV2ReceiptHandle[];
+} {
+  const handles: WorkspaceV2ReceiptHandle[] = [];
+  return {
+    handles,
+    async list() {
+      return [...handles];
+    },
+    async put(handle) {
+      const index = handles.findIndex(
+        (candidate) => candidate.idempotency_key === handle.idempotency_key,
+      );
+      if (index === -1) handles.push(handle);
+      else handles[index] = handle;
+    },
+    async remove(idempotencyKey) {
+      const index = handles.findIndex(
+        (candidate) => candidate.idempotency_key === idempotencyKey,
+      );
+      if (index !== -1) handles.splice(index, 1);
+    },
+  };
+}
 
 const negotiatedV2 = {
   kind: 'negotiated' as const,
@@ -131,13 +185,59 @@ function record(
 function gatewayFor(
   steps: ConstructorParameters<typeof DeterministicPlatformV2Adapter>[0],
   now = 1_500,
+  receiptStore = memoryReceiptStore(),
+  authorization = delegatedAuthorization(now),
 ) {
   const adapter = new DeterministicPlatformV2Adapter(steps);
   const gateway = createWorkspaceV2Gateway({
+    authorization,
     client: new PlatformV2Client(adapter),
     now: () => now,
+    receiptStore,
   });
-  return { adapter, gateway };
+  return { adapter, gateway, receiptStore };
+}
+
+function projectSnapshotStep(workspaceRevision = 9n) {
+  return {
+    lane: 'v2' as const,
+    request: {
+      kind: 'query_work_contexts' as const,
+      query: {
+        after: null,
+        kinds: [
+          'project',
+          'host_setup',
+          'checkout',
+          'user_workspace',
+          'attempt_workspace',
+          'session',
+          'pane',
+        ] as const,
+        lifecycles: [],
+        limit: WorkContextPageLimit(128n),
+        parent: null,
+        project,
+        schema: PLATFORM_SCHEMA_V2 as typeof PLATFORM_SCHEMA_V2,
+      },
+    },
+    result: {
+      kind: 'work_context_page' as const,
+      page: {
+        after: null,
+        has_more: false,
+        items: [
+          record(projectIdentity, 'Mobile'),
+          record(hostIdentity, 'Mobile host'),
+          record(checkoutIdentity, 'Mobile checkout', 2n),
+          record(userWorkspaceIdentity, 'Issue 34', workspaceRevision),
+        ],
+        next_cursor: null,
+        requested_limit: WorkContextPageLimit(128n),
+        schema: PLATFORM_SCHEMA_V2 as typeof PLATFORM_SCHEMA_V2,
+      },
+    },
+  };
 }
 
 async function negotiate(gateway: ReturnType<typeof gatewayFor>['gateway']) {
@@ -250,18 +350,27 @@ function json(value: unknown): JsonValue {
   };
 }
 
-function rawReceipt(value: MutationPreview): Uint8Array {
+function rawReceipt(
+  value: MutationPreview,
+  options: {
+    readonly approvalId?: MutationApproval['id'] | null;
+    readonly outcome?: 'accepted' | 'completed' | 'conflict' | 'rejected';
+    readonly idempotencyKey?: string;
+  } = {},
+): Uint8Array {
+  const outcome = options.outcome ?? 'accepted';
   return toCanonicalBytes(
     json({
-      approval_id: null,
+      approval_id: options.approvalId ?? null,
       id: ReceiptId('receipt-workspace-1'),
-      idempotency_key: value.proposal.idempotency_key,
-      outcome: 'accepted',
+      idempotency_key: options.idempotencyKey ?? value.proposal.idempotency_key,
+      outcome,
       preview: value.preview,
       preview_digest: mutationPreviewDigest(value),
       recorded_at_ms: 1_700n,
       request_digest: value.proposal.request_digest,
-      resulting_revision: null,
+      resulting_revision:
+        outcome === 'completed' ? value.resulting.revision : null,
       schema: PLATFORM_SCHEMA_V2,
     }),
   );
@@ -501,6 +610,7 @@ test('requires an ephemeral exact preview and never invents mutation success', a
   const digest = mutationPreviewDigest(value);
   const { gateway } = gatewayFor([
     { lane: 'negotiation', result: negotiatedV2 },
+    projectSnapshotStep(),
     {
       lane: 'v2',
       request: {
@@ -529,14 +639,21 @@ test('requires an ephemeral exact preview and never invents mutation success', a
     },
   ]);
   await negotiate(gateway);
+  await gateway.loadProject(project);
   const prepared = await gateway.prepareMutation(
     project,
     intent,
     value.proposal.idempotency_key,
   );
-  await expect(gateway.confirmMutation(prepared, 'grant')).resolves.toEqual({
+  await expect(
+    gateway.confirmMutation(prepared, 'grant'),
+  ).resolves.toMatchObject({
     kind: 'submitted',
     idempotencyKey: value.proposal.idempotency_key,
+    receipt: {
+      idempotency_key: value.proposal.idempotency_key,
+      outcome: 'accepted',
+    },
     projectionRefreshRequired: true,
   });
   await expect(
@@ -546,12 +663,234 @@ test('requires an ephemeral exact preview and never invents mutation success', a
   });
 });
 
+test('persists a receipt lookup before submit and reconciles ambiguity across reload without replay', async () => {
+  const intent = createIntent();
+  const value = preview(intent, undefined, 'not_required');
+  const receiptStore = memoryReceiptStore();
+  const order: string[] = [];
+  const originalPut = receiptStore.put;
+  receiptStore.put = async (handle) => {
+    order.push('persist');
+    await originalPut(handle);
+  };
+  const first = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'prepare_mutation',
+          request: {
+            idempotency_key: value.proposal.idempotency_key,
+            intent,
+          },
+        },
+        result: { kind: 'mutation_preview', preview: value },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'submit_mutation',
+          request: {
+            approval_id: null,
+            preview: value.preview,
+            preview_digest: mutationPreviewDigest(value),
+          },
+        },
+        result: Promise.reject(new Error('response_lost')),
+      },
+    ],
+    1_500,
+    receiptStore,
+  );
+  await negotiate(first.gateway);
+  await first.gateway.loadProject(project);
+  const prepared = await first.gateway.prepareMutation(
+    project,
+    intent,
+    value.proposal.idempotency_key,
+  );
+  await expect(
+    first.gateway.confirmMutation(prepared, 'grant'),
+  ).resolves.toEqual({
+    kind: 'ambiguous',
+    idempotencyKey: value.proposal.idempotency_key,
+    projectionRefreshRequired: true,
+  });
+  expect(order).toEqual(['persist']);
+  await expect(first.gateway.pendingMutationReceipts()).resolves.toHaveLength(
+    1,
+  );
+
+  const accepted = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_mutation_receipt',
+          lookup: {
+            project,
+            idempotency_key: value.proposal.idempotency_key,
+          },
+        },
+        result: {
+          kind: 'mutation_receipt',
+          receipt: { canonical: rawReceipt(value) },
+        },
+      },
+    ],
+    1_500,
+    receiptStore,
+  );
+  await negotiate(accepted.gateway);
+  await expect(
+    accepted.gateway.reconcileMutation(value.proposal.idempotency_key),
+  ).resolves.toMatchObject({
+    kind: 'accepted',
+    receipt: { outcome: 'accepted' },
+  });
+  expect(accepted.adapter.pendingSteps).toBe(0);
+  await expect(
+    accepted.gateway.pendingMutationReceipts(),
+  ).resolves.toHaveLength(1);
+
+  const completed = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_mutation_receipt',
+          lookup: {
+            project,
+            idempotency_key: value.proposal.idempotency_key,
+          },
+        },
+        result: {
+          kind: 'mutation_receipt',
+          receipt: {
+            canonical: rawReceipt(value, { outcome: 'completed' }),
+          },
+        },
+      },
+    ],
+    1_500,
+    receiptStore,
+  );
+  await negotiate(completed.gateway);
+  await expect(
+    completed.gateway.reconcileMutation(value.proposal.idempotency_key),
+  ).resolves.toMatchObject({
+    kind: 'settled',
+    receipt: { outcome: 'completed' },
+    projectionRefreshRequired: true,
+  });
+  await expect(completed.gateway.pendingMutationReceipts()).resolves.toEqual(
+    [],
+  );
+});
+
+test('storage failure prevents submit and mismatched canonical receipts remain reconcilable', async () => {
+  const intent = createIntent();
+  const value = preview(intent, undefined, 'not_required');
+  const failingStore = memoryReceiptStore();
+  failingStore.put = async () => {
+    throw new Error('receipt_store_failed');
+  };
+  const blocked = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'prepare_mutation',
+          request: {
+            idempotency_key: value.proposal.idempotency_key,
+            intent,
+          },
+        },
+        result: { kind: 'mutation_preview', preview: value },
+      },
+    ],
+    1_500,
+    failingStore,
+  );
+  await negotiate(blocked.gateway);
+  await blocked.gateway.loadProject(project);
+  const blockedPrepared = await blocked.gateway.prepareMutation(
+    project,
+    intent,
+    value.proposal.idempotency_key,
+  );
+  await expect(
+    blocked.gateway.confirmMutation(blockedPrepared, 'grant'),
+  ).rejects.toThrow('receipt_store_failed');
+  expect(blocked.adapter.pendingSteps).toBe(0);
+
+  const receiptStore = memoryReceiptStore();
+  const mismatched = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'prepare_mutation',
+          request: {
+            idempotency_key: value.proposal.idempotency_key,
+            intent,
+          },
+        },
+        result: { kind: 'mutation_preview', preview: value },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'submit_mutation',
+          request: {
+            approval_id: null,
+            preview: value.preview,
+            preview_digest: mutationPreviewDigest(value),
+          },
+        },
+        result: {
+          kind: 'mutation_receipt',
+          receipt: {
+            canonical: rawReceipt(value, {
+              idempotencyKey: 'different-key',
+            }),
+          },
+        },
+      },
+    ],
+    1_500,
+    receiptStore,
+  );
+  await negotiate(mismatched.gateway);
+  await mismatched.gateway.loadProject(project);
+  const mismatchPrepared = await mismatched.gateway.prepareMutation(
+    project,
+    intent,
+    value.proposal.idempotency_key,
+  );
+  await expect(
+    mismatched.gateway.confirmMutation(mismatchPrepared, 'grant'),
+  ).rejects.toThrow('workspace_receipt_mismatch');
+  await expect(
+    mismatched.gateway.pendingMutationReceipts(),
+  ).resolves.toHaveLength(1);
+});
+
 test('records a server denial and drops previews across app reload', async () => {
   const intent = createIntent();
   const value = preview(intent);
   const denied = approvalDocument(value, 'denied');
   const first = gatewayFor([
     { lane: 'negotiation', result: negotiatedV2 },
+    projectSnapshotStep(),
     {
       lane: 'v2',
       request: {
@@ -580,6 +919,7 @@ test('records a server denial and drops previews across app reload', async () =>
     },
   ]);
   await negotiate(first.gateway);
+  await first.gateway.loadProject(project);
   const prepared = await first.gateway.prepareMutation(
     project,
     intent,
@@ -600,11 +940,63 @@ test('records a server denial and drops previews across app reload', async () =>
   });
 });
 
+test('requires the decoded approval decision to equal the requested decision', async () => {
+  const intent = createIntent();
+  const value = preview(intent);
+  const contradictory = approvalDocument(value, 'granted');
+  const { adapter, gateway } = gatewayFor([
+    { lane: 'negotiation', result: negotiatedV2 },
+    projectSnapshotStep(),
+    {
+      lane: 'v2',
+      request: {
+        kind: 'prepare_mutation',
+        request: {
+          idempotency_key: value.proposal.idempotency_key,
+          intent,
+        },
+      },
+      result: { kind: 'mutation_preview', preview: value },
+    },
+    {
+      lane: 'v2',
+      request: {
+        kind: 'decide_mutation',
+        request: {
+          decision: 'denied',
+          preview: value.preview,
+          preview_digest: mutationPreviewDigest(value),
+        },
+      },
+      result: {
+        kind: 'mutation_approval',
+        approval: { canonical: contradictory.canonical },
+      },
+    },
+  ]);
+  await negotiate(gateway);
+  await gateway.loadProject(project);
+  const prepared = await gateway.prepareMutation(
+    project,
+    intent,
+    value.proposal.idempotency_key,
+  );
+  await expect(gateway.confirmMutation(prepared, 'deny')).rejects.toMatchObject(
+    {
+      // Canonical SDK bce4722 rejects before the redundant mobile equality
+      // guard, so either layer can never proceed to submit.
+      category: 'response_decision_mismatch',
+    },
+  );
+  expect(adapter.pendingSteps).toBe(0);
+});
+
 test('cancels only an exact lineage intent revision and rejects self-targeting', async () => {
   const cancelId = WorkspaceIntentId('cancel-intent');
   const targetId = WorkspaceIntentId('create-intent');
   const { gateway } = gatewayFor([
     { lane: 'negotiation', result: negotiatedV2 },
+    projectSnapshotStep(),
     {
       lane: 'v2',
       request: {
@@ -629,6 +1021,7 @@ test('cancels only an exact lineage intent revision and rejects self-targeting',
     },
   ]);
   await negotiate(gateway);
+  await gateway.loadProject(project);
   await expect(
     gateway.cancelWorkspaceIntent(
       project,
@@ -637,7 +1030,11 @@ test('cancels only an exact lineage intent revision and rejects self-targeting',
       cancelId,
       targetId,
     ),
-  ).resolves.toEqual({ kind: 'cancelled', target_intent_id: targetId });
+  ).resolves.toEqual({
+    project,
+    intentId: cancelId,
+    outcome: { kind: 'cancelled', target_intent_id: targetId },
+  });
   await expect(
     gateway.cancelWorkspaceIntent(
       project,
@@ -664,18 +1061,120 @@ test('cancels only an exact lineage intent revision and rejects self-targeting',
   ]).gateway;
   await negotiate(reloaded);
   await expect(reloaded.getWorkspaceIntent(project, targetId)).resolves.toEqual(
-    { kind: 'cancelled', target_intent_id: targetId },
+    {
+      project,
+      intentId: targetId,
+      outcome: { kind: 'cancelled', target_intent_id: targetId },
+    },
   );
+});
+
+test('lineage responses and cancellation outcomes remain bound to exact request coordinates', async () => {
+  const wrongWorkspace = UserWorkspaceId('workspace-other');
+  const exact = gatewayFor([
+    { lane: 'negotiation', result: negotiatedV2 },
+    projectSnapshotStep(),
+    {
+      lane: 'v2',
+      request: {
+        kind: 'get_lineage',
+        request: { project, workspace: userWorkspaceIdentity.id },
+      },
+      result: {
+        kind: 'lineage_result',
+        lineage: {
+          external_work_items: [],
+          orchestration: [],
+          schema: PLATFORM_SCHEMA_V2,
+          workspace: userWorkspaceIdentity.id,
+        },
+      },
+    },
+  ]).gateway;
+  await negotiate(exact);
+  await exact.loadProject(project);
+  await expect(
+    exact.loadLineage(project, userWorkspaceIdentity.id),
+  ).resolves.toMatchObject({ workspace: userWorkspaceIdentity.id });
+
+  const mismatched = gatewayFor([
+    { lane: 'negotiation', result: negotiatedV2 },
+    projectSnapshotStep(),
+    {
+      lane: 'v2',
+      request: {
+        kind: 'get_lineage',
+        request: { project, workspace: userWorkspaceIdentity.id },
+      },
+      result: {
+        kind: 'lineage_result',
+        lineage: {
+          external_work_items: [],
+          orchestration: [],
+          schema: PLATFORM_SCHEMA_V2,
+          workspace: wrongWorkspace,
+        },
+      },
+    },
+  ]).gateway;
+  await negotiate(mismatched);
+  await mismatched.loadProject(project);
+  await expect(
+    mismatched.loadLineage(project, userWorkspaceIdentity.id),
+  ).rejects.toThrow();
+
+  const cancelId = WorkspaceIntentId('cancel-coordinate-mismatch');
+  const targetId = WorkspaceIntentId('target-coordinate-mismatch');
+  const wrongTarget = WorkspaceIntentId('wrong-coordinate-target');
+  const cancellation = gatewayFor([
+    { lane: 'negotiation', result: negotiatedV2 },
+    projectSnapshotStep(),
+    {
+      lane: 'v2',
+      request: {
+        kind: 'submit_workspace_intent',
+        request: {
+          project,
+          intent: {
+            kind: 'cancel',
+            request: {
+              expected_revision: WorkContextRevision(9n),
+              intent_id: cancelId,
+              target_intent_id: targetId,
+              workspace: userWorkspaceIdentity.id,
+            },
+          },
+        },
+      },
+      result: {
+        kind: 'workspace_intent_result',
+        result: { kind: 'cancelled', target_intent_id: wrongTarget },
+      },
+    },
+  ]).gateway;
+  await negotiate(cancellation);
+  await cancellation.loadProject(project);
+  await expect(
+    cancellation.cancelWorkspaceIntent(
+      project,
+      userWorkspaceIdentity.id,
+      9n,
+      cancelId,
+      targetId,
+    ),
+  ).rejects.toThrow();
 });
 
 test('authenticated transport fails closed on auth loss, malformed input, and abort', async () => {
   let tokenCalls = 0;
   const unauthorized = createAuthorizedWorkspaceV2Gateway({
+    authorization: delegatedAuthorization(Date.now()),
     endpoint: 'https://ops.example.test/api/platform/v2',
     token: () => {
       tokenCalls += 1;
       return 'scoped-token';
     },
+    receiptStore: memoryReceiptStore(),
     fetcher: async () =>
       new Response('', {
         status: 401,
@@ -692,8 +1191,10 @@ test('authenticated transport fails closed on auth loss, malformed input, and ab
   expect(tokenCalls).toBe(1);
 
   const malformed = createAuthorizedWorkspaceV2Gateway({
+    authorization: delegatedAuthorization(Date.now()),
     endpoint: 'https://ops.example.test/api/platform/v2',
     token: () => 'scoped-token',
+    receiptStore: memoryReceiptStore(),
     fetcher: async () =>
       new Response('{"future":true}', {
         status: 200,
@@ -707,11 +1208,13 @@ test('authenticated transport fails closed on auth loss, malformed input, and ab
   await expect(malformed.negotiate()).rejects.toBeInstanceOf(Error);
 
   const never = createAuthorizedWorkspaceV2Gateway({
+    authorization: delegatedAuthorization(Date.now()),
     endpoint: 'https://ops.example.test/api/platform/v2',
     token: () => {
       tokenCalls += 1;
       return 'scoped-token';
     },
+    receiptStore: memoryReceiptStore(),
     fetcher: async () => {
       throw new Error('fetch must not run');
     },
@@ -724,12 +1227,44 @@ test('authenticated transport fails closed on auth loss, malformed input, and ab
   expect(tokenCalls).toBe(1);
 });
 
+test('rejects a decoded response when the immutable lifecycle generation changes in flight', async () => {
+  const snapshot = projectSnapshotStep();
+  let release!: (value: typeof snapshot.result) => void;
+  const delayed = new Promise<typeof snapshot.result>((resolve) => {
+    release = resolve;
+  });
+  const adapter = new DeterministicPlatformV2Adapter([
+    { lane: 'negotiation', result: negotiatedV2 },
+    { ...snapshot, result: delayed },
+  ]);
+  let admitted = true;
+  const lifecycle = new AbortController();
+  const gateway = createWorkspaceV2Gateway({
+    authorization: delegatedAuthorization(),
+    client: new PlatformV2Client(adapter),
+    now: () => 1_500,
+    receiptStore: memoryReceiptStore(),
+    operationGuard: {
+      signal: lifecycle.signal,
+      admit() {
+        if (!admitted) throw new Error('gateway_generation_replaced');
+      },
+    },
+  });
+  await negotiate(gateway);
+  const pending = gateway.loadProject(project);
+  admitted = false;
+  release(snapshot.result);
+  await expect(pending).rejects.toThrow('gateway_generation_replaced');
+});
+
 test('stale previews and cross-project create coordinates are refused before submit', async () => {
   const intent = createIntent();
   const stale = preview(intent);
   const staleGateway = gatewayFor(
     [
       { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
       {
         lane: 'v2',
         request: {
@@ -745,6 +1280,7 @@ test('stale previews and cross-project create coordinates are refused before sub
     2_000,
   ).gateway;
   await negotiate(staleGateway);
+  await staleGateway.loadProject(project);
   await expect(
     staleGateway.prepareMutation(
       project,
@@ -760,7 +1296,193 @@ test('stale previews and cross-project create coordinates are refused before sub
       intent,
       IdempotencyKey('wrong-project'),
     ),
-  ).rejects.toMatchObject({ category: 'workspace_project_mismatch' });
+  ).rejects.toMatchObject({ category: 'mobile_v2_project_unauthorized' });
+});
+
+test('project roots alone grant no operation and each gateway surface checks its action', async () => {
+  const authorization = { ...delegatedAuthorization(), actions: [] };
+  const gateway = gatewayFor(
+    [],
+    1_500,
+    memoryReceiptStore(),
+    authorization,
+  ).gateway;
+  const expected = { category: 'mobile_v2_action_unauthorized' };
+  await expect(gateway.loadProject(project)).rejects.toMatchObject(expected);
+  await expect(
+    gateway.loadLineage(project, userWorkspaceIdentity.id),
+  ).rejects.toMatchObject(expected);
+  await expect(
+    gateway.loadReview(project, userWorkspaceIdentity),
+  ).rejects.toMatchObject(expected);
+  await expect(
+    gateway.prepareMutation(project, createIntent(), 'action-gate'),
+  ).rejects.toMatchObject(expected);
+  await expect(
+    gateway.submitWorkspaceIntent(project, {} as never),
+  ).rejects.toMatchObject(expected);
+  await expect(
+    gateway.getWorkspaceIntent(project, 'action-gate'),
+  ).rejects.toMatchObject(expected);
+  await expect(
+    gateway.cancelWorkspaceIntent(
+      project,
+      userWorkspaceIdentity.id,
+      9n,
+      'cancel-action-gate',
+      'target-action-gate',
+    ),
+  ).rejects.toMatchObject(expected);
+  await expect(gateway.reconcileMutation('action-gate')).rejects.toMatchObject(
+    expected,
+  );
+  await expect(gateway.pendingMutationReceipts()).rejects.toMatchObject(
+    expected,
+  );
+});
+
+test('decide and submit are independently gated after an admitted preview', async () => {
+  const intent = createIntent();
+  const required = preview(intent);
+  const decideGateway = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'prepare_mutation',
+          request: {
+            idempotency_key: required.proposal.idempotency_key,
+            intent,
+          },
+        },
+        result: { kind: 'mutation_preview', preview: required },
+      },
+    ],
+    1_500,
+    memoryReceiptStore(),
+    {
+      ...delegatedAuthorization(),
+      actions: ['query_work_contexts', 'prepare_mutation'],
+    },
+  ).gateway;
+  await negotiate(decideGateway);
+  await decideGateway.loadProject(project);
+  const decidePrepared = await decideGateway.prepareMutation(
+    project,
+    intent,
+    required.proposal.idempotency_key,
+  );
+  await expect(
+    decideGateway.confirmMutation(decidePrepared, 'grant'),
+  ).rejects.toMatchObject({ category: 'mobile_v2_action_unauthorized' });
+
+  const notRequired = preview(
+    intent,
+    IdempotencyKey('submit-action-gate'),
+    'not_required',
+  );
+  const submitGateway = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'prepare_mutation',
+          request: {
+            idempotency_key: notRequired.proposal.idempotency_key,
+            intent,
+          },
+        },
+        result: { kind: 'mutation_preview', preview: notRequired },
+      },
+    ],
+    1_500,
+    memoryReceiptStore(),
+    {
+      ...delegatedAuthorization(),
+      actions: ['query_work_contexts', 'prepare_mutation'],
+    },
+  ).gateway;
+  await negotiate(submitGateway);
+  await submitGateway.loadProject(project);
+  const submitPrepared = await submitGateway.prepareMutation(
+    project,
+    intent,
+    notRequired.proposal.idempotency_key,
+  );
+  await expect(
+    submitGateway.confirmMutation(submitPrepared, 'grant'),
+  ).rejects.toMatchObject({ category: 'mobile_v2_action_unauthorized' });
+});
+
+test('every lifecycle mutation variant refuses an arbitrary authorized display project without its canonical snapshot', async () => {
+  const otherProject = ProjectId('project-other');
+  const authorization = {
+    ...delegatedAuthorization(),
+    project_roots: [project, otherProject],
+  };
+  const { adapter, gateway } = gatewayFor(
+    [{ lane: 'negotiation', result: negotiatedV2 }, projectSnapshotStep()],
+    1_500,
+    memoryReceiptStore(),
+    authorization,
+  );
+  await negotiate(gateway);
+  await gateway.loadProject(project);
+  const outside = { category: 'workspace_project_snapshot_required' };
+  const intents = [
+    createIntent(),
+    {
+      kind: 'create_attempt_workspace',
+      label: WorkContextLabel('Attempt'),
+      requested_authority: emptyAuthority,
+      user_workspace: {
+        identity: userWorkspaceIdentity,
+        revision: WorkContextRevision(9n),
+      },
+    },
+    {
+      kind: 'resume_attempt_workspace',
+      requested_authority: emptyAuthority,
+      target: {
+        identity: {
+          kind: 'attempt_workspace',
+          id: AttemptWorkspaceId('attempt-mobile'),
+        },
+        revision: WorkContextRevision(1n),
+      },
+    },
+    {
+      kind: 'resume_session',
+      requested_authority: emptyAuthority,
+      target: {
+        identity: {
+          kind: 'session',
+          id: WorkSessionId('session-mobile'),
+        },
+        revision: WorkContextRevision(1n),
+      },
+    },
+  ] as const;
+  for (const [index, intent] of intents.entries()) {
+    await expect(
+      gateway.prepareMutation(
+        otherProject,
+        intent,
+        IdempotencyKey(`cross-project-${index}`),
+      ),
+    ).rejects.toMatchObject(outside);
+  }
+  await expect(
+    gateway.submitWorkspaceIntent(otherProject, {
+      kind: 'create',
+      request: {},
+    } as never),
+  ).rejects.toMatchObject(outside);
+  expect(adapter.pendingSteps).toBe(0);
 });
 
 test('error category remains a stable typed boundary', () => {

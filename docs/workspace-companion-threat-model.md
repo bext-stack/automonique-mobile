@@ -72,9 +72,12 @@ Drafts remain inert data. Authority previews are never cached.
 
 The production lifecycle now constructs the re-vendored canonical Platform v2
 gateway and its authenticated, generation-fenced transport. Automated tests
-cover negotiation, bounded paging, refusal/downgrade/resync, malformed input,
-authorization loss, preview expiry/replay/app reload, explicit confirmation,
-and exact lineage cancellation. End-to-end project discovery and multi-server
-UI remain blocked because the server-issued mobile authorization document does
-not yet carry an exact project-root grant. Terminal relay, live acceptance, and
-device evidence remain separate work.
+cover negotiation, bounded paging, refusal/downgrade/resync, malformed and
+future grants, authorization loss and generation races, preview
+expiry/replay/app reload, exact approval decisions, durable receipt lookup
+without replay, explicit confirmation, project ancestry, and exact lineage
+cancellation. End-to-end use remains blocked by multiple independent gaps: the
+bridge does not yet validate a delegated mobile bearer principal; no
+server-issued document supplies exact project roots and per-v2-action grants;
+production multi-server UI/cache integration is not complete; and live
+acceptance has not run. Terminal relay and device evidence remain separate work.

@@ -41,12 +41,15 @@ Terminal requires both a workspace navigation grant and a separate live
 `terminal_relay` actor action; neither workspace visibility nor cached
 authority can supply it.
 
-Platform v2 inventory queries require an exact project root. The current mobile
-authorization schema grants sessions but not project roots, so the app refuses
-to infer a root from a label, retained session, external issue, or method
-presence. The authenticated gateway is production-ready but remains unreachable
-from workspace screens until a server-issued, revocable project-root grant is
-admitted.
+Platform v2 inventory queries require an exact project root and every operation
+requires its own v2 action. The current mobile authorization schema grants
+sessions, not a bridge-validated delegated v2 bearer principal. The current
+bridge accepts Basic integration principals only; mobile never converts a
+bearer into Basic. A future server-issued grant must bind tenant, actor, opaque
+principal mapping, server/credential identity and revisions, generation,
+expiry, sorted project roots, and sorted per-operation actions. Until then the
+gateway is fail-closed. Bridge authentication support, project/action grants,
+production UI/cache integration, and live acceptance are independent blockers.
 
 ## Exact decimal revisions
 

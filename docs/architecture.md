@@ -18,9 +18,13 @@ revoked identities to their tenant, origin, and last authorization revision.
 Bounded per-object revision tombstones also retain workspace, attempt, and
 session rollback fences across omission; reintroduction must advance the exact
 object revision.
-The provider does not infer project roots from the v1 session scope. Until the
-server mobile authorization contract issues exact project roots, no production
-screen can start inventory reads or a workspace mutation.
+The provider does not infer project roots or v2 actions from the v1 session
+scope. Until the server issues a delegated bearer principal with exact roots,
+per-action grants, identity/revisions, generation, and expiry—and the bridge
+validates that principal—no production screen can start inventory reads or a
+workspace mutation. This authentication incompatibility, project/action
+authorization, production UI/cache integration, and live acceptance are
+distinct blockers.
 
 ## System boundary
 
@@ -62,8 +66,13 @@ provider rechecks the original authorization fingerprint after asynchronous
 refresh, and 401/403/410 responses move the process-wide lifecycle to
 `refresh_required`. Prepared lifecycle previews are held only in memory and
 are single-use; app reload, credential replacement, expiry, denial, or replay
-cannot submit them. A submit response only requests a fresh projection—the
-mobile client never converts an opaque transport receipt into local success.
+cannot submit them. Before submit, mobile persists only a bounded,
+principal-fingerprinted receipt lookup handle—never the preview, intent,
+authority, or an outbox. Canonical receipts must match the exact project-bound
+handle, preview, digests, idempotency key, approval, and resulting revision.
+Accepted or transport-lost submissions remain explicitly reconcilable across
+reload without replay, and settled receipts require an authoritative
+projection refresh.
 
 The synthetic and SDK gateways implement the same interface. Synthetic data
 must pass through gateway bootstrap, attachment, cursor reduction, mutation,

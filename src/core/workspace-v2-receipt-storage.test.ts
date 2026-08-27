@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: Elastic-2.0
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { createWorkspaceV2ReceiptStore } from './workspace-v2-receipt-storage';
+import {
+  WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
+  type WorkspaceV2ReceiptHandle,
+} from './workspace-v2-receipts';
+
+jest.mock('@react-native-async-storage/async-storage', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+
+const fingerprint = 'delegated-principal-fingerprint';
+const handle: WorkspaceV2ReceiptHandle = {
+  schema: WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
+  authorization_fingerprint: fingerprint,
+  project: 'project-mobile',
+  idempotency_key: 'workspace-create-1',
+  preview_id: 'preview-workspace-1',
+  preview_revision: '1',
+  preview_digest: `sha256:${'a'.repeat(64)}`,
+  request_digest: `sha256:${'b'.repeat(64)}`,
+  approval_id: null,
+  expected_resulting_revision: '1',
+  created_at_ms: '1777000000000',
+};
+
+beforeEach(async () => {
+  await AsyncStorage.clear();
+});
+
+test('persists only a bounded lookup handle across store recreation', async () => {
+  await createWorkspaceV2ReceiptStore(fingerprint).put(handle);
+  const encoded = JSON.stringify(
+    await createWorkspaceV2ReceiptStore(fingerprint).list(),
+  );
+  expect(JSON.parse(encoded)).toEqual([handle]);
+  expect(encoded).not.toContain('resolved_parents');
+  expect(encoded).not.toContain('effective_authority');
+  expect(encoded).not.toContain('intent');
+});
+
+test('refuses collisions, foreign authorization scope, and malformed storage', async () => {
+  const store = createWorkspaceV2ReceiptStore(fingerprint);
+  await store.put(handle);
+  await expect(
+    store.put({ ...handle, project: 'project-other' }),
+  ).rejects.toThrow('workspace_v2_receipt_handle_collision');
+  await expect(
+    store.put({ ...handle, authorization_fingerprint: 'foreign' }),
+  ).rejects.toThrow('workspace_v2_receipt_handle_scope_mismatch');
+
+  const key = (await AsyncStorage.getAllKeys())[0]!;
+  await AsyncStorage.setItem(
+    key,
+    JSON.stringify([{ ...handle, future: true }]),
+  );
+  await expect(store.list()).rejects.toThrow(
+    'workspace_v2_receipt_store_invalid',
+  );
+});
+
+test('keeps the bounded store intact when capacity is exhausted', async () => {
+  const store = createWorkspaceV2ReceiptStore(fingerprint);
+  for (let index = 0; index < 20; index += 1) {
+    await store.put({
+      ...handle,
+      idempotency_key: `workspace-create-${index}`,
+      preview_id: `preview-workspace-${index}`,
+    });
+  }
+  await expect(
+    store.put({
+      ...handle,
+      idempotency_key: 'workspace-create-overflow',
+      preview_id: 'preview-workspace-overflow',
+    }),
+  ).rejects.toThrow('workspace_v2_receipt_store_full');
+  await expect(store.list()).resolves.toHaveLength(20);
+});

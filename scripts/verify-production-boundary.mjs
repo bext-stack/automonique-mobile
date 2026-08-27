@@ -14,7 +14,10 @@ const forbidden = [
   'workspace-fixtures',
   'workspaceCompanionFixture',
   '@automonique/sdk/testing',
+  '@automonique/sdk/testing/internal',
   'DeterministicPlatformV2Adapter',
+  'PlatformV2CanonicalTestingTransport',
+  'canonicalTestingTransports',
 ];
 
 const sourceExtensions = ['', '.ts', '.tsx', '.js', '.jsx'];
@@ -79,9 +82,12 @@ if (requireBundle && bundles.length === 0) {
   throw new Error('production_bundle_missing');
 }
 for (const bundle of bundles) {
-  const source = await readFile(bundle, 'utf8');
+  const source = await readFile(bundle);
   for (const marker of forbidden) {
-    if (source.includes(marker)) {
+    if (
+      source.includes(Buffer.from(marker, 'utf8')) ||
+      source.includes(Buffer.from(marker, 'utf16le'))
+    ) {
       throw new Error(
         `production_bundle_mock_boundary_failed:${relative(root, bundle)}:${marker}`,
       );

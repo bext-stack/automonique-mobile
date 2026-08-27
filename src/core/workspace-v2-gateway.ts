@@ -31,6 +31,18 @@ import {
   type WorkspaceIntent,
   type WorkspaceIntentOutcome,
 } from '@automonique/sdk';
+import {
+  mobileV2AuthorizationFingerprint,
+  type DelegatedMobileV2Authorization,
+  type MobileV2Action,
+} from './mobile-v2-authorization';
+import {
+  WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
+  decodeWorkspaceV2Receipt,
+  workspaceV2ReceiptSettled,
+  type WorkspaceV2ReceiptHandle,
+  type WorkspaceV2ReceiptStore,
+} from './workspace-v2-receipts';
 
 const ALL_WORK_CONTEXT_KINDS = [
   'project',
@@ -68,12 +80,33 @@ export type WorkspaceMutationConfirmation =
   | {
       readonly kind: 'submitted';
       readonly idempotencyKey: string;
-      /**
-       * The v2 transport intentionally retains raw receipt custody. A fresh
-       * project read, not a locally invented success state, proves the result.
-       */
+      readonly receipt: MutationReceipt;
+      readonly projectionRefreshRequired: true;
+    }
+  | {
+      readonly kind: 'ambiguous';
+      readonly idempotencyKey: string;
       readonly projectionRefreshRequired: true;
     };
+
+export type WorkspaceMutationReconciliation =
+  | {
+      readonly kind: 'accepted';
+      readonly handle: WorkspaceV2ReceiptHandle;
+      readonly receipt: MutationReceipt;
+    }
+  | {
+      readonly kind: 'settled';
+      readonly handle: WorkspaceV2ReceiptHandle;
+      readonly receipt: MutationReceipt;
+      readonly projectionRefreshRequired: true;
+    };
+
+export interface WorkspaceIntentResult {
+  readonly project: ProjectIdValue;
+  readonly intentId: ReturnType<typeof WorkspaceIntentId>;
+  readonly outcome: WorkspaceIntentOutcome;
+}
 
 export interface WorkspaceV2Gateway {
   negotiate(signal?: AbortSignal): Promise<void>;
@@ -102,16 +135,21 @@ export interface WorkspaceV2Gateway {
     decision: 'grant' | 'deny',
     signal?: AbortSignal,
   ): Promise<WorkspaceMutationConfirmation>;
+  pendingMutationReceipts(): Promise<readonly WorkspaceV2ReceiptHandle[]>;
+  reconcileMutation(
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<WorkspaceMutationReconciliation>;
   submitWorkspaceIntent(
     project: string,
     intent: WorkspaceIntent,
     signal?: AbortSignal,
-  ): Promise<WorkspaceIntentOutcome>;
+  ): Promise<WorkspaceIntentResult>;
   getWorkspaceIntent(
     project: string,
     intentId: string,
     signal?: AbortSignal,
-  ): Promise<WorkspaceIntentOutcome>;
+  ): Promise<WorkspaceIntentResult>;
   cancelWorkspaceIntent(
     project: string,
     workspace: string,
@@ -119,7 +157,7 @@ export interface WorkspaceV2Gateway {
     intentId: string,
     targetIntentId: string,
     signal?: AbortSignal,
-  ): Promise<WorkspaceIntentOutcome>;
+  ): Promise<WorkspaceIntentResult>;
 }
 
 export class WorkspaceV2GatewayError extends Error {
@@ -127,6 +165,14 @@ export class WorkspaceV2GatewayError extends Error {
     super(category);
     this.name = 'WorkspaceV2GatewayError';
   }
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 interface WorkspaceV2Client {
@@ -168,6 +214,10 @@ interface WorkspaceV2Client {
     approvalId: MutationApproval['id'] | null,
     signal?: AbortSignal,
   ): ReturnType<PlatformV2Client['submitMutation']>;
+  getMutationReceipt(
+    lookup: Parameters<PlatformV2Client['getMutationReceipt']>[0],
+    signal?: AbortSignal,
+  ): ReturnType<PlatformV2Client['getMutationReceipt']>;
   submitWorkspaceIntent(
     project: ProjectIdValue,
     intent: WorkspaceIntent,
@@ -182,7 +232,15 @@ interface WorkspaceV2Client {
 
 interface WorkspaceV2GatewayOptions {
   readonly client: WorkspaceV2Client;
+  readonly authorization: DelegatedMobileV2Authorization;
   readonly now?: () => number;
+  readonly operationGuard?: WorkspaceV2OperationGuard;
+  readonly receiptStore: WorkspaceV2ReceiptStore;
+}
+
+export interface WorkspaceV2OperationGuard {
+  readonly signal: AbortSignal;
+  admit(): void;
 }
 
 function refusal(
@@ -330,44 +388,280 @@ function validateProjectGraph(
   }
 }
 
+function snapshotRecord(
+  snapshots: ReadonlyMap<ProjectIdValue, readonly WorkContextRecord[]>,
+  project: ProjectIdValue,
+  kind:
+    | 'project'
+    | 'host_setup'
+    | 'checkout'
+    | 'user_workspace'
+    | 'attempt_workspace'
+    | 'session'
+    | 'pane',
+  id: string,
+): WorkContextRecord {
+  const records = snapshots.get(project);
+  if (records === undefined) {
+    throw new WorkspaceV2GatewayError('workspace_project_snapshot_required');
+  }
+  const record = records.find(
+    (candidate) =>
+      candidate.identity.kind === kind &&
+      'id' in candidate.identity &&
+      candidate.identity.id === id,
+  );
+  if (record === undefined) {
+    throw new WorkspaceV2GatewayError('workspace_target_outside_project');
+  }
+  return record;
+}
+
+function requireExpectedRecord(
+  snapshots: ReadonlyMap<ProjectIdValue, readonly WorkContextRecord[]>,
+  project: ProjectIdValue,
+  expected: Extract<
+    WorkContextMutationIntent,
+    { readonly kind: 'create_user_workspace' }
+  >['project'],
+): WorkContextRecord {
+  if (
+    expected.identity.kind === 'repository' ||
+    expected.identity.kind === 'platform_session'
+  ) {
+    throw new WorkspaceV2GatewayError('workspace_target_outside_project');
+  }
+  const record = snapshotRecord(
+    snapshots,
+    project,
+    expected.identity.kind,
+    expected.identity.id,
+  );
+  if (record.revision !== expected.revision) {
+    throw new WorkspaceV2GatewayError('workspace_target_revision_stale');
+  }
+  return record;
+}
+
+function requireWorkspaceInSnapshot(
+  snapshots: ReadonlyMap<ProjectIdValue, readonly WorkContextRecord[]>,
+  project: ProjectIdValue,
+  workspace: UserWorkspaceIdValue,
+): WorkContextRecord {
+  return snapshotRecord(snapshots, project, 'user_workspace', workspace);
+}
+
+function requireWorkspaceRevision(
+  snapshots: ReadonlyMap<ProjectIdValue, readonly WorkContextRecord[]>,
+  project: ProjectIdValue,
+  workspace: UserWorkspaceIdValue,
+  revision: bigint,
+): WorkContextRecord {
+  const record = requireWorkspaceInSnapshot(snapshots, project, workspace);
+  if (record.revision !== WorkContextRevision(revision)) {
+    throw new WorkspaceV2GatewayError('workspace_target_revision_stale');
+  }
+  return record;
+}
+
+function requireReviewWorkspaceInSnapshot(
+  snapshots: ReadonlyMap<ProjectIdValue, readonly WorkContextRecord[]>,
+  project: ProjectIdValue,
+  workspace: ReviewWorkspaceIdentity,
+): void {
+  if (!('id' in workspace)) {
+    throw new WorkspaceV2GatewayError('workspace_target_outside_project');
+  }
+  snapshotRecord(snapshots, project, workspace.kind, workspace.id);
+}
+
+function sameWorkContextIdentity(
+  left: WorkContextRecord['identity'],
+  right: WorkContextRecord['identity'],
+): boolean {
+  if (left.kind !== right.kind) return false;
+  if ('id' in left && 'id' in right) return left.id === right.id;
+  if ('resource' in left && 'resource' in right) {
+    return (
+      left.resource.authority === right.resource.authority &&
+      left.resource.kind === right.resource.kind &&
+      left.resource.id === right.resource.id
+    );
+  }
+  return false;
+}
+
+function requireMutationAncestry(
+  snapshots: ReadonlyMap<ProjectIdValue, readonly WorkContextRecord[]>,
+  project: ProjectIdValue,
+  intent: WorkspaceLifecycleIntent,
+): void {
+  switch (intent.kind) {
+    case 'create_user_workspace':
+      requireExpectedRecord(snapshots, project, intent.project);
+      requireExpectedRecord(snapshots, project, intent.checkout);
+      break;
+    case 'create_attempt_workspace':
+      requireExpectedRecord(snapshots, project, intent.user_workspace);
+      break;
+    case 'resume_attempt_workspace':
+    case 'resume_session':
+      requireExpectedRecord(snapshots, project, intent.target);
+      break;
+  }
+}
+
+function requireWorkspaceIntentAncestry(
+  snapshots: ReadonlyMap<ProjectIdValue, readonly WorkContextRecord[]>,
+  project: ProjectIdValue,
+  intent: WorkspaceIntent,
+): void {
+  if (intent.kind === 'create') {
+    snapshotRecord(snapshots, project, 'project', project);
+    return;
+  }
+  requireWorkspaceRevision(
+    snapshots,
+    project,
+    UserWorkspaceId(intent.request.workspace),
+    intent.request.expected_revision,
+  );
+}
+
+function requireWorkspaceIntentOutcome(
+  intent: WorkspaceIntent,
+  outcome: WorkspaceIntentOutcome,
+): void {
+  if (
+    outcome.kind === 'accepted' ||
+    outcome.kind === 'unknown' ||
+    outcome.kind === 'conflict'
+  ) {
+    return;
+  }
+  if (
+    (intent.kind === 'create' && outcome.kind === 'created') ||
+    (intent.kind === 'resume' &&
+      outcome.kind === 'resumed' &&
+      outcome.workspace === intent.request.workspace) ||
+    (intent.kind === 'cancel' &&
+      outcome.kind === 'cancelled' &&
+      outcome.target_intent_id === intent.request.target_intent_id)
+  ) {
+    return;
+  }
+  throw new WorkspaceV2GatewayError('workspace_intent_outcome_mismatch');
+}
+
 export function createWorkspaceV2Gateway(
   options: WorkspaceV2GatewayOptions,
 ): WorkspaceV2Gateway {
   const now = options.now ?? Date.now;
+  const authorization = deepFreeze({
+    ...options.authorization,
+    project_roots: [...options.authorization.project_roots],
+    actions: [...options.authorization.actions],
+  });
   const pendingPreviews = new WeakSet<PreparedWorkspaceMutation>();
+  const projectSnapshots = new Map<
+    ProjectIdValue,
+    readonly WorkContextRecord[]
+  >();
+  const authorizationFingerprint =
+    mobileV2AuthorizationFingerprint(authorization);
+  const receiptStore = options.receiptStore;
+
+  function requireAction(action: MobileV2Action): void {
+    if (!authorization.actions.includes(action)) {
+      throw new WorkspaceV2GatewayError('mobile_v2_action_unauthorized');
+    }
+  }
+
+  function requireProject(project: ProjectIdValue): void {
+    if (!authorization.project_roots.includes(project)) {
+      throw new WorkspaceV2GatewayError('mobile_v2_project_unauthorized');
+    }
+  }
+
+  async function guarded<T>(
+    signal: AbortSignal | undefined,
+    operation: (combined: AbortSignal | undefined) => Promise<T>,
+  ): Promise<T> {
+    if (authorization.expires_at_ms <= BigInt(now())) {
+      throw new WorkspaceV2GatewayError('mobile_v2_authorization_expired');
+    }
+    options.operationGuard?.admit();
+    const controller = new AbortController();
+    const sources = [signal, options.operationGuard?.signal].filter(
+      (source): source is AbortSignal => source !== undefined,
+    );
+    const listeners = sources.map((source) => ({
+      source,
+      listener: () => controller.abort(source.reason),
+    }));
+    for (const { source, listener } of listeners) {
+      if (source.aborted) listener();
+      else source.addEventListener('abort', listener, { once: true });
+    }
+    if (controller.signal.aborted) {
+      throw new WorkspaceV2GatewayError('aborted');
+    }
+    try {
+      const result = await operation(
+        sources.length === 0 ? undefined : controller.signal,
+      );
+      options.operationGuard?.admit();
+      if (authorization.expires_at_ms <= BigInt(now())) {
+        throw new WorkspaceV2GatewayError('mobile_v2_authorization_expired');
+      }
+      return result;
+    } finally {
+      for (const { source, listener } of listeners) {
+        source.removeEventListener('abort', listener);
+      }
+      if (!controller.signal.aborted) controller.abort('operation_complete');
+    }
+  }
 
   return {
     async negotiate(signal) {
+      // Negotiation does not itself confer an operation grant.
       requireNegotiatedV2(
-        await options.client.negotiate(
-          {
-            schema: PLATFORM_NEGOTIATION_SCHEMA_V1,
-            versions: [PlatformVersionNumber(1n), PlatformVersionNumber(2n)],
-          },
-          signal,
+        await guarded(signal, (combined) =>
+          options.client.negotiate(
+            {
+              schema: PLATFORM_NEGOTIATION_SCHEMA_V1,
+              versions: [PlatformVersionNumber(1n), PlatformVersionNumber(2n)],
+            },
+            combined,
+          ),
         ),
       );
     },
 
     async loadProject(projectValue, signal) {
+      requireAction('query_work_contexts');
       const project = ProjectId(projectValue);
+      requireProject(project);
       const records: WorkContextRecord[] = [];
       const identities = new Set<string>();
       const cursors = new Set<string>();
       let after: Parameters<PlatformV2Client['queryWorkContexts']>[0]['after'] =
         null;
       for (let pageIndex = 0; pageIndex < MAX_PROJECT_PAGES; pageIndex += 1) {
-        const response = await options.client.queryWorkContexts(
-          {
-            after,
-            kinds: ALL_WORK_CONTEXT_KINDS,
-            lifecycles: [],
-            limit: WorkContextPageLimit(PROJECT_PAGE_LIMIT),
-            parent: null,
-            project,
-            schema: PLATFORM_SCHEMA_V2,
-          },
-          signal,
+        const response = await guarded(signal, (combined) =>
+          options.client.queryWorkContexts(
+            {
+              after,
+              kinds: ALL_WORK_CONTEXT_KINDS,
+              lifecycles: [],
+              limit: WorkContextPageLimit(PROJECT_PAGE_LIMIT),
+              parent: null,
+              project,
+              schema: PLATFORM_SCHEMA_V2,
+            },
+            combined,
+          ),
         );
         if (response.kind === 'platform_v2_refused') refusal(response.refusal);
         if (response.kind === 'work_context_resync') {
@@ -397,7 +691,9 @@ export function createWorkspaceV2Gateway(
         }
         if (!response.page.has_more) {
           validateProjectGraph(project, records);
-          return records;
+          const snapshot = deepFreeze([...records]);
+          projectSnapshots.set(project, snapshot);
+          return snapshot;
         }
         const next = response.page.next_cursor;
         if (next === null || cursors.has(next)) {
@@ -410,32 +706,60 @@ export function createWorkspaceV2Gateway(
     },
 
     async loadLineage(projectValue, workspaceValue, signal) {
-      const response = await options.client.getLineage(
-        ProjectId(projectValue),
+      requireAction('get_lineage');
+      const project = ProjectId(projectValue);
+      requireProject(project);
+      requireWorkspaceInSnapshot(
+        projectSnapshots,
+        project,
         UserWorkspaceId(workspaceValue),
-        signal,
+      );
+      const response = await guarded(signal, (combined) =>
+        options.client.getLineage(
+          project,
+          UserWorkspaceId(workspaceValue),
+          combined,
+        ),
       );
       if (response.kind === 'platform_v2_refused') refusal(response.refusal);
+      if (
+        response.lineage.workspace !== UserWorkspaceId(workspaceValue) ||
+        response.lineage.orchestration.some(
+          (record) => record.workspace !== UserWorkspaceId(workspaceValue),
+        )
+      ) {
+        throw new WorkspaceV2GatewayError('workspace_lineage_mismatch');
+      }
       return response.lineage;
     },
 
     async loadReview(projectValue, workspace, signal) {
-      const response = await options.client.getReview(
-        ProjectId(projectValue),
-        workspace,
-        signal,
+      requireAction('get_review');
+      const project = ProjectId(projectValue);
+      requireProject(project);
+      requireReviewWorkspaceInSnapshot(projectSnapshots, project, workspace);
+      const response = await guarded(signal, (combined) =>
+        options.client.getReview(project, workspace, combined),
       );
       if (response.kind === 'platform_v2_refused') refusal(response.refusal);
+      if (!sameWorkContextIdentity(response.review.workspace, workspace)) {
+        throw new WorkspaceV2GatewayError('workspace_review_mismatch');
+      }
       return response.review;
     },
 
     async prepareMutation(projectValue, intent, keyValue, signal) {
+      requireAction('prepare_mutation');
       const project = ProjectId(projectValue);
+      requireProject(project);
+      requireMutationAncestry(projectSnapshots, project, intent);
       requireMutationIntentProject(project, intent);
-      const response = await options.client.prepareMutation(
-        IdempotencyKey(keyValue),
-        intent,
-        signal,
+      const response = await guarded(signal, (combined) =>
+        options.client.prepareMutation(
+          IdempotencyKey(keyValue),
+          intent,
+          combined,
+        ),
       );
       if (
         response.kind === 'platform_v2_refused' ||
@@ -447,11 +771,11 @@ export function createWorkspaceV2Gateway(
             : response.refusal,
         );
       }
-      const prepared: PreparedWorkspaceMutation = {
+      const prepared: PreparedWorkspaceMutation = Object.freeze({
         project,
         preview: response.preview,
         previewDigest: mutationPreviewDigest(response.preview),
-      };
+      });
       requireLivePreview(prepared.preview, now());
       pendingPreviews.add(prepared);
       return prepared;
@@ -473,11 +797,15 @@ export function createWorkspaceV2Gateway(
       }
       let approval: MutationApproval | null = null;
       if (prepared.preview.approval === 'required') {
-        const response = await options.client.decideMutation(
-          prepared.preview.preview,
-          prepared.previewDigest,
-          decision === 'grant' ? 'granted' : 'denied',
-          signal,
+        requireAction('decide_mutation');
+        const requestedDecision = decision === 'grant' ? 'granted' : 'denied';
+        const response = await guarded(signal, (combined) =>
+          options.client.decideMutation(
+            prepared.preview.preview,
+            prepared.previewDigest,
+            requestedDecision,
+            combined,
+          ),
         );
         if (
           response.kind === 'platform_v2_refused' ||
@@ -489,46 +817,155 @@ export function createWorkspaceV2Gateway(
           response.approval.canonical,
           prepared.preview,
         );
+        if (approval.decision !== requestedDecision) {
+          throw new WorkspaceV2GatewayError('workspace_approval_mismatch');
+        }
         if (decision === 'deny') return { kind: 'denied', approval };
       }
       requireLivePreview(prepared.preview, now());
-      const submitted = await options.client.submitMutation(
-        prepared.preview.preview,
-        prepared.previewDigest,
-        approval?.id ?? null,
-        signal,
-      );
+      requireAction('submit_mutation');
+      requireProject(prepared.project);
+      const handle: WorkspaceV2ReceiptHandle = {
+        schema: WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
+        authorization_fingerprint: authorizationFingerprint,
+        project: prepared.project,
+        idempotency_key: prepared.preview.proposal.idempotency_key,
+        preview_id: prepared.preview.preview.id,
+        preview_revision: prepared.preview.preview.revision.toString(),
+        preview_digest: prepared.previewDigest,
+        request_digest: prepared.preview.proposal.request_digest,
+        approval_id: approval?.id ?? null,
+        expected_resulting_revision:
+          prepared.preview.resulting.revision.toString(),
+        created_at_ms: BigInt(now()).toString(),
+      };
+      // Persist only a bounded lookup capability before the one-shot submit.
+      // It contains no intent, authority, preview payload, or replayable outbox.
+      await receiptStore.put(handle);
+      let submitted: Awaited<ReturnType<WorkspaceV2Client['submitMutation']>>;
+      try {
+        submitted = await guarded(signal, (combined) =>
+          options.client.submitMutation(
+            prepared.preview.preview,
+            prepared.previewDigest,
+            approval?.id ?? null,
+            combined,
+          ),
+        );
+      } catch {
+        return {
+          kind: 'ambiguous',
+          idempotencyKey: handle.idempotency_key,
+          projectionRefreshRequired: true,
+        };
+      }
       if (
         submitted.kind === 'platform_v2_refused' ||
         submitted.kind === 'mutation_refused'
       ) {
+        await receiptStore.remove(handle.idempotency_key);
         refusal(submitted.refusal);
+      }
+      const receipt = decodeWorkspaceV2Receipt(
+        submitted.receipt.canonical,
+        handle,
+      );
+      if (workspaceV2ReceiptSettled(receipt)) {
+        await receiptStore.remove(handle.idempotency_key);
       }
       return {
         kind: 'submitted',
-        idempotencyKey: prepared.preview.proposal.idempotency_key,
+        idempotencyKey: handle.idempotency_key,
+        receipt,
         projectionRefreshRequired: true,
       };
     },
 
+    async pendingMutationReceipts() {
+      requireAction('get_mutation_receipt');
+      if (authorization.expires_at_ms <= BigInt(now())) {
+        throw new WorkspaceV2GatewayError('mobile_v2_authorization_expired');
+      }
+      options.operationGuard?.admit();
+      const handles = await receiptStore.list();
+      options.operationGuard?.admit();
+      return handles;
+    },
+
+    async reconcileMutation(idempotencyKeyValue, signal) {
+      requireAction('get_mutation_receipt');
+      const idempotencyKey = IdempotencyKey(idempotencyKeyValue);
+      const handles = await receiptStore.list();
+      const handle = handles.find(
+        (candidate) => candidate.idempotency_key === idempotencyKey,
+      );
+      if (handle === undefined) {
+        throw new WorkspaceV2GatewayError('workspace_receipt_handle_missing');
+      }
+      const project = ProjectId(handle.project);
+      requireProject(project);
+      const response = await guarded(signal, (combined) =>
+        options.client.getMutationReceipt(
+          { project, idempotency_key: idempotencyKey },
+          combined,
+        ),
+      );
+      if (
+        response.kind === 'platform_v2_refused' ||
+        response.kind === 'mutation_refused'
+      ) {
+        refusal(response.refusal);
+      }
+      const receipt = decodeWorkspaceV2Receipt(
+        response.receipt.canonical,
+        handle,
+      );
+      if (workspaceV2ReceiptSettled(receipt)) {
+        await receiptStore.remove(handle.idempotency_key);
+        return {
+          kind: 'settled',
+          handle,
+          receipt,
+          projectionRefreshRequired: true,
+        };
+      }
+      return { kind: 'accepted', handle, receipt };
+    },
+
     async submitWorkspaceIntent(projectValue, intent, signal) {
-      const response = await options.client.submitWorkspaceIntent(
-        ProjectId(projectValue),
-        intent,
-        signal,
+      requireAction('submit_workspace_intent');
+      const project = ProjectId(projectValue);
+      requireProject(project);
+      requireWorkspaceIntentAncestry(projectSnapshots, project, intent);
+      const response = await guarded(signal, (combined) =>
+        options.client.submitWorkspaceIntent(project, intent, combined),
       );
       if (response.kind === 'platform_v2_refused') refusal(response.refusal);
-      return response.result;
+      requireWorkspaceIntentOutcome(intent, response.result);
+      return {
+        project,
+        intentId: intent.request.intent_id,
+        outcome: response.result,
+      };
     },
 
     async getWorkspaceIntent(projectValue, intentIdValue, signal) {
-      const response = await options.client.getWorkspaceIntent(
-        ProjectId(projectValue),
-        WorkspaceIntentId(intentIdValue),
-        signal,
+      requireAction('get_workspace_intent');
+      const project = ProjectId(projectValue);
+      requireProject(project);
+      const response = await guarded(signal, (combined) =>
+        options.client.getWorkspaceIntent(
+          project,
+          WorkspaceIntentId(intentIdValue),
+          combined,
+        ),
       );
       if (response.kind === 'platform_v2_refused') refusal(response.refusal);
-      return response.result;
+      return {
+        project,
+        intentId: WorkspaceIntentId(intentIdValue),
+        outcome: response.result,
+      };
     },
 
     async cancelWorkspaceIntent(
@@ -539,37 +976,48 @@ export function createWorkspaceV2Gateway(
       targetIntentIdValue,
       signal,
     ) {
+      requireAction('submit_workspace_intent');
       const project = ProjectId(projectValue);
+      requireProject(project);
       const workspace = UserWorkspaceId(workspaceValue);
+      requireWorkspaceRevision(
+        projectSnapshots,
+        project,
+        workspace,
+        expectedRevision,
+      );
       const intentId = WorkspaceIntentId(intentIdValue);
       const targetIntentId = WorkspaceIntentId(targetIntentIdValue);
       if (intentId === targetIntentId) {
         throw new WorkspaceV2GatewayError('workspace_cancel_target_invalid');
       }
-      const response = await options.client.submitWorkspaceIntent(
-        project,
-        {
-          kind: 'cancel',
-          request: {
-            expected_revision: WorkContextRevision(expectedRevision),
-            intent_id: intentId,
-            target_intent_id: targetIntentId,
-            workspace,
-          },
+      const intent: WorkspaceIntent = {
+        kind: 'cancel',
+        request: {
+          expected_revision: WorkContextRevision(expectedRevision),
+          intent_id: intentId,
+          target_intent_id: targetIntentId,
+          workspace,
         },
-        signal,
+      };
+      const response = await guarded(signal, (combined) =>
+        options.client.submitWorkspaceIntent(project, intent, combined),
       );
       if (response.kind === 'platform_v2_refused') refusal(response.refusal);
-      return response.result;
+      requireWorkspaceIntentOutcome(intent, response.result);
+      return { project, intentId, outcome: response.result };
     },
   };
 }
 
 export interface AuthorizedWorkspaceV2GatewayOptions {
+  readonly authorization: DelegatedMobileV2Authorization;
   readonly endpoint: string;
   readonly fetcher?: typeof fetch;
   readonly now?: () => number;
   readonly token: () => string | Promise<string>;
+  readonly operationGuard?: WorkspaceV2OperationGuard;
+  readonly receiptStore: WorkspaceV2ReceiptStore;
 }
 
 /** Production constructor. The bearer and raw transport stay behind the SDK. */
@@ -577,6 +1025,7 @@ export function createAuthorizedWorkspaceV2Gateway(
   options: AuthorizedWorkspaceV2GatewayOptions,
 ): WorkspaceV2Gateway {
   return createWorkspaceV2Gateway({
+    authorization: options.authorization,
     client: new PlatformV2Client(
       new HttpsPlatformV2Transport(
         options.endpoint,
@@ -585,10 +1034,14 @@ export function createAuthorizedWorkspaceV2Gateway(
       ),
     ),
     ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.operationGuard === undefined
+      ? {}
+      : { operationGuard: options.operationGuard }),
+    receiptStore: options.receiptStore,
   });
 }
 
 // Keep these protocol types reachable only from this modular review/lifecycle
 // boundary. Issue #35 can build UI policy without widening the production
 // transport or exposing generic execute.
-export type { MutationReceipt };
+export type { MutationReceipt, WorkspaceV2ReceiptHandle };

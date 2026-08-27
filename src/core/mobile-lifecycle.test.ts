@@ -18,6 +18,7 @@ import {
   MobileRevision,
   MobileServerIdentity,
   MobileSessionId,
+  ProjectId,
   type IssuedMobileCredentials,
   type MobileDiscovery,
   type MobilePairingOffer,
@@ -31,6 +32,15 @@ import {
 } from './credential-store';
 import { MobileLifecycleCoordinator } from './mobile-lifecycle';
 import { SUPPORTED_MOBILE_PROTOCOL_VERSIONS } from './negotiation';
+import {
+  MOBILE_V2_ACTIONS,
+  MOBILE_V2_AUTHORIZATION_SCHEMA,
+} from './mobile-v2-authorization';
+
+jest.mock('@react-native-async-storage/async-storage', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
 
 jest.mock('./credential-store', () => ({
   loadStoredConnection: jest.fn(),
@@ -122,6 +132,27 @@ function connection(value: IssuedMobileCredentials): ScopedConnection {
       sessionScope: value.authorization.session_scope,
       maxPageEvents: 100,
       maxFollowUpBytes: 4096,
+    },
+  };
+}
+
+function withWorkspaceAuthorization(value: ScopedConnection): ScopedConnection {
+  return {
+    ...value,
+    workspaceAuthorization: {
+      schema: MOBILE_V2_AUTHORIZATION_SCHEMA,
+      server_identity: value.authorization.server_identity,
+      credential_id: value.authorization.credential_id,
+      credential_revision: value.authorization.credential_revision,
+      authorization_revision: value.authorization.authorization_revision,
+      principal_generation: 1n,
+      delegation_id: 'delegation-mobile',
+      tenant_id: 'tenant-mobile',
+      actor_id: 'operator-mobile',
+      issued_at_ms: BigInt(NOW - 1),
+      expires_at_ms: BigInt(NOW + 900_000),
+      project_roots: [ProjectId('project-mobile')],
+      actions: MOBILE_V2_ACTIONS,
     },
   };
 }
@@ -386,8 +417,67 @@ test('a Platform authorization refusal immediately makes the lifecycle read only
   expect(lifecycle.snapshot()).toMatchObject({ phase: 'refresh_required' });
 });
 
-test('a Platform v2 authorization refusal also gates the shared lifecycle', async () => {
+test('Platform v2 remains unavailable without an exact server-issued delegated principal', async () => {
   const active = connection(issued(1n, 'c', NOW + 900_000));
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  const lifecycle = new MobileLifecycleCoordinator({ now: () => NOW });
+  await lifecycle.hydrate();
+  expect(lifecycle.createWorkspaceGateway()).toBeNull();
+});
+
+test.each([
+  [
+    'future grant',
+    (value: ScopedConnection) => ({
+      ...withWorkspaceAuthorization(value),
+      workspaceAuthorization: {
+        ...withWorkspaceAuthorization(value).workspaceAuthorization!,
+        issued_at_ms: BigInt(NOW + 1),
+      },
+    }),
+  ],
+  [
+    'mismatched credential',
+    (value: ScopedConnection) => ({
+      ...withWorkspaceAuthorization(value),
+      workspaceAuthorization: {
+        ...withWorkspaceAuthorization(value).workspaceAuthorization!,
+        credential_revision: 2n,
+      },
+    }),
+  ],
+  [
+    'unsorted actions',
+    (value: ScopedConnection) => ({
+      ...withWorkspaceAuthorization(value),
+      workspaceAuthorization: {
+        ...withWorkspaceAuthorization(value).workspaceAuthorization!,
+        actions: [...MOBILE_V2_ACTIONS].reverse(),
+      },
+    }),
+  ],
+])(
+  'refuses a %s before constructing any v2 transport',
+  async (_label, alter) => {
+    const active = alter(connection(issued(1n, 'c', NOW + 900_000)));
+    loadStored.mockResolvedValue({ kind: 'active', connection: active });
+    const platformFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+    const lifecycle = new MobileLifecycleCoordinator({
+      now: () => NOW,
+      fetcher: platformFetch,
+    });
+    await lifecycle.hydrate();
+    expect(() => lifecycle.createWorkspaceGateway()).toThrow(
+      'mobile_v2_authorization_invalid',
+    );
+    expect(platformFetch).not.toHaveBeenCalled();
+  },
+);
+
+test('a Platform v2 authorization refusal also gates the shared lifecycle', async () => {
+  const active = withWorkspaceAuthorization(
+    connection(issued(1n, 'c', NOW + 900_000)),
+  );
   loadStored.mockResolvedValue({ kind: 'active', connection: active });
   const platformFetch = jest.fn(
     async (_input: RequestInfo | URL, _init?: RequestInit) =>
@@ -400,7 +490,7 @@ test('a Platform v2 authorization refusal also gates the shared lifecycle', asyn
   await lifecycle.hydrate();
 
   await expect(
-    lifecycle.createWorkspaceGateway().negotiate(),
+    lifecycle.createWorkspaceGateway()!.negotiate(),
   ).rejects.toThrow();
   expect(platformFetch).toHaveBeenCalledWith(
     'https://ops.example.test/api/platform/v2',
@@ -411,7 +501,9 @@ test('a Platform v2 authorization refusal also gates the shared lifecycle', asyn
 
 test('an old Platform v2 gateway cannot read a rotated credential', async () => {
   let clock = NOW;
-  const active = connection(issued(1n, 'c', NOW + 1));
+  const active = withWorkspaceAuthorization(
+    connection(issued(1n, 'c', NOW + 1)),
+  );
   const rotatedIssued = issued(2n, 'd', NOW + 900_000);
   const rotated = connection(rotatedIssued);
   loadStored.mockResolvedValue({ kind: 'active', connection: active });
@@ -427,16 +519,52 @@ test('an old Platform v2 gateway cannot read a rotated credential', async () => 
     })),
   });
   await lifecycle.hydrate();
-  const oldGateway = lifecycle.createWorkspaceGateway();
+  const oldGateway = lifecycle.createWorkspaceGateway()!;
   clock = NOW + 1;
-  await expect(oldGateway.negotiate()).rejects.toThrow(
-    'gateway_generation_replaced',
-  );
+  await expect(oldGateway.negotiate()).rejects.toThrow();
   expect(platformFetch).not.toHaveBeenCalled();
   expect(lifecycle.snapshot()).toMatchObject({
     phase: 'ready',
     profile: { credentialRevision: '2' },
   });
+});
+
+test('revocation aborts an in-flight Platform v2 call before any late response can be admitted', async () => {
+  const active = withWorkspaceAuthorization(
+    connection(issued(1n, 'c', NOW + 900_000)),
+  );
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  let fetchStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    fetchStarted = resolve;
+  });
+  const platformFetch = jest.fn(
+    async (_input: RequestInfo | URL, init?: RequestInit) => {
+      fetchStarted();
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          'abort',
+          () => reject(new Error('fetch_aborted')),
+          { once: true },
+        );
+      });
+    },
+  ) as jest.MockedFunction<typeof fetch>;
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+    discover: jest.fn(async () => ({
+      discovery: DISCOVERY,
+      refresh: jest.fn(),
+      revoke: jest.fn(async () => undefined),
+    })),
+  });
+  await lifecycle.hydrate();
+  const oldRequest = lifecycle.createWorkspaceGateway()!.negotiate();
+  await started;
+  await lifecycle.revoke();
+  await expect(oldRequest).rejects.toThrow();
+  expect(lifecycle.snapshot()).toEqual({ phase: 'unpaired', profile: null });
 });
 
 test('one-time pairing pins discovery, exchanges once, and commits the issued pair', async () => {

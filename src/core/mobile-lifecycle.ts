@@ -22,6 +22,11 @@ import {
   createAuthorizedWorkspaceV2Gateway,
   type WorkspaceV2Gateway,
 } from './workspace-v2-gateway';
+import {
+  admitDelegatedMobileV2Authorization,
+  mobileV2AuthorizationFingerprint,
+} from './mobile-v2-authorization';
+import { createWorkspaceV2ReceiptStore } from './workspace-v2-receipt-storage';
 
 export type MobileLifecycleState =
   | { readonly phase: 'loading'; readonly profile: null }
@@ -93,6 +98,10 @@ function gatewayFingerprint(connection: ScopedConnection): string {
     sessionScope: authorization.session_scope,
     maxPageEvents: authorization.limits.max_page_events.toString(),
     maxFollowUpBytes: authorization.limits.max_follow_up_bytes.toString(),
+    workspaceAuthorization:
+      connection.workspaceAuthorization === undefined
+        ? null
+        : mobileV2AuthorizationFingerprint(connection.workspaceAuthorization),
   });
 }
 
@@ -398,10 +407,26 @@ export class MobileLifecycleCoordinator {
    * roots are deliberately not inferred from the v1 session authorization;
    * callers must obtain an exact root from a future server-issued mobile grant.
    */
-  createWorkspaceGateway(): WorkspaceV2Gateway {
+  createWorkspaceGateway(): WorkspaceV2Gateway | null {
     if (this.connection === null) throw new Error('mobile_pairing_required');
     const connection = this.connection;
+    if (connection.workspaceAuthorization === undefined) return null;
+    const workspaceAuthorization = admitDelegatedMobileV2Authorization(
+      connection.workspaceAuthorization,
+      {
+        serverIdentity: connection.authorization.server_identity,
+        credentialId: connection.authorization.credential_id,
+        credentialRevision: connection.authorization.credential_revision,
+        authorizationRevision: connection.authorization.authorization_revision,
+        now: this.now(),
+      },
+    );
     const expectedFingerprint = gatewayFingerprint(connection);
+    const generation = this.generation;
+    const generationSignal = this.activeController?.signal;
+    if (this.state.phase !== 'ready' || generationSignal === undefined) {
+      throw new Error('mobile_credential_unavailable');
+    }
     const endpoint = new URL(connection.profile.platformEndpoint);
     endpoint.pathname = '/api/platform/v2';
     endpoint.search = '';
@@ -425,9 +450,34 @@ export class MobileLifecycleCoordinator {
       return response;
     };
     return createAuthorizedWorkspaceV2Gateway({
+      authorization: workspaceAuthorization,
       endpoint: endpoint.toString(),
       fetcher: lifecycleFetcher,
       now: this.now,
+      operationGuard: {
+        signal: generationSignal,
+        admit: () => {
+          if (
+            generationSignal.aborted ||
+            this.state.phase !== 'ready' ||
+            this.replacementPending > 0 ||
+            this.connection !== connection ||
+            this.generation !== generation ||
+            gatewayFingerprint(connection) !== expectedFingerprint ||
+            workspaceAuthorization.expires_at_ms <= BigInt(this.now())
+          ) {
+            throw new Error('gateway_generation_replaced');
+          }
+        },
+      },
+      receiptStore: createWorkspaceV2ReceiptStore(
+        mobileV2AuthorizationFingerprint(workspaceAuthorization),
+        [
+          workspaceAuthorization.server_identity,
+          workspaceAuthorization.credential_id,
+          workspaceAuthorization.principal_generation.toString(),
+        ].join('.'),
+      ),
       token: async () => {
         const token = await this.accessToken();
         if (

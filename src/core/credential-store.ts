@@ -22,6 +22,7 @@ import {
   type MobileAuthorization,
   type MobileDiscovery,
 } from '@automonique/sdk';
+import type { DelegatedMobileV2Authorization } from './mobile-v2-authorization';
 
 const PROFILE_KEY = 'automonique.mobile.connection-profile.v3';
 const CREDENTIAL_KEY = 'automonique.mobile.scoped-credential.v3';
@@ -49,6 +50,11 @@ export interface ScopedConnection {
   readonly accessToken: string;
   readonly refreshToken: string;
   readonly authorization: MobileAuthorization;
+  /**
+   * Reserved for a future canonical mobile-auth response. Current SDK/server
+   * responses do not issue this document, so production remains v2-disabled.
+   */
+  readonly workspaceAuthorization?: DelegatedMobileV2Authorization;
 }
 
 export type StoredConnection =

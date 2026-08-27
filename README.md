@@ -33,8 +33,13 @@ renegotiates it per credential generation, and exposes bounded project reads,
 lineage, read-only review, lifecycle preview/confirmation, and exact intent
 cancellation behind a narrow companion gateway. Production workspace screens
 remain fail-closed because today's mobile authorization document does not issue
-the exact project roots required by v2 queries; the app never derives one from
-a session, label, or external task.
+the delegated Platform v2 principal required by the bridge. That future
+server-issued document must bind the mobile bearer to an opaque server
+principal, exact project roots, each v2 action, identity, revisions,
+generation, and expiry. The current bridge is Basic-integration-only; mobile
+never translates its bearer into Basic or derives authority from a session,
+label, or external task. Project grants, production UI/cache integration, and
+live acceptance remain separate blockers after that auth contract exists.
 
 The connection screen is a self-host onboarding flow rather than a fixture
 selector: it checks an existing server's public mobile discovery contract,
