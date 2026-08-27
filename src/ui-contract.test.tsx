@@ -192,6 +192,41 @@ test('a bounded persisted draft restores without an initial blank overwrite', as
   );
 });
 
+test.each(['rejected', 'conflict', 'resync_required'] as const)(
+  'a %s follow-up refusal preserves the reviewable draft',
+  async (outcome) => {
+    const value = mobileValue(['follow_up']);
+    value.sendFollowUp.mockResolvedValue({
+      id: null,
+      idempotencyKey: 'draft-refusal',
+      action: 'follow_up',
+      target: syntheticSnapshot.sessions[0]!.target.coordinate,
+      revision: syntheticSnapshot.sessions[0]!.target.revision,
+      outcome,
+      explanation: 'refresh required',
+    });
+    mockUseMobile.mockReturnValue(value);
+    const view = await render(<SessionScreen />);
+    await waitFor(() =>
+      expect(view.getByLabelText('Follow-up message').props.value).toBe(''),
+    );
+    await fireEvent.changeText(
+      view.getByLabelText('Follow-up message'),
+      'Keep this draft',
+    );
+
+    await fireEvent.press(view.getByLabelText('Send follow-up'));
+
+    await waitFor(() => expect(value.sendFollowUp).toHaveBeenCalledTimes(1));
+    expect(view.getByLabelText('Follow-up message').props.value).toBe(
+      'Keep this draft',
+    );
+    expect(AsyncStorage.removeItem).not.toHaveBeenCalledWith(
+      'automonique.mobile.draft.v1:session-synthetic-001',
+    );
+  },
+);
+
 test('an oversized persisted draft is removed instead of restored', async () => {
   jest.mocked(AsyncStorage.getItem).mockResolvedValueOnce('ééé');
   mockUseMobile.mockReturnValue(

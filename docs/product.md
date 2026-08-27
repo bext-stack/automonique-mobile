@@ -61,6 +61,10 @@ The slice was accepted after all of the following were evidenced:
 - A reconciliation handle is durably recorded before a mutation is sent. An
   ambiguous or accepted result is resolved only through receipt
   reconciliation; the original mutation is never replayed.
+- A possibly applied follow-up fences the submitted session revision across
+  refresh and restart. Mobile becomes writable again only after authoritative
+  command state reports a strictly newer session revision; refused and resync
+  outcomes preserve the operator's editable draft.
 - A completed follow-up may add a labeled local preview without advancing the
   acknowledged resume cursor; a completed approval disappears, and a completed
   stop removes the run association.

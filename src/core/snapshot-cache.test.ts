@@ -19,6 +19,26 @@ test('a valid cache round-trip always reopens stale and read only', () => {
   expect(decoded.timelines).toEqual(syntheticSnapshot.timelines);
 });
 
+test('a follow-up revision fence survives cache admission losslessly', () => {
+  const fenced = {
+    ...syntheticSnapshot,
+    sessions: syntheticSnapshot.sessions.map((session, index) =>
+      index === 0
+        ? {
+            ...session,
+            followUpAllowed: false,
+            followUpFenceRevision: session.target.revision,
+          }
+        : session,
+    ),
+  };
+
+  const decoded = decodeCachedSnapshot(encodeCachedSnapshot(fenced));
+
+  expect(decoded.sessions[0]?.followUpFenceRevision).toBe('12');
+  expect(decoded.sessions[0]?.followUpAllowed).toBe(false);
+});
+
 test('runtime admission rejects oversized, malformed, and unbounded revisions', () => {
   expect(() =>
     decodeCachedSnapshot('x'.repeat(MAX_CACHED_SNAPSHOT_BYTES + 1)),

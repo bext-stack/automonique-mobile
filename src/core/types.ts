@@ -53,6 +53,12 @@ export interface SessionSummary {
   readonly state: 'active' | 'waiting' | 'completed' | 'lost';
   readonly attachable: boolean;
   readonly followUpAllowed: boolean;
+  /**
+   * The exact session revision at which a follow-up may have been applied.
+   * Mobile must observe a strictly newer command-state revision before it can
+   * mutate this session again.
+   */
+  readonly followUpFenceRevision: DecimalRevision | null;
   readonly observedAt: string;
   readonly lastCursor: string;
 }
