@@ -41,6 +41,7 @@ function Probe() {
   return (
     <>
       <Text>{`${snapshot.connection.phase}:${snapshot.connection.mutationsAllowed}`}</Text>
+      <Text>{snapshot.connection.label}</Text>
       <Text>{`projection-ready:${projectionReady}`}</Text>
       <Text>{`events:${events.length}`}</Text>
       <Text>{`receipts:${snapshot.receipts.length}`}</Text>
@@ -57,7 +58,9 @@ function Probe() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Test follow-up"
-          onPress={() => void sendFollowUp(session, 'Continue safely')}
+          onPress={() =>
+            void sendFollowUp(session, 'Continue safely').catch(() => undefined)
+          }
         >
           <Text>Follow up</Text>
         </Pressable>
@@ -204,8 +207,43 @@ test('a rejected receipt is visible but never invents a completed event', async 
   expect(gateway.followUp).toHaveBeenCalledTimes(1);
 });
 
+test.each(['accepted', 'unknown'] as const)(
+  'a %s follow-up outcome fences the exact revision',
+  async (outcome) => {
+    const base = createMockGateway();
+    const receipt: Receipt = {
+      id: null,
+      idempotencyKey: 'provider-key',
+      action: 'follow_up',
+      target: syntheticSnapshot.sessions[0]!.target.coordinate,
+      revision: syntheticSnapshot.sessions[0]!.target.revision,
+      outcome,
+      explanation: 'delivery pending',
+    };
+    const gateway: MobileAutomoniqueGateway = {
+      ...base,
+      followUp: jest.fn().mockResolvedValue(receipt),
+      reconcile: jest.fn().mockResolvedValue(receipt),
+    };
+    const view = await render(
+      <MobileProvider gateway={gateway}>
+        <Probe />
+      </MobileProvider>,
+    );
+    await waitFor(() => expect(view.getByText('live:true')).toBeTruthy());
+
+    await fireEvent.press(view.getByLabelText('Test follow-up'));
+
+    await waitFor(() => expect(view.getByText('stale:false')).toBeTruthy());
+    expect(view.getByText('events:3')).toBeTruthy();
+    expect(gateway.followUp).toHaveBeenCalledTimes(1);
+    expect(gateway.reconcile).toHaveBeenCalledTimes(1);
+  },
+);
+
 test('a completed receipt advances the exact session projection once', async () => {
   const gateway = createMockGateway();
+  const followUp = jest.spyOn(gateway, 'followUp');
   const view = await render(
     <MobileProvider gateway={gateway}>
       <Probe />
@@ -217,6 +255,11 @@ test('a completed receipt advances the exact session projection once', async () 
 
   await waitFor(() => expect(view.getByText('events:4')).toBeTruthy());
   expect(view.getByText('receipts:1')).toBeTruthy();
+  expect(view.getByText('stale:false')).toBeTruthy();
+
+  await fireEvent.press(view.getByLabelText('Test follow-up'));
+
+  expect(followUp).toHaveBeenCalledTimes(1);
 });
 
 test('follow-up preview never becomes a resume cursor across restart', async () => {
@@ -250,9 +293,56 @@ test('follow-up preview never becomes a resume cursor across restart', async () 
       <Probe />
     </MobileProvider>,
   );
-  await waitFor(() => expect(restarted.getByText('live:true')).toBeTruthy());
+  await waitFor(() => expect(restarted.getByText('stale:false')).toBeTruthy());
   expect(restarted.getByText('events:3')).toBeTruthy();
   expect(restarted.getByText('receipts:1')).toBeTruthy();
+});
+
+test('refresh only lifts a follow-up fence after session revision advances', async () => {
+  const base = createMockGateway();
+  let revision = decimalRevision('12');
+  const gateway: MobileAutomoniqueGateway = {
+    ...base,
+    async bootstrap(signal) {
+      const current = await base.bootstrap(signal);
+      return {
+        ...current,
+        sessions: current.sessions.map((session, index) =>
+          index === 0
+            ? { ...session, target: { ...session.target, revision } }
+            : session,
+        ),
+      };
+    },
+    async attach(session, cursor, signal) {
+      if (
+        session.coordinate.id !== 'session-synthetic-001' ||
+        session.revision === '12'
+      )
+        return base.attach(session, cursor, signal);
+      return {
+        session,
+        cursor: null,
+        sequence: null,
+        async *events() {},
+      };
+    },
+  };
+  const view = await render(
+    <MobileProvider gateway={gateway}>
+      <Probe />
+    </MobileProvider>,
+  );
+  await waitFor(() => expect(view.getByText('live:true')).toBeTruthy());
+  await fireEvent.press(view.getByLabelText('Test follow-up'));
+  await waitFor(() => expect(view.getByText('stale:false')).toBeTruthy());
+
+  await fireEvent.press(view.getByLabelText('Test refresh'));
+  await waitFor(() => expect(view.getByText('stale:false')).toBeTruthy());
+
+  revision = decimalRevision('13');
+  await fireEvent.press(view.getByLabelText('Test refresh'));
+  await waitFor(() => expect(view.getByText('live:true')).toBeTruthy());
 });
 
 test('a completed approval receipt removes only the exact approval', async () => {

@@ -44,6 +44,89 @@ test('an exact cached projection resumes strictly after its cursor', async () =>
   expect(snapshot.connection.phase).toBe('live');
 });
 
+test('a follow-up fence survives the same command-state revision', async () => {
+  const previous = {
+    ...syntheticSnapshot,
+    sessions: syntheticSnapshot.sessions.map((session, index) =>
+      index === 0
+        ? {
+            ...session,
+            followUpAllowed: false,
+            followUpFenceRevision: session.target.revision,
+          }
+        : session,
+    ),
+  };
+
+  const snapshot = await bootstrapVerticalSlice(createMockGateway(), previous);
+
+  expect(snapshot.connection).toMatchObject({
+    phase: 'stale',
+    mutationsAllowed: false,
+    label: 'Follow-up recorded · waiting for fresh session revision',
+  });
+  expect(snapshot.sessions[0]).toMatchObject({
+    followUpAllowed: false,
+    followUpFenceRevision: '12',
+  });
+});
+
+test('a strictly newer command-state revision clears the follow-up fence', async () => {
+  const base = createMockGateway();
+  const previous = {
+    ...syntheticSnapshot,
+    sessions: syntheticSnapshot.sessions.map((session, index) =>
+      index === 0
+        ? {
+            ...session,
+            followUpAllowed: false,
+            followUpFenceRevision: session.target.revision,
+          }
+        : session,
+    ),
+  };
+  const gateway: MobileAutomoniqueGateway = {
+    ...base,
+    async bootstrap(signal) {
+      const current = await base.bootstrap(signal);
+      return {
+        ...current,
+        sessions: current.sessions.map((session, index) =>
+          index === 0
+            ? {
+                ...session,
+                target: {
+                  ...session.target,
+                  revision: decimalRevision('13'),
+                },
+              }
+            : session,
+        ),
+      };
+    },
+    async attach(session, cursor, signal) {
+      if (session.revision !== '13') {
+        return base.attach(session, cursor, signal);
+      }
+      return {
+        session,
+        cursor: null,
+        sequence: null,
+        async *events() {},
+      };
+    },
+  };
+
+  const snapshot = await bootstrapVerticalSlice(gateway, previous);
+
+  expect(snapshot.connection).toMatchObject({ phase: 'live' });
+  expect(snapshot.sessions[0]).toMatchObject({
+    target: { revision: '13' },
+    followUpAllowed: true,
+    followUpFenceRevision: null,
+  });
+});
+
 test('a cached timeline with a hidden gap cannot resume writable', async () => {
   const gateway = createMockGateway();
   const events = syntheticSnapshot.timelines['session-synthetic-001']!;
@@ -61,6 +144,36 @@ test('a cached timeline with a hidden gap cannot resume writable', async () => {
     phase: 'stale',
     mutationsAllowed: false,
   });
+});
+
+test('history gap replacement cannot discard a follow-up revision fence', async () => {
+  const gateway = createMockGateway();
+  const events = syntheticSnapshot.timelines['session-synthetic-001']!;
+  const previous = {
+    ...syntheticSnapshot,
+    sessions: syntheticSnapshot.sessions.map((session, index) =>
+      index === 0
+        ? {
+            ...session,
+            followUpAllowed: false,
+            followUpFenceRevision: session.target.revision,
+          }
+        : session,
+    ),
+    timelines: {
+      ...syntheticSnapshot.timelines,
+      'session-synthetic-001': [events[0]!, events[2]!],
+    },
+  };
+
+  const snapshot = await bootstrapVerticalSlice(gateway, previous);
+
+  expect(snapshot.connection).toMatchObject({
+    phase: 'stale',
+    label: 'Cursor resynchronization required',
+    mutationsAllowed: false,
+  });
+  expect(snapshot.sessions[0]?.followUpFenceRevision).toBe('12');
 });
 
 test('duplicate routed session identities are refused before attachment', async () => {

@@ -160,10 +160,12 @@ export default function SessionScreen() {
       announceForAccessibility(
         receiptAnnouncement(receipt.action, receipt.outcome),
       );
-      setDraft('');
-      await AsyncStorage.removeItem(
-        draftKey(session!.target.coordinate.id, storageScope),
-      ).catch(() => undefined);
+      if (['accepted', 'completed', 'unknown'].includes(receipt.outcome)) {
+        setDraft('');
+        await AsyncStorage.removeItem(
+          draftKey(session!.target.coordinate.id, storageScope),
+        ).catch(() => undefined);
+      }
     } catch (error) {
       Alert.alert(
         'Follow-up not sent',

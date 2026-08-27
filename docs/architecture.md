@@ -139,8 +139,13 @@ Conflict and resynchronization outcomes make the projection read-only before
 another action. A completed follow-up may add a preview/synthetic event until
 the server stream confirms it, but its `local:` display cursor never advances
 the acknowledged resume cursor and the preview is dropped on restart. The
-durable receipt remains visible. A completed approval removes that exact
-approval; a completed stop clears the exact run association.
+durable receipt remains visible. An accepted, completed, or unknown follow-up
+also persists a fence at the submitted session revision. History replacement,
+refresh, and restart cannot lift that fence; only command state for the same
+session at a strictly newer lossless revision can do so. Rejected, conflict,
+and resync-required outcomes keep the editable draft for review. A completed
+approval removes that exact approval; a completed stop clears the exact run
+association.
 
 ## SDK mapping
 
@@ -184,6 +189,7 @@ mutation queue never cross or live inside the mobile boundary.
 | Handle persistence fails before mutation                                   | Do not send the mutation                                                           |
 | Mutation response is lost                                                  | Call receipt reconciliation with the same key; never call the mutation again       |
 | Receipt remains unknown                                                    | Keep the bounded handle for later reconciliation and remain conservative in the UI |
+| Follow-up may have applied but session revision has not advanced           | Persist the exact revision fence; keep mutations disabled and never replay         |
 | Receipt action/target differs from the recorded command                    | Reject it as a contract violation; do not project it                               |
 | Conflict or resync-required receipt arrives                                | Make the projection stale/read-only before another action                          |
 
@@ -198,6 +204,18 @@ mutation queue never cross or live inside the mobile boundary.
   records the original canonical TypeScript Platform client and distribution
   repair. The mobile app consumes the CI-verified packed SDK archive until an
   authorized public registry release exists.
+- [Automonique #164](https://github.com/bext-stack/automonique/issues/164)
+  delivered the retained-session Rust client helpers in Automonique PR #171.
+  It did not change the TypeScript SDK's deterministic fixture from the source
+  commit already vendored here, so that fixture remains sufficient for mobile's
+  cursor-independence and ambiguous-receipt parity tests; #164 alone does not
+  require a re-vendor.
+- [Automonique Mobile #32](https://github.com/bext-stack/automonique-mobile/issues/32)
+  delivered the scheduled/manual SDK schema-drift signal in PR #36. The current
+  informational digest difference is tracked by
+  [#37](https://github.com/bext-stack/automonique-mobile/issues/37); it does not
+  itself grant authority, prove incompatibility, or require this change to
+  re-vendor the SDK.
 - This repository owns the narrow mobile gateway, SDK adapter, persistence and
   reconciliation policy, screens, native behavior, and mobile verification.
 

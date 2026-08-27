@@ -385,6 +385,7 @@ export function createSdkMobileGateway(
           attachable: session.attachable,
           followUpAllowed:
             session.controllable && authorization.actions.includes('follow_up'),
+          followUpFenceRevision: null,
           observedAt: observedAt(sessionRecord.freshness.observed_at),
           lastCursor: cursorToken(sessionsResult.cursor),
         };

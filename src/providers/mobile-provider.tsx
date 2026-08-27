@@ -33,7 +33,10 @@ import type {
   SessionSummary,
   VersionedTarget,
 } from '@/core/types';
-import { bootstrapVerticalSlice } from '@/core/vertical-slice';
+import {
+  bootstrapVerticalSlice,
+  retainFollowUpRevisionFences,
+} from '@/core/vertical-slice';
 
 interface MobileContextValue {
   readonly snapshot: MobileSnapshot;
@@ -163,6 +166,33 @@ function applyRecoveredReceipts(
         },
       };
     }
+    if (
+      targetIsCurrent &&
+      receipt.action === 'follow_up' &&
+      ['accepted', 'completed', 'unknown'].includes(receipt.outcome)
+    ) {
+      next = {
+        ...next,
+        connection: {
+          ...next.connection,
+          phase: 'stale',
+          label:
+            receipt.outcome === 'unknown'
+              ? 'Follow-up outcome unknown · reconcile before retry'
+              : 'Follow-up recorded · waiting for fresh session revision',
+          mutationsAllowed: false,
+        },
+        sessions: next.sessions.map((session) =>
+          sameVersioned(session.target, handle.session)
+            ? {
+                ...session,
+                followUpAllowed: false,
+                followUpFenceRevision: handle.session.revision,
+              }
+            : session,
+        ),
+      };
+    }
     return next;
   }, snapshot);
 }
@@ -257,6 +287,7 @@ export function MobileProvider({
           controller.signal,
         );
       }
+      fresh = retainFollowUpRevisionFences(fresh, snapshot);
       const recovered = await recoverPendingReceipts(
         gateway,
         pendingStore,

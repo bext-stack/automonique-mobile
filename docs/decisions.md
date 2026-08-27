@@ -23,6 +23,20 @@ Revisions and event sequences are validated canonical decimal strings in the
 mobile model. Arithmetic converts them to `bigint` transiently, preventing
 precision loss across React Native JavaScript engines.
 
+## Follow-up revision fence
+
+An accepted, completed, or unknown follow-up may have changed authoritative
+session state. Mobile records the exact submitted session revision in the
+bounded projection, disables subsequent mutation, and keeps the fence through
+restart and history resynchronization. Only a fresh command-state projection
+whose session revision is strictly greater clears it. A refresh at the same or
+an older revision cannot manufacture write authority.
+
+Rejected, conflict, and resync-required receipts leave the draft intact so the
+operator can review it after freshness is restored. A possibly applied outcome
+clears the draft because the reconciliation store intentionally contains no
+command payload and must never act as a replay queue.
+
 ## Production networking gate
 
 The canonical SDK transport is necessary but not sufficient. Navigation to a
@@ -75,3 +89,7 @@ scheduled weekday workflow runs the same bounded comparison, reuses one marked
 GitHub issue while drift exists, and closes that issue after the vendored digest
 catches up. Unrelated Automonique commits do not churn the issue because the
 comparison resolves the latest commit that changed the SDK package metadata.
+The current signal is tracked in
+[Automonique Mobile #37](https://github.com/bext-stack/automonique-mobile/issues/37);
+it is schema-digest review evidence, not a claim that this retained-session
+change needs a different SDK archive.

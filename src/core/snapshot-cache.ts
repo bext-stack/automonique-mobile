@@ -248,6 +248,7 @@ function admitSnapshot(value: unknown): MobileSnapshot {
       'state',
       'attachable',
       'followUpAllowed',
+      'followUpFenceRevision',
       'observedAt',
       'lastCursor',
     ]);
@@ -264,9 +265,14 @@ function admitSnapshot(value: unknown): MobileSnapshot {
       ) ||
       typeof session.attachable !== 'boolean' ||
       typeof session.followUpAllowed !== 'boolean' ||
+      (session.followUpFenceRevision !== null &&
+        typeof session.followUpFenceRevision !== 'string') ||
       !boundedString(session.lastCursor, 1_024)
     ) {
       throw new Error('mobile_snapshot_cache_invalid');
+    }
+    if (session.followUpFenceRevision !== null) {
+      revision(session.followUpFenceRevision);
     }
     sessionIds.add(sessionId);
     if (

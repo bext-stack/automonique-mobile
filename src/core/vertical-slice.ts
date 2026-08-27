@@ -9,10 +9,64 @@ import type {
   MobileAutomoniqueGateway,
   MobileSnapshot,
   SessionEvent,
+  SessionSummary,
 } from './types';
 
 const MAX_MOBILE_SESSIONS = 100;
 const MAX_PAGES_PER_ATTACHMENT = 8;
+
+function sameSessionCoordinate(
+  left: SessionSummary,
+  right: SessionSummary,
+): boolean {
+  return (
+    left.target.coordinate.authority === right.target.coordinate.authority &&
+    left.target.coordinate.kind === 'session' &&
+    right.target.coordinate.kind === 'session' &&
+    left.target.coordinate.id === right.target.coordinate.id
+  );
+}
+
+/**
+ * Retain a possibly-applied follow-up fence until authoritative command state
+ * reports a strictly newer session revision. This is independent of history
+ * cursor replacement, so a gap resync cannot accidentally reopen mutations.
+ */
+export function retainFollowUpRevisionFences(
+  snapshot: MobileSnapshot,
+  previous?: MobileSnapshot,
+): MobileSnapshot {
+  if (previous === undefined) return snapshot;
+  let fenced = false;
+  const sessions = snapshot.sessions.map((session) => {
+    const prior = previous.sessions.find((candidate) =>
+      sameSessionCoordinate(candidate, session),
+    );
+    const revision = prior?.followUpFenceRevision;
+    if (revision === null || revision === undefined) return session;
+    if (BigInt(session.target.revision) > BigInt(revision)) return session;
+    fenced = true;
+    return {
+      ...session,
+      followUpAllowed: false,
+      followUpFenceRevision: revision,
+    };
+  });
+  if (!fenced) return { ...snapshot, sessions };
+  return {
+    ...snapshot,
+    connection: {
+      ...snapshot.connection,
+      phase: 'stale',
+      label:
+        snapshot.connection.label === 'Cursor resynchronization required'
+          ? snapshot.connection.label
+          : 'Follow-up recorded · waiting for fresh session revision',
+      mutationsAllowed: false,
+    },
+    sessions,
+  };
+}
 
 /**
  * Load the initial operator slice through the same gateway and cursor reducer
@@ -103,7 +157,7 @@ export async function bootstrapVerticalSlice(
     }
   }
 
-  return {
+  const projected: MobileSnapshot = {
     ...snapshot,
     connection: resyncRequired
       ? {
@@ -120,4 +174,5 @@ export async function bootstrapVerticalSlice(
     })),
     timelines,
   };
+  return retainFollowUpRevisionFences(projected, previous);
 }
