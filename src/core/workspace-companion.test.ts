@@ -201,6 +201,9 @@ test('server omission leaves a durable tombstone and reactivation needs a newer 
   ).toBe(true);
 
   replay.servers[0].authorizationRevision = '9';
+  replay.servers[0].workspaces[0].revision = '13';
+  replay.servers[0].workspaces[0].attempt.revision = '5';
+  replay.servers[0].workspaces[0].sessions[0].revision = '10';
   const reauthorized = reduceWorkspaceCompanionCatalog(removal.catalog, replay);
   expect(reauthorized.resyncRequired).toBe(false);
   expect(reauthorized.catalog.serverTombstones).toEqual([]);
@@ -227,6 +230,79 @@ test('replacement reduction fences attempt and retained-session rollback', () =>
     expect(
       reduceWorkspaceCompanionCatalog(workspaceCompanionFixture, replacement)
         .resyncRequired,
+    ).toBe(true);
+  }
+});
+
+test('workspace omission retains a revision fence across later reintroduction', () => {
+  const omitted = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  omitted.generatedAt = '2026-08-27T10:01:00Z';
+  omitted.servers[0].workspaces = [];
+  const removal = reduceWorkspaceCompanionCatalog(
+    workspaceCompanionFixture,
+    omitted,
+  );
+  expect(removal.resyncRequired).toBe(false);
+  expect(removal.catalog.revisionTombstones).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        objectType: 'workspace',
+        objectId: 'workspace-34',
+        revision: '12',
+      }),
+    ]),
+  );
+
+  for (const revision of ['11', '12']) {
+    const replay = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+    replay.generatedAt = '2026-08-27T10:02:00Z';
+    replay.servers[0].workspaces[0].revision = revision;
+    expect(
+      reduceWorkspaceCompanionCatalog(removal.catalog, replay).resyncRequired,
+    ).toBe(true);
+  }
+});
+
+test('attempt omission retains a revision fence across later reintroduction', () => {
+  const omitted = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  omitted.generatedAt = '2026-08-27T10:01:00Z';
+  omitted.servers[0].workspaces[0].revision = '13';
+  omitted.servers[0].workspaces[0].attempt = null;
+  const removal = reduceWorkspaceCompanionCatalog(
+    workspaceCompanionFixture,
+    omitted,
+  );
+  expect(removal.resyncRequired).toBe(false);
+
+  for (const revision of ['3', '4']) {
+    const replay = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+    replay.generatedAt = '2026-08-27T10:02:00Z';
+    replay.servers[0].workspaces[0].revision = '14';
+    replay.servers[0].workspaces[0].attempt.revision = revision;
+    expect(
+      reduceWorkspaceCompanionCatalog(removal.catalog, replay).resyncRequired,
+    ).toBe(true);
+  }
+});
+
+test('session omission retains a revision fence across later reintroduction', () => {
+  const omitted = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  omitted.generatedAt = '2026-08-27T10:01:00Z';
+  omitted.servers[0].workspaces[0].revision = '13';
+  omitted.servers[0].workspaces[0].sessions = [];
+  const removal = reduceWorkspaceCompanionCatalog(
+    workspaceCompanionFixture,
+    omitted,
+  );
+  expect(removal.resyncRequired).toBe(false);
+
+  for (const revision of ['8', '9']) {
+    const replay = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+    replay.generatedAt = '2026-08-27T10:02:00Z';
+    replay.servers[0].workspaces[0].revision = '14';
+    replay.servers[0].workspaces[0].sessions[0].revision = revision;
+    expect(
+      reduceWorkspaceCompanionCatalog(removal.catalog, replay).resyncRequired,
     ).toBe(true);
   }
 });

@@ -9,6 +9,8 @@ import {
   decodeWorkspaceCompanionCache,
   encodeWorkspaceCompanionCache,
 } from './workspace-companion-cache';
+import { MAX_WORKSPACE_REVISION_TOMBSTONES } from './workspace-companion';
+import { decimalRevision } from './types';
 
 test('cached workspace reads restore stale with mutation and terminal authority removed', () => {
   const encoded = encodeWorkspaceCompanionCache({
@@ -81,4 +83,26 @@ test('cache preserves server authorization tombstones across restart', () => {
   expect(
     decodeWorkspaceCompanionCache(encoded).catalog.serverTombstones,
   ).toHaveLength(1);
+});
+
+test('cache rejects rather than truncates oversized revision fences', () => {
+  expect(() =>
+    encodeWorkspaceCompanionCache({
+      schema: 'automonique.mobile-workspace-cache/v1',
+      catalog: {
+        ...workspaceCompanionFixture,
+        revisionTombstones: Array.from(
+          { length: MAX_WORKSPACE_REVISION_TOMBSTONES + 1 },
+          (_, index) => ({
+            objectType: 'workspace' as const,
+            serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+            workspaceId: `w${index}`,
+            objectId: `w${index}`,
+            revision: decimalRevision('1'),
+          }),
+        ),
+      },
+      intentDrafts: [],
+    }),
+  ).toThrow('workspace_companion_cache_invalid');
 });

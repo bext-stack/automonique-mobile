@@ -6,6 +6,7 @@ export const WORKSPACE_COMPANION_SCHEMA =
   'automonique.mobile-workspace-companion/v1' as const;
 export const MAX_WORKSPACE_SERVERS = 8;
 export const MAX_WORKSPACE_SERVER_TOMBSTONES = 64;
+export const MAX_WORKSPACE_REVISION_TOMBSTONES = 1_024;
 export const MAX_WORKSPACE_HOSTS = 32;
 export const MAX_WORKSPACE_PROJECTS = 100;
 export const MAX_WORKSPACES = 200;
@@ -119,6 +120,22 @@ export interface ServerAuthorizationTombstone {
   readonly authorizationRevision: DecimalRevision;
 }
 
+export type WorkspaceRevisionTombstone =
+  | {
+      readonly objectType: 'workspace';
+      readonly serverIdentity: ServerIdentity;
+      readonly workspaceId: string;
+      readonly objectId: string;
+      readonly revision: DecimalRevision;
+    }
+  | {
+      readonly objectType: 'attempt' | 'session';
+      readonly serverIdentity: ServerIdentity;
+      readonly workspaceId: string;
+      readonly objectId: string;
+      readonly revision: DecimalRevision;
+    };
+
 export interface WorkspaceCompanionCatalog {
   readonly schema: typeof WORKSPACE_COMPANION_SCHEMA;
   readonly phase: CompanionPhase;
@@ -126,6 +143,7 @@ export interface WorkspaceCompanionCatalog {
   readonly selectedServerIdentity: ServerIdentity | null;
   readonly servers: readonly ScopedServerProfile[];
   readonly serverTombstones: readonly ServerAuthorizationTombstone[];
+  readonly revisionTombstones: readonly WorkspaceRevisionTombstone[];
 }
 
 export interface TaskPrefill {
@@ -579,6 +597,47 @@ function admitServerTombstone(value: unknown): ServerAuthorizationTombstone {
   };
 }
 
+function revisionTombstoneKey(
+  value: Pick<
+    WorkspaceRevisionTombstone,
+    'serverIdentity' | 'workspaceId' | 'objectType' | 'objectId'
+  >,
+): string {
+  return JSON.stringify([
+    value.serverIdentity,
+    value.workspaceId,
+    value.objectType,
+    value.objectId,
+  ]);
+}
+
+function admitRevisionTombstone(value: unknown): WorkspaceRevisionTombstone {
+  const candidate = object(value);
+  keys(candidate, [
+    'objectType',
+    'serverIdentity',
+    'workspaceId',
+    'objectId',
+    'revision',
+  ]);
+  if (
+    !['workspace', 'attempt', 'session'].includes(String(candidate.objectType))
+  )
+    fail();
+  const objectType =
+    candidate.objectType as WorkspaceRevisionTombstone['objectType'];
+  const workspaceId = string(candidate.workspaceId, 256);
+  const objectId = string(candidate.objectId, 256);
+  if (objectType === 'workspace' && objectId !== workspaceId) fail();
+  return {
+    objectType,
+    serverIdentity: identity(candidate.serverIdentity),
+    workspaceId,
+    objectId,
+    revision: decimalRevision(string(candidate.revision, 19)),
+  };
+}
+
 export function admitWorkspaceCompanionCatalog(
   value: unknown,
 ): WorkspaceCompanionCatalog {
@@ -590,6 +649,7 @@ export function admitWorkspaceCompanionCatalog(
     'selectedServerIdentity',
     'servers',
     'serverTombstones',
+    'revisionTombstones',
   ]);
   if (
     candidate.schema !== WORKSPACE_COMPANION_SCHEMA ||
@@ -615,6 +675,54 @@ export function admitWorkspaceCompanionCatalog(
   );
   if (
     serverTombstones.some((entry) => liveIdentities.has(entry.serverIdentity))
+  )
+    fail();
+  if (
+    !Array.isArray(candidate.revisionTombstones) ||
+    candidate.revisionTombstones.length > MAX_WORKSPACE_REVISION_TOMBSTONES
+  )
+    fail();
+  const revisionTombstones = candidate.revisionTombstones.map(
+    admitRevisionTombstone,
+  );
+  unique(revisionTombstones.map(revisionTombstoneKey));
+  const visibleObjectKeys = new Set<string>();
+  for (const server of servers) {
+    for (const workspace of server.workspaces) {
+      visibleObjectKeys.add(
+        revisionTombstoneKey({
+          objectType: 'workspace',
+          serverIdentity: server.serverIdentity,
+          workspaceId: workspace.id,
+          objectId: workspace.id,
+        }),
+      );
+      if (workspace.attempt !== null) {
+        visibleObjectKeys.add(
+          revisionTombstoneKey({
+            objectType: 'attempt',
+            serverIdentity: server.serverIdentity,
+            workspaceId: workspace.id,
+            objectId: workspace.attempt.id,
+          }),
+        );
+      }
+      for (const session of workspace.sessions) {
+        visibleObjectKeys.add(
+          revisionTombstoneKey({
+            objectType: 'session',
+            serverIdentity: server.serverIdentity,
+            workspaceId: workspace.id,
+            objectId: session.id,
+          }),
+        );
+      }
+    }
+  }
+  if (
+    revisionTombstones.some((entry) =>
+      visibleObjectKeys.has(revisionTombstoneKey(entry)),
+    )
   )
     fail();
   if (
@@ -653,6 +761,7 @@ export function admitWorkspaceCompanionCatalog(
     selectedServerIdentity,
     servers,
     serverTombstones,
+    revisionTombstones,
   };
 }
 
@@ -685,6 +794,47 @@ function staleReadOnlyCatalog(
   };
 }
 
+function catalogObjectRevisions(
+  catalog: WorkspaceCompanionCatalog,
+  includeRevoked = true,
+): Map<string, WorkspaceRevisionTombstone> {
+  const revisions = new Map<string, WorkspaceRevisionTombstone>();
+  for (const server of catalog.servers) {
+    if (!includeRevoked && server.authorization === 'revoked') continue;
+    for (const workspace of server.workspaces) {
+      const workspaceEntry: WorkspaceRevisionTombstone = {
+        objectType: 'workspace',
+        serverIdentity: server.serverIdentity,
+        workspaceId: workspace.id,
+        objectId: workspace.id,
+        revision: workspace.revision,
+      };
+      revisions.set(revisionTombstoneKey(workspaceEntry), workspaceEntry);
+      if (workspace.attempt !== null) {
+        const attemptEntry: WorkspaceRevisionTombstone = {
+          objectType: 'attempt',
+          serverIdentity: server.serverIdentity,
+          workspaceId: workspace.id,
+          objectId: workspace.attempt.id,
+          revision: workspace.attempt.revision,
+        };
+        revisions.set(revisionTombstoneKey(attemptEntry), attemptEntry);
+      }
+      for (const session of workspace.sessions) {
+        const sessionEntry: WorkspaceRevisionTombstone = {
+          objectType: 'session',
+          serverIdentity: server.serverIdentity,
+          workspaceId: workspace.id,
+          objectId: session.id,
+          revision: session.revision,
+        };
+        revisions.set(revisionTombstoneKey(sessionEntry), sessionEntry);
+      }
+    }
+  }
+  return revisions;
+}
+
 /**
  * Admit one authoritative replacement. Revision rollback or malformed scope
  * makes the prior projection stale; mobile never merges partial unknown data.
@@ -713,6 +863,37 @@ export function reduceWorkspaceCompanionCatalog(
   const priorTombstones = new Map(
     current.serverTombstones.map((entry) => [entry.serverIdentity, entry]),
   );
+  const currentObjectRevisions = catalogObjectRevisions(current);
+  const revisionScopes = new Map(
+    current.revisionTombstones.map((entry) => [
+      revisionTombstoneKey(entry),
+      entry,
+    ]),
+  );
+  const retainRevisionTombstone = (
+    entry: WorkspaceRevisionTombstone,
+  ): boolean => {
+    const key = revisionTombstoneKey(entry);
+    const visible = currentObjectRevisions.get(key);
+    const prior = revisionScopes.get(key);
+    if (
+      (visible !== undefined &&
+        BigInt(entry.revision) < BigInt(visible.revision)) ||
+      (prior !== undefined && BigInt(entry.revision) < BigInt(prior.revision))
+    ) {
+      return false;
+    }
+    if (
+      prior === undefined ||
+      BigInt(entry.revision) > BigInt(prior.revision)
+    ) {
+      revisionScopes.set(key, entry);
+    }
+    return true;
+  };
+  for (const entry of next.revisionTombstones) {
+    if (!retainRevisionTombstone(entry)) return rejectReplacement();
+  }
   for (const server of next.servers) {
     const previous = current.servers.find(
       (candidate) => candidate.serverIdentity === server.serverIdentity,
@@ -733,6 +914,23 @@ export function reduceWorkspaceCompanionCatalog(
       return rejectReplacement();
     }
     for (const workspace of server.workspaces) {
+      const workspaceEntry: WorkspaceRevisionTombstone = {
+        objectType: 'workspace',
+        serverIdentity: server.serverIdentity,
+        workspaceId: workspace.id,
+        objectId: workspace.id,
+        revision: workspace.revision,
+      };
+      const workspaceTombstone = revisionScopes.get(
+        revisionTombstoneKey(workspaceEntry),
+      );
+      if (
+        workspaceTombstone !== undefined &&
+        BigInt(workspace.revision) <= BigInt(workspaceTombstone.revision)
+      ) {
+        return rejectReplacement();
+      }
+      revisionScopes.delete(revisionTombstoneKey(workspaceEntry));
       const priorWorkspace = previous?.workspaces.find(
         (candidate) => candidate.id === workspace.id,
       );
@@ -750,6 +948,26 @@ export function reduceWorkspaceCompanionCatalog(
       ) {
         return rejectReplacement();
       }
+      if (workspace.attempt !== null) {
+        const attemptEntry: WorkspaceRevisionTombstone = {
+          objectType: 'attempt',
+          serverIdentity: server.serverIdentity,
+          workspaceId: workspace.id,
+          objectId: workspace.attempt.id,
+          revision: workspace.attempt.revision,
+        };
+        const attemptTombstone = revisionScopes.get(
+          revisionTombstoneKey(attemptEntry),
+        );
+        if (
+          attemptTombstone !== undefined &&
+          BigInt(workspace.attempt.revision) <=
+            BigInt(attemptTombstone.revision)
+        ) {
+          return rejectReplacement();
+        }
+        revisionScopes.delete(revisionTombstoneKey(attemptEntry));
+      }
       for (const session of workspace.sessions) {
         const priorSession = priorWorkspace?.sessions.find(
           (candidate) => candidate.id === session.id,
@@ -760,9 +978,37 @@ export function reduceWorkspaceCompanionCatalog(
         ) {
           return rejectReplacement();
         }
+        const sessionEntry: WorkspaceRevisionTombstone = {
+          objectType: 'session',
+          serverIdentity: server.serverIdentity,
+          workspaceId: workspace.id,
+          objectId: session.id,
+          revision: session.revision,
+        };
+        const sessionTombstone = revisionScopes.get(
+          revisionTombstoneKey(sessionEntry),
+        );
+        if (
+          sessionTombstone !== undefined &&
+          BigInt(session.revision) <= BigInt(sessionTombstone.revision)
+        ) {
+          return rejectReplacement();
+        }
+        revisionScopes.delete(revisionTombstoneKey(sessionEntry));
       }
     }
   }
+
+  const replacementObjectKeys = new Set(
+    catalogObjectRevisions(next, false).keys(),
+  );
+  for (const [key, entry] of currentObjectRevisions) {
+    if (!replacementObjectKeys.has(key) && !retainRevisionTombstone(entry)) {
+      return rejectReplacement();
+    }
+  }
+  if (revisionScopes.size > MAX_WORKSPACE_REVISION_TOMBSTONES)
+    return rejectReplacement();
 
   const scopes = new Map<ServerIdentity, ServerAuthorizationTombstone>();
   const retainTombstone = (entry: ServerAuthorizationTombstone): boolean => {
@@ -837,6 +1083,9 @@ export function reduceWorkspaceCompanionCatalog(
       servers: activeServers,
       serverTombstones: [...scopes.values()].sort((left, right) =>
         left.serverIdentity.localeCompare(right.serverIdentity),
+      ),
+      revisionTombstones: [...revisionScopes.values()].sort((left, right) =>
+        revisionTombstoneKey(left).localeCompare(revisionTombstoneKey(right)),
       ),
     },
     resyncRequired: false,

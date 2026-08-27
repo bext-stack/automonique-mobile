@@ -23,6 +23,9 @@ selection uses the exact server identity; revocation removes the profile from
 selection and presentation. A bounded persisted tombstone pins that identity
 to its tenant and HTTPS origin after omission or revocation; reauthorization
 requires a strictly newer authorization revision.
+Omitted workspaces, attempts, and sessions likewise leave bounded per-ID
+revision tombstones. Reintroducing one requires a strictly newer object
+revision, including after server revocation and reauthorization.
 
 Cached catalogs reopen as stale. Active authorization becomes `cached`, and
 all actions except bounded reads are removed. Cached data may navigate to
@@ -56,6 +59,8 @@ Drafts remain inert data. Authority previews are never cached.
   output make admission fail rather than being ignored.
 - A stale workspace/session revision, missing destination grant, or unscoped
   retained session refuses a deep link.
+- Omitting a workspace, attempt, or session cannot erase its revision fence;
+  an equal or older reintroduction forces resynchronization.
 - Terminal navigation is refused even when visible in a workspace unless both
   live profile authority and a separate terminal action are present.
 - Oversized catalogs, session collections, unread counts, drafts, and encoded

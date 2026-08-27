@@ -29,8 +29,10 @@ until canonical Platform v2 SDK/auth support exists. A preview echoes the exact
 admitted request coordinates rather than relying on an idempotency key alone.
 Deep links use a finite internal destination vocabulary and exact workspace
 and retained-session revisions. Server omission or revocation persists a
-bounded identity/tenant/origin/authorization-revision tombstone. Terminal
-requires both a workspace navigation grant and a separate live
+bounded identity/tenant/origin/authorization-revision tombstone.
+Workspace, attempt, and session omission persists bounded per-ID revision
+tombstones, so a later equal or older object cannot bypass rollback detection.
+Terminal requires both a workspace navigation grant and a separate live
 `terminal_relay` actor action; neither workspace visibility nor cached
 authority can supply it.
 

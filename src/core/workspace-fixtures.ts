@@ -17,6 +17,7 @@ export const workspaceCompanionFixture: WorkspaceCompanionCatalog = {
   generatedAt: '2026-08-27T10:00:00Z',
   selectedServerIdentity: WORKSPACE_FIXTURE_IDENTITY,
   serverTombstones: [],
+  revisionTombstones: [],
   servers: [
     {
       serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
