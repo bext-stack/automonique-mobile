@@ -1369,7 +1369,8 @@ export function bindWorkspaceIntentPreview(
       throw new Error('workspace_intent_preview_not_authorized');
     }
   }
-  // The v2 adapter will consume this pair later. This foundation cannot send it.
+  // This legacy presentation preview remains inert. The canonical v2 gateway
+  // uses its own server-issued MutationPreview and never translates this DTO.
   return {
     request: admittedRequest,
     preview: admittedPreview,
@@ -1377,10 +1378,10 @@ export function bindWorkspaceIntentPreview(
   };
 }
 
-/** Production execution remains unavailable until the canonical v2 SDK exists. */
+/** Production UI remains unavailable until mobile auth issues project roots. */
 export function workspaceMutationAvailability(): {
   readonly enabled: false;
-  readonly reason: 'platform_v2_sdk_and_auth_required';
+  readonly reason: 'server_project_scope_required';
 } {
-  return { enabled: false, reason: 'platform_v2_sdk_and_auth_required' };
+  return { enabled: false, reason: 'server_project_scope_required' };
 }

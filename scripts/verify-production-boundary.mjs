@@ -13,6 +13,8 @@ const forbidden = [
   '@/core/workspace-fixtures',
   'workspace-fixtures',
   'workspaceCompanionFixture',
+  '@automonique/sdk/testing',
+  'DeterministicPlatformV2Adapter',
 ];
 
 const sourceExtensions = ['', '.ts', '.tsx', '.js', '.jsx'];

@@ -27,6 +27,15 @@ receipt reconciliation. They never receive generic Platform execution authority.
 Deterministic synthetic gateways remain test fixtures and are excluded from
 the production source graph and emitted bundles.
 
+The vendored SDK also includes the canonical Platform v2 client. The
+credential lifecycle constructs its exact `/api/platform/v2` HTTPS transport,
+renegotiates it per credential generation, and exposes bounded project reads,
+lineage, read-only review, lifecycle preview/confirmation, and exact intent
+cancellation behind a narrow companion gateway. Production workspace screens
+remain fail-closed because today's mobile authorization document does not issue
+the exact project roots required by v2 queries; the app never derives one from
+a session, label, or external task.
+
 The connection screen is a self-host onboarding flow rather than a fixture
 selector: it checks an existing server's public mobile discovery contract,
 shows actionable reverse-proxy failures, accepts a pairing invite by QR scan or

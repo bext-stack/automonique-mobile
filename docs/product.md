@@ -165,8 +165,13 @@ session, branch/repository display context, freshness, and unread attention.
 External task status remains visibly and structurally distinct from internal
 orchestration status.
 
-The expansion does not ship a production workspace transport. Typed
-task-prefilled create/resume drafts and authority previews are ready for the
-canonical Platform v2 SDK, but execution remains disabled. Terminal relay,
-attachments, uploads, and background mutation remain separate risk-reviewed
-work. See [workspace-companion-threat-model.md](workspace-companion-threat-model.md).
+The expansion now ships the canonical Platform v2 SDK archive and a production
+authenticated gateway for negotiated project reads, lineage, read-only review,
+typed task intents, exact cancellation, and lifecycle preview/confirmation.
+It does not yet expose those operations in the production navigation: the
+current mobile authorization document has session scope but no server-issued
+project-root scope, and the app refuses to guess one. Live multi-server catalog
+UI and end-to-end acceptance therefore remain pending that contract. Terminal
+relay, attachments, uploads, and background mutation remain separate
+risk-reviewed work. See
+[workspace-companion-threat-model.md](workspace-companion-threat-model.md).

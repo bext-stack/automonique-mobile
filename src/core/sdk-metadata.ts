@@ -8,7 +8,7 @@ import {
   PLATFORM_PROTOCOL,
   PLATFORM_PROTOCOL_VERSION,
   PLATFORM_SCHEMA_V1,
-  SCHEMA_DIGEST,
+  PLATFORM_V1_SCHEMA_DIGEST,
   SCHEMA_DIGEST_ALGORITHM,
 } from '@automonique/sdk';
 
@@ -18,7 +18,7 @@ export const AUTOMONIQUE_SDK_METADATA = Object.freeze({
   protocol: PLATFORM_PROTOCOL,
   protocolVersion: PLATFORM_PROTOCOL_VERSION,
   schema: PLATFORM_SCHEMA_V1,
-  schemaDigest: `${SCHEMA_DIGEST_ALGORITHM}:${SCHEMA_DIGEST}`,
+  schemaDigest: `${SCHEMA_DIGEST_ALGORITHM}:${PLATFORM_V1_SCHEMA_DIGEST}`,
   mediaType: PLATFORM_MEDIA_TYPE,
   mobileAuth: Object.freeze({
     protocol: MOBILE_AUTH_PROTOCOL,

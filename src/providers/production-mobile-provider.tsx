@@ -14,6 +14,7 @@ import {
   type MobileLifecycleState,
 } from '@/core/mobile-lifecycle';
 import type { MobileAutomoniqueGateway } from '@/core/types';
+import type { WorkspaceV2Gateway } from '@/core/workspace-v2-gateway';
 import type { MobilePairingOffer } from '@automonique/sdk';
 
 import { MobileProvider } from './mobile-provider';
@@ -23,6 +24,7 @@ interface LifecycleContextValue {
   readonly refreshCredential: () => Promise<void>;
   readonly revokeCredential: () => Promise<void>;
   readonly pair: (offer: MobilePairingOffer) => Promise<void>;
+  readonly workspaceGateway: WorkspaceV2Gateway | null;
 }
 
 const LifecycleContext = createContext<LifecycleContextValue | null>(null);
@@ -45,6 +47,7 @@ interface GatewayGeneration {
   readonly key: string;
   readonly scope: string;
   readonly gateway: MobileAutomoniqueGateway;
+  readonly workspaceGateway: WorkspaceV2Gateway | null;
 }
 
 function storageScope(
@@ -57,6 +60,7 @@ const INITIAL_GATEWAY: GatewayGeneration = {
   key: 'unpaired',
   scope: 'unpaired',
   gateway: unavailableGateway('mobile_pairing_required'),
+  workspaceGateway: null,
 };
 
 /** Production composition root. Mock gateways must be passed explicitly in tests. */
@@ -80,6 +84,7 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
                 key,
                 scope,
                 gateway: mobileLifecycle.createGateway(),
+                workspaceGateway: mobileLifecycle.createWorkspaceGateway(),
               },
         );
       } else if (
@@ -96,6 +101,7 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
           key: `${next.phase}:${scope}:${reason}`,
           scope,
           gateway: unavailableGateway(reason),
+          workspaceGateway: null,
         });
       } else if (
         next.phase === 'loading' ||
@@ -110,6 +116,7 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
           key: `${next.phase}:${scope}`,
           scope,
           gateway: unavailableGateway(`mobile_credential_${next.phase}`),
+          workspaceGateway: null,
         });
       }
     });
@@ -134,6 +141,7 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
         pair: async (offer) => {
           await mobileLifecycle.pair(offer);
         },
+        workspaceGateway: generation.workspaceGateway,
       }}
     >
       <MobileProvider

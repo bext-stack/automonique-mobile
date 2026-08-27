@@ -9,9 +9,9 @@ authorized registry. It retains its Apache-2.0 license inside the archive.
 Product code in this repository remains Elastic-2.0.
 
 Run `npm run sdk:verify` after installation. It checks the archive hash, the
-installed package identity and license, the schema digest on all three of the
-manifest, the installed `package.json` and the SDK's runtime constant, and the
-presence of the mobile client surface.
+installed package identity and license, the Platform v1 and aggregate schema
+digests across the manifest, installed `package.json`, and SDK runtime
+constants, plus the mobile and Platform v2 client surfaces.
 
 Run `npm run sdk:drift` when preparing a release or reviewing upstream protocol
 work. It compares the recorded digest with the latest Automonique `main` commit
@@ -22,11 +22,12 @@ reuses one tracking issue until the vendored digest catches up.
 
 ## What the recorded fields mean
 
-| Field           | Meaning                                                                                                                                           |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sourceCommit`  | The Automonique revision the archive was built from. Provenance.                                                                                  |
-| `schemaDigest`  | Which generated protocol surface that build carries. Evidence, never compared against a server; see [../docs/decisions.md](../docs/decisions.md). |
-| `archiveSha256` | Supply-chain integrity of the archive in this directory.                                                                                          |
+| Field                   | Meaning                                                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sourceCommit`          | The Automonique revision the archive was built from. Provenance.                                                                                  |
+| `schemaDigest`          | Which generated protocol surface that build carries. Evidence, never compared against a server; see [../docs/decisions.md](../docs/decisions.md). |
+| `aggregateSchemaDigest` | Which complete generated v1+v2 protocol set the archive carries. Provenance evidence, never a server compatibility gate.                          |
+| `archiveSha256`         | Supply-chain integrity of the archive in this directory.                                                                                          |
 
 Server compatibility is decided by protocol version negotiation, not by these
 fields. A server whose digest differs from the one recorded here is still

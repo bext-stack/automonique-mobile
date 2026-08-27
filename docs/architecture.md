@@ -4,18 +4,23 @@ Automonique Mobile is a presentation client, not an execution node. The server
 owns identity, authority, policy, execution, canonical history, and mutation
 outcomes.
 
-The workspace-companion foundation adds a second, SDK-independent read model
+The workspace-companion foundation adds a second, strictly admitted read model
 for multiple authorized server identities. Its strict admission layer binds
 hosts, projects, workspaces, attempts, retained sessions, and navigation grants
 to one server profile. Cached profiles reopen stale and retain only
-`workspace_read`; typed create/resume requests and authority previews are inert
-seams until Platform v2 SDK/auth support lands. Exact request coordinates are
-echoed by each preview. Persisted authorization tombstones pin omitted or
+`workspace_read`. The canonical Platform v2 SDK is now vendored and the
+production lifecycle constructs a generation-scoped authenticated v2 gateway.
+It negotiates v2 before reads, consumes exact project-root queries, exposes
+typed lineage and read-only review snapshots, and performs create/resume only
+through an ephemeral server preview and a separate confirmation. Persisted
+authorization tombstones pin omitted or
 revoked identities to their tenant, origin, and last authorization revision.
 Bounded per-object revision tombstones also retain workspace, attempt, and
 session rollback fences across omission; reintroduction must advance the exact
 object revision.
-The production provider does not construct or execute a workspace mutation.
+The provider does not infer project roots from the v1 session scope. Until the
+server mobile authorization contract issues exact project roots, no production
+screen can start inventory reads or a workspace mutation.
 
 ## System boundary
 
@@ -35,6 +40,10 @@ ProductionMobileProvider / MobileProvider
    │                                    ▼
    │                              Automonique server
    │
+   ├── WorkspaceV2Gateway ───────── @automonique/sdk Platform v2 over HTTPS
+   │       negotiated reads, lineage, review reads, typed lifecycle preview,
+   │       explicit confirm/deny, and exact lineage cancellation
+   │
    ├── bounded read cache and reconciliation handles ── Async Storage
    ├── endpoint/profile metadata and message drafts ─── Async Storage
    └── scoped mobile credential ──────────────────────── OS Secure Store
@@ -47,6 +56,14 @@ method in the mobile gateway. Runtime SDK imports are confined to core
 protocol-boundary modules: the adapter, protocol metadata, shared type
 vocabulary, and persistence admission. Screens and the provider never receive
 Platform transport or raw execution primitives.
+
+The v2 gateway is recreated with every credential generation. Its credential
+provider rechecks the original authorization fingerprint after asynchronous
+refresh, and 401/403/410 responses move the process-wide lifecycle to
+`refresh_required`. Prepared lifecycle previews are held only in memory and
+are single-use; app reload, credential replacement, expiry, denial, or replay
+cannot submit them. A submit response only requests a fresh projection—the
+mobile client never converts an opaque transport receipt into local success.
 
 The synthetic and SDK gateways implement the same interface. Synthetic data
 must pass through gateway bootstrap, attachment, cursor reduction, mutation,
@@ -240,16 +257,13 @@ a server. Both rules are stated in [decisions.md](decisions.md) and covered by
 `src/core/negotiation.test.ts`, `src/core/server-connection.test.ts` and
 `src/core/mobile-lifecycle.test.ts`.
 
-The negotiation this repository performs is currently narrower in effect than
-it is in statement, because the canonical SDK's `MobileLifecycleClient.discover`
-refuses a discovery document that does not advertise exactly `[1]`, and the
-generated `MobileProtocolVersion` domain is bounded to `1..1`, while the wire
-schema already allows up to `MAX_MOBILE_PROTOCOL_VERSIONS` (8) entries. Until
-the canonical SDK widens both, a server advertising `[1, 2]` is refused inside
-the SDK before this repository's rule is reached. The rule is written and tested
-here so that widening the canonical bound is the only change needed.
-[Automonique #149](https://github.com/bext-stack/automonique/issues/149) tracks
-that widening.
+The re-vendored canonical SDK completes the multi-version discovery work from
+[Automonique #149](https://github.com/bext-stack/automonique/issues/149).
+`MobileLifecycleClient.discover` now admits bounded ordered advertisements and
+the generated mobile protocol domain supports versions 1 through 2. Mobile
+selects the highest shared version and ignores versions above this build's
+ceiling; an empty, repeated, malformed, or non-overlapping offer still fails
+closed.
 
 The server contracts and production composition root are implemented and
 verified by automated Rust-to-TypeScript, mobile, and bundle gates. An

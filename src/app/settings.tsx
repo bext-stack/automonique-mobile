@@ -141,7 +141,7 @@ export default function SettingsScreen() {
         server: {
           origin: offer.origin,
           platformEndpoint: `${offer.origin}/api/platform`,
-          protocolVersion: '1',
+          protocolVersion: 'pending',
           serverIdentity: offer.server_identity,
         },
       });
@@ -283,8 +283,10 @@ export default function SettingsScreen() {
                   Compatible Automonique server
                 </Text>
                 <Text style={[styles.metadata, { color: palette.text }]}>
-                  {serverCheck.server.origin} · mobile protocol v
-                  {serverCheck.server.protocolVersion}
+                  {serverCheck.server.origin} ·{' '}
+                  {serverCheck.server.protocolVersion === 'pending'
+                    ? 'mobile protocol checked during pairing'
+                    : `mobile protocol v${serverCheck.server.protocolVersion}`}
                 </Text>
                 <Text
                   selectable

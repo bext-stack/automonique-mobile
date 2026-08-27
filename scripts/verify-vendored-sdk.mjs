@@ -8,6 +8,9 @@ import {
   MOBILE_AUTH_SCHEMA_V1,
   MobileLifecycleClient,
   MobileSessionClient,
+  PLATFORM_V1_SCHEMA_DIGEST,
+  PlatformV2Client,
+  HttpsPlatformV2Transport,
   SCHEMA_DIGEST,
   mobilePlatformClientId,
 } from '@automonique/sdk';
@@ -30,13 +33,18 @@ if (
   installed.name !== manifest.package ||
   installed.version !== manifest.version ||
   archiveSha256 !== manifest.archiveSha256 ||
-  `sha256:${SCHEMA_DIGEST}` !== manifest.schemaDigest ||
+  `sha256:${PLATFORM_V1_SCHEMA_DIGEST}` !== manifest.schemaDigest ||
+  `sha256:${SCHEMA_DIGEST}` !== manifest.aggregateSchemaDigest ||
   installed.automonique?.schemaDigest !== manifest.schemaDigest ||
+  installed.automonique?.aggregateSchemaDigest !==
+    manifest.aggregateSchemaDigest ||
   installed.license !== 'Apache-2.0' ||
   MOBILE_AUTH_SCHEMA_V1 !== 'automonique.mobile-auth/v1' ||
   typeof MobileLifecycleClient !== 'function' ||
   typeof MobileSessionClient !== 'function' ||
-  typeof mobilePlatformClientId !== 'function'
+  typeof mobilePlatformClientId !== 'function' ||
+  typeof PlatformV2Client !== 'function' ||
+  typeof HttpsPlatformV2Transport !== 'function'
 ) {
   throw new Error('vendored_automonique_sdk_verification_failed');
 }

@@ -18,6 +18,10 @@ import {
 import { negotiateMobileProtocolVersion } from './negotiation';
 import { createAuthorizedHttpsGateway } from './sdk-gateway';
 import type { MobileAutomoniqueGateway } from './types';
+import {
+  createAuthorizedWorkspaceV2Gateway,
+  type WorkspaceV2Gateway,
+} from './workspace-v2-gateway';
 
 export type MobileLifecycleState =
   | { readonly phase: 'loading'; readonly profile: null }
@@ -376,6 +380,54 @@ export class MobileLifecycleCoordinator {
       expectedServerIdentity: this.connection.profile.serverIdentity,
       fetcher: lifecycleFetcher,
       now: this.now(),
+      token: async () => {
+        const token = await this.accessToken();
+        if (
+          this.connection === null ||
+          gatewayFingerprint(this.connection) !== expectedFingerprint
+        ) {
+          throw new Error('gateway_generation_replaced');
+        }
+        return token;
+      },
+    });
+  }
+
+  /**
+   * Construct the generation-scoped Platform v2 companion boundary. Project
+   * roots are deliberately not inferred from the v1 session authorization;
+   * callers must obtain an exact root from a future server-issued mobile grant.
+   */
+  createWorkspaceGateway(): WorkspaceV2Gateway {
+    if (this.connection === null) throw new Error('mobile_pairing_required');
+    const connection = this.connection;
+    const expectedFingerprint = gatewayFingerprint(connection);
+    const endpoint = new URL(connection.profile.platformEndpoint);
+    endpoint.pathname = '/api/platform/v2';
+    endpoint.search = '';
+    endpoint.hash = '';
+    const lifecycleFetcher: typeof fetch = async (input, init) => {
+      const response = await this.fetcher(input, init);
+      if (
+        (response.status === 401 ||
+          response.status === 403 ||
+          response.status === 410) &&
+        this.connection !== null &&
+        gatewayFingerprint(this.connection) === expectedFingerprint
+      ) {
+        this.clearExpiryTimer();
+        this.activeController?.abort();
+        this.publish({
+          phase: 'refresh_required',
+          profile: this.connection.profile,
+        });
+      }
+      return response;
+    };
+    return createAuthorizedWorkspaceV2Gateway({
+      endpoint: endpoint.toString(),
+      fetcher: lifecycleFetcher,
+      now: this.now,
       token: async () => {
         const token = await this.accessToken();
         if (

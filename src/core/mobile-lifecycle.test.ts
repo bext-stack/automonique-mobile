@@ -386,6 +386,59 @@ test('a Platform authorization refusal immediately makes the lifecycle read only
   expect(lifecycle.snapshot()).toMatchObject({ phase: 'refresh_required' });
 });
 
+test('a Platform v2 authorization refusal also gates the shared lifecycle', async () => {
+  const active = connection(issued(1n, 'c', NOW + 900_000));
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  const platformFetch = jest.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response('', { status: 403 }),
+  ) as jest.MockedFunction<typeof fetch>;
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+  });
+  await lifecycle.hydrate();
+
+  await expect(
+    lifecycle.createWorkspaceGateway().negotiate(),
+  ).rejects.toThrow();
+  expect(platformFetch).toHaveBeenCalledWith(
+    'https://ops.example.test/api/platform/v2',
+    expect.objectContaining({ method: 'POST', redirect: 'error' }),
+  );
+  expect(lifecycle.snapshot()).toMatchObject({ phase: 'refresh_required' });
+});
+
+test('an old Platform v2 gateway cannot read a rotated credential', async () => {
+  let clock = NOW;
+  const active = connection(issued(1n, 'c', NOW + 1));
+  const rotatedIssued = issued(2n, 'd', NOW + 900_000);
+  const rotated = connection(rotatedIssued);
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  saveIssued.mockResolvedValue(rotated);
+  const platformFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => clock,
+    fetcher: platformFetch,
+    discover: jest.fn(async () => ({
+      discovery: DISCOVERY,
+      refresh: jest.fn(async () => rotatedIssued),
+      revoke: jest.fn(),
+    })),
+  });
+  await lifecycle.hydrate();
+  const oldGateway = lifecycle.createWorkspaceGateway();
+  clock = NOW + 1;
+  await expect(oldGateway.negotiate()).rejects.toThrow(
+    'gateway_generation_replaced',
+  );
+  expect(platformFetch).not.toHaveBeenCalled();
+  expect(lifecycle.snapshot()).toMatchObject({
+    phase: 'ready',
+    profile: { credentialRevision: '2' },
+  });
+});
+
 test('one-time pairing pins discovery, exchanges once, and commits the issued pair', async () => {
   const pairedIssued = issued(1n, 'c', NOW + 900_000);
   const paired = connection(pairedIssued);
