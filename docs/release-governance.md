@@ -20,8 +20,11 @@ toolchain versions printed by EAS.
 Before requesting EAS builds:
 
 1. Work from a clean, reviewed commit on a protected branch.
-2. Run `npm ci`, `npm run validate`, and
-   `node scripts/verify-native-policy.mjs`.
+2. Run `npm ci`, `npm run validate`, `npm run sdk:drift`, and
+   `node scripts/verify-native-policy.mjs`. SDK drift is an informational review
+   prompt, not a failed build: inspect the upstream protocol change and
+   re-vendor only when the mobile surface or supported version range requires
+   it.
 3. Authenticate with the authorized Expo organization and verify that
    `app.json` contains its reviewed `owner` and `extra.eas.projectId` values.
 4. Run the repository-pinned EAS CLI, not a globally installed or floating

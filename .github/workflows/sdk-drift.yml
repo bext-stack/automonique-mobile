@@ -1,0 +1,154 @@
+name: Automonique SDK drift
+
+on:
+  schedule:
+    - cron: '23 7 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: automonique-sdk-drift
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out the mobile source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Compare the vendored and upstream schema digests
+        id: drift
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-upstream-sdk-drift.mjs --github-output "$GITHUB_OUTPUT"
+
+      - name: Synchronize the single drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRIFT: ${{ steps.drift.outputs.drift }}
+          LOCAL_SCHEMA_DIGEST: ${{ steps.drift.outputs.local_schema_digest }}
+          UPSTREAM_SCHEMA_DIGEST: ${{ steps.drift.outputs.upstream_schema_digest }}
+          LOCAL_SOURCE_COMMIT: ${{ steps.drift.outputs.local_source_commit }}
+          UPSTREAM_SOURCE_COMMIT: ${{ steps.drift.outputs.upstream_source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          marker='<!-- automonique-sdk-drift-signal -->'
+          title='Automonique SDK schema drift signal'
+          issues_json="$RUNNER_TEMP/automonique-sdk-drift-issues.json"
+          body_file="$RUNNER_TEMP/automonique-sdk-drift-body.md"
+          existing_body="$RUNNER_TEMP/automonique-sdk-drift-existing.md"
+
+          gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state all \
+            --limit 1000 \
+            --json number,state,body \
+            > "$issues_json"
+          issue_number="$(
+            jq -r --arg marker "$marker" \
+              'map(select((.body // "") | contains($marker)))
+               | sort_by(if .state == "OPEN" then 0 else 1 end, .number)
+               | .[0].number // empty' \
+              "$issues_json"
+          )"
+
+          if [ "$DRIFT" = true ]; then
+            {
+              printf '%s\n\n' "$marker"
+              printf '# Automonique SDK schema drift detected\n\n'
+              printf 'The scheduled comparison found a different schema digest on Automonique \x60main\x60. '
+              printf 'This is a maintenance signal, not a compatibility failure: mobile/server admission '
+              printf 'continues to use protocol-version negotiation.\n\n'
+              printf '| | Source commit | Schema digest |\n'
+              printf '| --- | --- | --- |\n'
+              printf '| Vendored mobile SDK | \x60%s\x60 | \x60%s\x60 |\n' \
+                "$LOCAL_SOURCE_COMMIT" "$LOCAL_SCHEMA_DIGEST"
+              printf '| Upstream SDK metadata | \x60%s\x60 | \x60%s\x60 |\n\n' \
+                "$UPSTREAM_SOURCE_COMMIT" "$UPSTREAM_SCHEMA_DIGEST"
+              printf 'Review the upstream protocol change and re-vendor only when the mobile surface or '
+              printf 'supported protocol range requires it. The workflow will update this issue if the '
+              printf 'digest changes again, and close it when the vendored digest catches up.\n'
+            } > "$body_file"
+
+            if [ -z "$issue_number" ]; then
+              gh issue create \
+                --repo "$GITHUB_REPOSITORY" \
+                --title "$title" \
+                --label enhancement \
+                --body-file "$body_file"
+              exit 0
+            fi
+
+            issue_state="$(
+              jq -r --argjson number "$issue_number" \
+                '.[] | select(.number == $number) | .state' \
+                "$issues_json"
+            )"
+            if [ "$issue_state" != OPEN ]; then
+              gh issue reopen "$issue_number" --repo "$GITHUB_REPOSITORY"
+            fi
+
+            gh issue view "$issue_number" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json body \
+              --jq .body \
+              > "$existing_body"
+            if ! cmp --silent "$body_file" "$existing_body"; then
+              gh issue edit "$issue_number" \
+                --repo "$GITHUB_REPOSITORY" \
+                --title "$title" \
+                --body-file "$body_file"
+            fi
+            exit 0
+          fi
+
+          if [ -z "$issue_number" ]; then
+            echo 'Vendored SDK digest matches upstream; no tracking issue exists.'
+            exit 0
+          fi
+
+          issue_state="$(
+            jq -r --argjson number "$issue_number" \
+              '.[] | select(.number == $number) | .state' \
+              "$issues_json"
+          )"
+          if [ "$issue_state" = OPEN ]; then
+            {
+              printf '%s\n\n' "$marker"
+              printf '# Vendored Automonique SDK schema is current\n\n'
+              printf 'The scheduled comparison now finds the same schema digest in the vendored '
+              printf 'mobile SDK and the latest Automonique SDK metadata.\n\n'
+              printf '| | Source commit | Schema digest |\n'
+              printf '| --- | --- | --- |\n'
+              printf '| Vendored mobile SDK | \x60%s\x60 | \x60%s\x60 |\n' \
+                "$LOCAL_SOURCE_COMMIT" "$LOCAL_SCHEMA_DIGEST"
+              printf '| Upstream SDK metadata | \x60%s\x60 | \x60%s\x60 |\n\n' \
+                "$UPSTREAM_SOURCE_COMMIT" "$UPSTREAM_SCHEMA_DIGEST"
+              printf 'The workflow will reopen this issue if a later upstream digest differs.\n'
+            } > "$body_file"
+            gh issue edit "$issue_number" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$title" \
+              --body-file "$body_file"
+            gh issue close "$issue_number" \
+              --repo "$GITHUB_REPOSITORY" \
+              --reason completed
+          else
+            echo "Vendored SDK digest matches upstream; issue #$issue_number is already closed."
+          fi

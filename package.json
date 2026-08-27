@@ -64,6 +64,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "sdk:verify": "node scripts/verify-vendored-sdk.mjs",
+    "sdk:drift": "node scripts/check-upstream-sdk-drift.mjs",
+    "sdk:drift:test": "node --test scripts/check-upstream-sdk-drift.test.mjs",
     "notices:generate": "node scripts/generate-third-party-notices.mjs",
     "notices:check": "node scripts/generate-third-party-notices.mjs --check",
     "native:verify": "node scripts/verify-native-policy.mjs",
@@ -73,7 +75,7 @@
     "audit:high": "npm audit --audit-level=high",
     "doctor": "expo-doctor",
     "bundle:platforms": "expo export --platform all --output-dir dist",
-    "validate": "npm run sdk:verify && npm run notices:check && npm run security:verify && npm run native:verify && npm run production:verify && npm run audit:high && npm run typecheck && npm run lint && npm run test:ci && npm run format:check && npm run doctor && npm run bundle:platforms && npm run production:verify:bundle"
+    "validate": "npm run sdk:verify && npm run sdk:drift:test && npm run notices:check && npm run security:verify && npm run native:verify && npm run production:verify && npm run audit:high && npm run typecheck && npm run lint && npm run test:ci && npm run format:check && npm run doctor && npm run bundle:platforms && npm run production:verify:bundle"
   },
   "overrides": {
     "xcode": {
