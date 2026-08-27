@@ -46,13 +46,13 @@ device, and release evidence.
 ## Public Android preview
 
 Download the immutable
-[Automonique Mobile 0.1.0-preview.1 APK](https://www.automonique.fr/downloads/android/0.1.0-preview.1/42a0f924bc865075c19f54f437e91836215950ee5035664e819dfd24f4b7ce8f/automonique-mobile-0.1.0-preview.1.apk).
+[Automonique Mobile 0.1.0-preview.2 APK](https://www.automonique.fr/downloads/android/0.1.0-preview.2/4c7b7fac529c8060ecc84691b00156c1fc42989c86adab467cdf9f43e959b353/automonique-mobile-0.1.0-preview.2.apk).
 
-SHA-256: `42a0f924bc865075c19f54f437e91836215950ee5035664e819dfd24f4b7ce8f`
+SHA-256: `4c7b7fac529c8060ecc84691b00156c1fc42989c86adab467cdf9f43e959b353`
 
-The adjacent [publication record](https://www.automonique.fr/downloads/android/0.1.0-preview.1/42a0f924bc865075c19f54f437e91836215950ee5035664e819dfd24f4b7ce8f/publication.json) connects these
+The adjacent [publication record](https://www.automonique.fr/downloads/android/0.1.0-preview.2/4c7b7fac529c8060ecc84691b00156c1fc42989c86adab467cdf9f43e959b353/publication.json) connects these
 exact bytes to protected `main`, retained GitHub Actions run
-[`32872218139`](https://github.com/bext-stack/automonique-mobile/actions/runs/32872218139),
+[`33018777648`](https://github.com/bext-stack/automonique-mobile/actions/runs/33018777648),
 the GitHub artifact attestation, packaged manifest, ABIs, debug-only signer,
 toolchains, and dependency notices.
 
@@ -63,12 +63,18 @@ physical-device support, production signing, app-store readiness, or deployment
 of Automonique itself. See the
 [preview publication gates](docs/release-governance.md#authorized-android-preview-publication).
 
+The earlier
+[0.1.0-preview.1 path](https://www.automonique.fr/downloads/android/0.1.0-preview.1/42a0f924bc865075c19f54f437e91836215950ee5035664e819dfd24f4b7ce8f/automonique-mobile-0.1.0-preview.1.apk)
+stays published and unchanged; a preview path is never overwritten or
+redirected. The synthetic TalkBack traversal recorded for preview.1 was not
+repeated for preview.2 and does not cover it.
+
 ## Requirements
 
 - Node.js 24 LTS
 - npm 11
 - Expo SDK 57
-- React Native 0.86.2 and React 19.2
+- React Native 0.86.3 and React 19.2
 
 ```sh
 npm ci
