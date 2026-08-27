@@ -6,6 +6,7 @@ import {
   workspaceCompanionFixture,
 } from './workspace-fixtures';
 import {
+  MAX_WORKSPACE_REVISION_TOMBSTONES,
   admitWorkspaceAuthorityPreview,
   admitWorkspaceCompanionCatalog,
   admitWorkspaceDeepLink,
@@ -207,6 +208,104 @@ test('server omission leaves a durable tombstone and reactivation needs a newer 
   const reauthorized = reduceWorkspaceCompanionCatalog(removal.catalog, replay);
   expect(reauthorized.resyncRequired).toBe(false);
   expect(reauthorized.catalog.serverTombstones).toEqual([]);
+});
+
+test('revocation retains newer nested high-water marks and rejects lower or equal reauthorization', () => {
+  const revoked = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  revoked.generatedAt = '2026-08-27T10:01:00Z';
+  revoked.selectedServerIdentity = null;
+  revoked.servers[0].authorization = 'revoked';
+  revoked.servers[0].authorizationRevision = '9';
+  revoked.servers[0].workspaces[0].revision = '13';
+  revoked.servers[0].workspaces[0].attempt.revision = '5';
+  revoked.servers[0].workspaces[0].sessions[0].revision = '10';
+
+  const removal = reduceWorkspaceCompanionCatalog(
+    workspaceCompanionFixture,
+    revoked,
+  );
+  expect(removal.resyncRequired).toBe(false);
+  expect(removal.catalog.revisionTombstones).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        objectType: 'workspace',
+        objectId: 'workspace-34',
+        revision: '13',
+      }),
+      expect.objectContaining({
+        objectType: 'attempt',
+        objectId: 'attempt-34-a',
+        revision: '5',
+      }),
+      expect.objectContaining({
+        objectType: 'session',
+        objectId: 'session-34',
+        revision: '10',
+      }),
+    ]),
+  );
+
+  for (const [workspaceRevision, attemptRevision, sessionRevision] of [
+    ['12', '5', '10'],
+    ['13', '4', '10'],
+    ['13', '5', '9'],
+    ['13', '5', '10'],
+  ]) {
+    const replay = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+    replay.generatedAt = '2026-08-27T10:02:00Z';
+    replay.servers[0].authorizationRevision = '10';
+    replay.servers[0].workspaces[0].revision = workspaceRevision;
+    replay.servers[0].workspaces[0].attempt.revision = attemptRevision;
+    replay.servers[0].workspaces[0].sessions[0].revision = sessionRevision;
+    expect(
+      reduceWorkspaceCompanionCatalog(removal.catalog, replay).resyncRequired,
+    ).toBe(true);
+  }
+});
+
+test('a foreign revision tombstone cannot pre-fence an unrelated server', () => {
+  const foreignIdentity = `sha256:${'b'.repeat(64)}` as ServerIdentity;
+  const replacement = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  replacement.revisionTombstones = [
+    {
+      objectType: 'workspace',
+      serverIdentity: foreignIdentity,
+      workspaceId: 'foreign',
+      objectId: 'foreign',
+      revision: decimalRevision('1'),
+    },
+  ];
+
+  expect(() => admitWorkspaceCompanionCatalog(replacement)).toThrow(
+    'workspace_companion_invalid',
+  );
+});
+
+test('foreign revision tombstones cannot consume the admitted budget', () => {
+  const foreignIdentity = `sha256:${'b'.repeat(64)}` as ServerIdentity;
+  const foreignTombstones = Array.from(
+    { length: MAX_WORKSPACE_REVISION_TOMBSTONES },
+    (_, index) => ({
+      objectType: 'workspace' as const,
+      serverIdentity: foreignIdentity,
+      workspaceId: `foreign-${index}`,
+      objectId: `foreign-${index}`,
+      revision: decimalRevision('1'),
+    }),
+  );
+  const replacement = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  replacement.generatedAt = '2026-08-27T10:01:00Z';
+  replacement.revisionTombstones = foreignTombstones;
+
+  expect(() => admitWorkspaceCompanionCatalog(replacement)).toThrow(
+    'workspace_companion_invalid',
+  );
+  const reduction = reduceWorkspaceCompanionCatalog(
+    workspaceCompanionFixture,
+    replacement,
+  );
+  expect(reduction.resyncRequired).toBe(true);
+  expect(reduction.catalog.revisionTombstones).toEqual([]);
 });
 
 test('replacement reduction fences attempt and retained-session rollback', () => {

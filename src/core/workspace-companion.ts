@@ -686,6 +686,16 @@ export function admitWorkspaceCompanionCatalog(
     admitRevisionTombstone,
   );
   unique(revisionTombstones.map(revisionTombstoneKey));
+  const revisionScopeIdentities = new Set<ServerIdentity>([
+    ...liveIdentities,
+    ...serverTombstones.map((entry) => entry.serverIdentity),
+  ]);
+  if (
+    revisionTombstones.some(
+      (entry) => !revisionScopeIdentities.has(entry.serverIdentity),
+    )
+  )
+    fail();
   const visibleObjectKeys = new Set<string>();
   for (const server of servers) {
     for (const workspace of server.workspaces) {
@@ -913,6 +923,7 @@ export function reduceWorkspaceCompanionCatalog(
     ) {
       return rejectReplacement();
     }
+    const retainRevokedRevisions = server.authorization === 'revoked';
     for (const workspace of server.workspaces) {
       const workspaceEntry: WorkspaceRevisionTombstone = {
         objectType: 'workspace',
@@ -930,7 +941,12 @@ export function reduceWorkspaceCompanionCatalog(
       ) {
         return rejectReplacement();
       }
-      revisionScopes.delete(revisionTombstoneKey(workspaceEntry));
+      if (retainRevokedRevisions) {
+        if (!retainRevisionTombstone(workspaceEntry))
+          return rejectReplacement();
+      } else {
+        revisionScopes.delete(revisionTombstoneKey(workspaceEntry));
+      }
       const priorWorkspace = previous?.workspaces.find(
         (candidate) => candidate.id === workspace.id,
       );
@@ -966,7 +982,12 @@ export function reduceWorkspaceCompanionCatalog(
         ) {
           return rejectReplacement();
         }
-        revisionScopes.delete(revisionTombstoneKey(attemptEntry));
+        if (retainRevokedRevisions) {
+          if (!retainRevisionTombstone(attemptEntry))
+            return rejectReplacement();
+        } else {
+          revisionScopes.delete(revisionTombstoneKey(attemptEntry));
+        }
       }
       for (const session of workspace.sessions) {
         const priorSession = priorWorkspace?.sessions.find(
@@ -994,7 +1015,12 @@ export function reduceWorkspaceCompanionCatalog(
         ) {
           return rejectReplacement();
         }
-        revisionScopes.delete(revisionTombstoneKey(sessionEntry));
+        if (retainRevokedRevisions) {
+          if (!retainRevisionTombstone(sessionEntry))
+            return rejectReplacement();
+        } else {
+          revisionScopes.delete(revisionTombstoneKey(sessionEntry));
+        }
       }
     }
   }
@@ -1003,8 +1029,14 @@ export function reduceWorkspaceCompanionCatalog(
     catalogObjectRevisions(next, false).keys(),
   );
   for (const [key, entry] of currentObjectRevisions) {
-    if (!replacementObjectKeys.has(key) && !retainRevisionTombstone(entry)) {
-      return rejectReplacement();
+    if (!replacementObjectKeys.has(key)) {
+      const retained = revisionScopes.get(key);
+      if (
+        retained !== undefined &&
+        BigInt(retained.revision) >= BigInt(entry.revision)
+      )
+        continue;
+      if (!retainRevisionTombstone(entry)) return rejectReplacement();
     }
   }
   if (revisionScopes.size > MAX_WORKSPACE_REVISION_TOMBSTONES)
