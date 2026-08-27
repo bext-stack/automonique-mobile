@@ -43,7 +43,7 @@ export const workspaceCompanionFixture: WorkspaceCompanionCatalog = {
         },
       ],
       projects: [
-        { id: 'project-mobile', hostId: 'host-fr-1', label: 'Mobile' },
+        { id: 'project-mobile', hostIds: ['host-fr-1'], label: 'Mobile' },
       ],
       workspaces: [
         {

@@ -28,8 +28,10 @@ revision tombstones. Reintroducing one requires a strictly newer object
 revision, including after server revocation and reauthorization.
 
 Cached catalogs reopen as stale. Active authorization becomes `cached`, and
-all actions except bounded reads are removed. Cached data may navigate to
-retained read surfaces, but it cannot create/resume work or open a terminal.
+all actions except bounded reads are removed. Cached data may navigate only to
+an exact retained chat already present in the bounded v1 projection. Review-
+backed files, previews, source control, every mutation, and terminal require a
+current live grant.
 Drafts remain inert data. Authority previews are never cached.
 
 ## Expansion decisions
@@ -40,7 +42,7 @@ Drafts remain inert data. Authority previews are never cached.
 | Host, project, task, workspace, attempt, branch, repository, freshness, and attention presentation | Approved for sanitized reads                                                                   | Strict DTO keys, ceilings, referential scope checks, HTTPS-only repository links, and no host path or credential field.                                                                            |
 | External task integration                                                                          | Approved for display and task prefill                                                          | External work-item status is a separate type and field from Automonique orchestration state. It grants no host/workspace authority.                                                                |
 | Workspace creation and resume                                                                      | Approved through typed task intents or an ephemeral lifecycle preview                          | The canonical v2 SDK binds exact request coordinates, revisions, authority ceiling, expiry, and idempotency. Confirmation is separate and single-use. No generic execute method or offline outbox. |
-| Deep links to retained chat, files, preview, and source control                                    | Approved for explicitly granted exact workspace revisions                                      | Retained chat also binds the exact session revision. Routes are internal typed destinations, not arbitrary URLs or filesystem paths. Cached routes are read-only.                                  |
+| Deep links to retained chat, files, preview, and source control                                    | Approved for explicitly granted exact workspace revisions                                      | Retained chat also binds the exact session revision. Routes are internal typed destinations, not arbitrary URLs or filesystem paths. Only exact retained chat survives cached/offline state.       |
 | Terminal relay                                                                                     | Refused by workspace visibility; conditionally approvable in a separate risk-reviewed delivery | Requires an exact workspace navigation grant, active live profile, and separate `terminal_relay` actor action. No terminal transport is implemented here.                                          |
 | Attachments and audio uploads                                                                      | Refused in this issue                                                                          | Separate data-retention, content-scanning, size, privacy, and transport review required.                                                                                                           |
 | Dictation as capability expansion                                                                  | Refused                                                                                        | Existing on-device dictation may edit text locally only; it does not add an upload or action.                                                                                                      |
@@ -86,12 +88,18 @@ Drafts remain inert data. Authority previews are never cached.
 ## Deferred evidence
 
 The production lifecycle now constructs the re-vendored canonical Platform v2
-gateway and its authenticated, generation-fenced transport. Automated tests
+gateway and its authenticated, generation-fenced transport. The production
+provider consumes typed project graphs and bounded lineage/review details into
+a durable, revision-fenced catalog; screens expose discovery, exact retained
+chat, and current review-backed destinations without a generic transport.
+Automated tests
 cover negotiation, bounded paging, refusal/downgrade/resync, malformed and
 future grants, authorization loss and generation races, preview
 expiry/replay/app reload, exact approval decisions, durable receipt lookup
 without replay, generation-fenced local persistence, explicit confirmation,
 project ancestry, exact lineage cancellation, dedicated bearer-grant
-admission/persistence, and receipt discovery across rotation. Production
-multi-server UI/cache integration is not complete and live acceptance has not
-run. Terminal relay and device evidence remain separate work.
+admission/persistence, receipt discovery across rotation, typed relation joins,
+bounded partial coverage, offline cache behavior, and revocation tombstones.
+The current secure lifecycle still holds only one active server credential at a
+time, and live acceptance has not run. Terminal relay and device evidence remain
+separate work.

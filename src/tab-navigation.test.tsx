@@ -40,11 +40,12 @@ jest.mock('expo-router', () => {
   return { Tabs: MockTabs };
 });
 
-test('exposes the five real operator surfaces and approval attention badge', async () => {
+test('exposes the workspace companion and operator surfaces with approval attention', async () => {
   const view = await render(<OperatorTabs />);
 
   expect(view.getByTestId('tab-index')).toBeTruthy();
   expect(view.getByTestId('tab-sessions')).toBeTruthy();
+  expect(view.getByTestId('tab-workspaces')).toBeTruthy();
   expect(view.getByText('approvals:1')).toBeTruthy();
   expect(view.getByTestId('tab-activity')).toBeTruthy();
   expect(view.getByTestId('tab-server')).toBeTruthy();

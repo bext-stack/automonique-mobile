@@ -108,7 +108,20 @@ export interface WorkspaceIntentResult {
   readonly outcome: WorkspaceIntentOutcome;
 }
 
+/** Immutable, non-secret coordinates for the exact delegated gateway generation. */
+export interface WorkspaceV2AuthorizationScope {
+  readonly serverIdentity: string;
+  readonly tenantId: string;
+  readonly authorizationRevision: bigint;
+  readonly principalGeneration: bigint;
+  readonly delegationId: string;
+  readonly expiresAtMs: bigint;
+  readonly projectRoots: readonly string[];
+  readonly actions: readonly MobileV2Action[];
+}
+
 export interface WorkspaceV2Gateway {
+  readonly authorizationScope: WorkspaceV2AuthorizationScope;
   negotiate(signal?: AbortSignal): Promise<void>;
   loadProject(
     project: string,
@@ -644,6 +657,16 @@ export function createWorkspaceV2Gateway(
   }
 
   return {
+    authorizationScope: deepFreeze({
+      serverIdentity: authorization.server_identity,
+      tenantId: authorization.tenant_id,
+      authorizationRevision: authorization.authorization_revision,
+      principalGeneration: authorization.principal_generation,
+      delegationId: authorization.delegation_id,
+      expiresAtMs: authorization.expires_at_ms,
+      projectRoots: [...authorization.project_roots],
+      actions: [...authorization.actions],
+    }),
     async negotiate(signal) {
       // Negotiation does not itself confer an operation grant.
       requireNegotiatedV2(

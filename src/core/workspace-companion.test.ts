@@ -137,6 +137,38 @@ test('deep links bind server, workspace revision and retained session', () => {
   ).toThrow('workspace_navigation_not_authorized');
 });
 
+test('offline cache retains exact chat reads but drops review-backed destination authority', () => {
+  const cached = {
+    ...workspaceCompanionFixture,
+    phase: 'stale' as const,
+    servers: workspaceCompanionFixture.servers.map((server) => ({
+      ...server,
+      authorization: 'cached' as const,
+      actions: ['workspace_read' as const],
+    })),
+  };
+  expect(
+    admitWorkspaceDeepLink(cached, {
+      serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      workspaceId: 'workspace-34',
+      workspaceRevision: decimalRevision('12'),
+      destination: 'chat',
+      sessionId: 'session-34',
+      sessionRevision: decimalRevision('9'),
+    }),
+  ).toMatchObject({ readOnly: true });
+  expect(() =>
+    admitWorkspaceDeepLink(cached, {
+      serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      workspaceId: 'workspace-34',
+      workspaceRevision: decimalRevision('12'),
+      destination: 'files',
+      sessionId: null,
+      sessionRevision: null,
+    }),
+  ).toThrow('workspace_navigation_not_authorized');
+});
+
 test('replacement reduction rejects revision rollback and strips live authority', () => {
   const rollback = JSON.parse(JSON.stringify(workspaceCompanionFixture));
   rollback.generatedAt = '2026-08-27T10:01:00Z';

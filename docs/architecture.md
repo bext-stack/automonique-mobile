@@ -12,7 +12,14 @@ to one server profile. Cached profiles reopen stale and retain only
 production lifecycle constructs a generation-scoped authenticated v2 gateway.
 It negotiates v2 before reads, consumes exact project-root queries, exposes
 typed lineage and read-only review snapshots, and performs create/resume only
-through an ephemeral server preview and a separate confirmation. Persisted
+through an ephemeral server preview and a separate confirmation. The
+`WorkspaceProvider` joins only typed Platform v2 relations into a durable
+catalog, caps detail fanout at 32 workspaces with concurrency two, and reports
+partial project/lineage/review coverage. It retains historical server scopes as
+cached reads while only the current credential generation can be active.
+Production screens expose discovery, exact workspace detail, and revision-bound
+retained-session jumps. Review destinations require a current `get_review`
+projection; terminal and all workspace mutations remain unavailable. Persisted
 authorization tombstones pin omitted or
 revoked identities to their tenant, origin, and last authorization revision.
 Bounded per-object revision tombstones also retain workspace, attempt, and
@@ -23,7 +30,8 @@ scope. It reads the dedicated server-issued delegated bearer principal with
 exact roots, per-action grants, identity/revisions, generation, and expiry,
 then persists only the strictly admitted document with the secure credential
 generation. A missing or invalid document disables the workspace gateway.
-Production UI/cache integration and live acceptance remain distinct work.
+Concurrent active multi-server credentials and live acceptance remain distinct
+work.
 
 ## System boundary
 
@@ -31,7 +39,7 @@ Production UI/cache integration and live acceptance remain distinct work.
 screens
    │ high-level reads and actions only
    ▼
-ProductionMobileProvider / MobileProvider
+ProductionMobileProvider / MobileProvider / WorkspaceProvider
    │
    ├── MobileAutomoniqueGateway ──┬── createMockGateway (tests only)
    │                              │     deterministic adverse-state contract

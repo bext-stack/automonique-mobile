@@ -19,9 +19,9 @@ non-writable lifecycle state.
 
 After successful admission, the SDK gateway consumes the server-authorized
 actor, session scope, actions, limits, sanitized resumable history, and receipt
-state. A five-tab operator shell exposes a workload overview, filterable
-sessions, pending approvals, sanitized activity plus durable receipts, and the
-server/access scope. Screens expose only bounded session discovery and
+state. The operator shell exposes a workload overview, filterable sessions,
+typed workspace discovery, pending approvals, sanitized activity plus durable
+receipts, and the server/access scope. Screens expose only bounded session discovery and
 attachment, exact-session follow-up, exact-run stop, approval decisions, and
 receipt reconciliation. They never receive generic Platform execution authority.
 Deterministic synthetic gateways remain test fixtures and are excluded from
@@ -32,14 +32,18 @@ credential lifecycle constructs its exact `/api/platform/v2` HTTPS transport,
 renegotiates it per credential generation, and exposes bounded project reads,
 lineage, read-only review, lifecycle preview/confirmation, and exact intent
 cancellation behind a narrow companion gateway. Production workspace screens
-remain fail-closed until the dedicated server endpoint issues a delegated
+join only typed project/host/checkout/workspace relations, bound detail fanout,
+report partial coverage, preserve a read-only multi-server cache and exact
+revision drafts, and admit review destinations only from current review data.
+They remain fail-closed until the dedicated server endpoint issues a delegated
 Platform v2 principal binding the bearer to server-owned tenant/actor,
 credential identity and revisions, generation, expiry, exact project roots,
 and per-operation actions. The lifecycle strictly admits and persists that
 document with the secure credential generation; refresh retrieves its rotated
 generation. Mobile never translates its bearer into Basic or derives authority
-from a session, label, or external task. Operator project provisioning,
-production UI/cache integration, and live acceptance remain separate work.
+from a session, label, or external task. Create/resume, terminal relay,
+concurrent active multi-server credentials, and live acceptance remain separate
+work.
 
 The connection screen is a self-host onboarding flow rather than a fixture
 selector: it checks an existing server's public mobile discovery contract,

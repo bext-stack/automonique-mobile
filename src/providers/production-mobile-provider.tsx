@@ -18,6 +18,10 @@ import type { WorkspaceV2Gateway } from '@/core/workspace-v2-gateway';
 import type { MobilePairingOffer } from '@automonique/sdk';
 
 import { MobileProvider } from './mobile-provider';
+import {
+  revokeWorkspaceCatalogCache,
+  WorkspaceProvider,
+} from './workspace-provider';
 
 interface LifecycleContextValue {
   readonly state: MobileLifecycleState;
@@ -137,7 +141,13 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
         refreshCredential: async () => {
           await mobileLifecycle.refresh();
         },
-        revokeCredential: () => mobileLifecycle.revoke(),
+        revokeCredential: async () => {
+          const identity = state.profile?.serverIdentity;
+          if (identity !== undefined) {
+            await revokeWorkspaceCatalogCache(identity).catch(() => undefined);
+          }
+          await mobileLifecycle.revoke();
+        },
         pair: async (offer) => {
           await mobileLifecycle.pair(offer);
         },
@@ -149,7 +159,13 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
         gateway={generation.gateway}
         storageScope={generation.scope}
       >
-        {children}
+        <WorkspaceProvider
+          gateway={generation.workspaceGateway}
+          generationKey={generation.key}
+          profile={state.profile}
+        >
+          {children}
+        </WorkspaceProvider>
       </MobileProvider>
     </LifecycleContext.Provider>
   );

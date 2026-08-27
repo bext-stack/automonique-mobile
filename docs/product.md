@@ -170,10 +170,29 @@ authenticated gateway for negotiated project reads, lineage, read-only review,
 typed task intents, exact cancellation, and lifecycle preview/confirmation.
 The mobile lifecycle consumes the dedicated server-issued delegated v2 bearer
 document, persists it with the secure credential generation, and keeps exact
-project roots and per-operation actions fail-closed across refresh. It does not
-yet expose those operations in production navigation: operator provisioning,
-production multi-server UI/cache work, and end-to-end acceptance remain
-distinct pending milestones; the app refuses to guess any of them. Terminal
+project roots and per-operation actions fail-closed across refresh.
+
+Production companion navigation now consumes only those delegated project
+roots. It joins projects, host setups, checkouts, workspaces, attempts,
+sessions, repositories, and retained Platform sessions through typed
+relations. It performs at most 32 per-workspace lineage/review detail reads,
+two workspaces at a time, and calls out partial coverage. The durable catalog
+can retain up to eight server identities read-only, while the current
+credential generation is the only identity marked active. External-work
+status and orchestration status are separate fields and UI sections; labels
+are never parsed for either.
+
+Workspace files, sanitized previews, and source-control summaries appear only
+after a current `get_review` grant returns the corresponding typed projection.
+Exact chat jumps additionally require the workspace revision, typed retained
+session relation, session revision, and an exact session in the bounded v1
+mobile projection. Cached data and revision-scoped drafts survive offline, but
+non-chat destinations and every workspace mutation fail closed. Create/resume
+remain visibly disabled because no production UI adapter binds those intents
+to server-issued previews and receipts yet. Concurrent active credentials for
+multiple servers and live-server acceptance remain pending because the
+credential lifecycle currently admits one active server generation at a time.
+Terminal
 relay, attachments, uploads, and background mutation remain separate
 risk-reviewed work. See
 [workspace-companion-threat-model.md](workspace-companion-threat-model.md).

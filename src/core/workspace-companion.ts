@@ -38,7 +38,8 @@ export interface AuthorizedHost {
 
 export interface AuthorizedProject {
   readonly id: string;
-  readonly hostId: string;
+  /** Exact host relations issued for this project; a project may span hosts. */
+  readonly hostIds: readonly string[];
   readonly label: string;
 }
 
@@ -75,6 +76,7 @@ export interface CompanionWorkspace {
     | 'planned'
     | 'queued'
     | 'running'
+    | 'blocked'
     | 'waiting'
     | 'review'
     | 'succeeded'
@@ -372,6 +374,7 @@ function admitWorkspace(value: unknown): CompanionWorkspace {
       'planned',
       'queued',
       'running',
+      'blocked',
       'waiting',
       'review',
       'succeeded',
@@ -539,10 +542,18 @@ function admitServer(value: unknown): ScopedServerProfile {
     fail();
   const projects = candidate.projects.map((entry): AuthorizedProject => {
     const value = object(entry);
-    keys(value, ['id', 'hostId', 'label']);
+    keys(value, ['id', 'hostIds', 'label']);
+    if (
+      !Array.isArray(value.hostIds) ||
+      value.hostIds.length === 0 ||
+      value.hostIds.length > MAX_WORKSPACE_HOSTS
+    )
+      fail();
+    const hostIds = value.hostIds.map((hostId) => string(hostId, 256));
+    unique(hostIds);
     return {
       id: string(value.id, 256),
-      hostId: string(value.hostId, 256),
+      hostIds,
       label: string(value.label, 512),
     };
   });
@@ -558,10 +569,12 @@ function admitServer(value: unknown): ScopedServerProfile {
   const projectsById = new Map(
     projects.map((project) => [project.id, project]),
   );
-  for (const project of projects) if (!hostIds.has(project.hostId)) fail();
+  for (const project of projects)
+    if (project.hostIds.some((hostId) => !hostIds.has(hostId))) fail();
   for (const workspace of workspaces) {
     const project = projectsById.get(workspace.projectId);
-    if (project === undefined || project.hostId !== workspace.hostId) fail();
+    if (project === undefined || !project.hostIds.includes(workspace.hostId))
+      fail();
   }
   return {
     serverIdentity: identity(candidate.serverIdentity),
@@ -1160,6 +1173,12 @@ export function admitWorkspaceDeepLink(
   ) {
     throw new Error('workspace_terminal_not_authorized');
   }
+  if (
+    request.destination !== 'chat' &&
+    (catalog.phase !== 'live' || server.authorization !== 'active')
+  ) {
+    throw new Error('workspace_navigation_not_authorized');
+  }
   const params: Record<string, string> = {
     server: request.serverIdentity,
     workspace: workspace.id,
@@ -1348,7 +1367,7 @@ export function bindWorkspaceIntentPreview(
     );
     if (
       !server.actions.includes('workspace_create_preview') ||
-      project?.hostId !== admittedRequest.hostId ||
+      !project?.hostIds.includes(admittedRequest.hostId) ||
       !server.hosts.some((host) => host.id === admittedRequest.hostId)
     ) {
       throw new Error('workspace_intent_preview_not_authorized');
