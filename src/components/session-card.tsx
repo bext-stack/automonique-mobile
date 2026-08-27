@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import { Link } from 'expo-router';
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { SessionSummary } from '@/core/types';
@@ -8,6 +9,7 @@ import { usePalette } from '@/theme/palette';
 
 export function SessionCard({ session }: { readonly session: SessionSummary }) {
   const palette = usePalette();
+  const [pressed, setPressed] = useState(false);
   return (
     <Link
       href={{
@@ -19,11 +21,13 @@ export function SessionCard({ session }: { readonly session: SessionSummary }) {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Open session ${session.title}, ${session.state}`}
-        style={({ pressed }) => [
+        onPressIn={() => setPressed(true)}
+        onPressOut={() => setPressed(false)}
+        style={StyleSheet.flatten([
           styles.card,
           { backgroundColor: palette.surface, borderColor: palette.border },
           pressed && styles.pressed,
-        ]}
+        ])}
       >
         <View style={styles.header}>
           <Text style={[styles.title, { color: palette.text }]}>

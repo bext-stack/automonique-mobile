@@ -107,7 +107,10 @@ export default function OverviewScreen() {
           <Link href="/(tabs)/approvals" asChild>
             <Pressable
               accessibilityRole="button"
-              style={[styles.rowLink, { borderColor: palette.warning }]}
+              style={StyleSheet.flatten([
+                styles.rowLink,
+                { borderColor: palette.warning },
+              ])}
             >
               <Text style={[styles.rowTitle, { color: palette.text }]}>
                 Review {snapshot.approvals.length} pending approval
@@ -121,7 +124,10 @@ export default function OverviewScreen() {
           <Link href="/(tabs)/activity" asChild>
             <Pressable
               accessibilityRole="button"
-              style={[styles.rowLink, { borderColor: palette.warning }]}
+              style={StyleSheet.flatten([
+                styles.rowLink,
+                { borderColor: palette.warning },
+              ])}
             >
               <Text style={[styles.rowTitle, { color: palette.text }]}>
                 Reconcile {unsettled.length} uncertain command
@@ -135,7 +141,10 @@ export default function OverviewScreen() {
           <Link href="/(tabs)/sessions" asChild>
             <Pressable
               accessibilityRole="button"
-              style={[styles.rowLink, { borderColor: palette.warning }]}
+              style={StyleSheet.flatten([
+                styles.rowLink,
+                { borderColor: palette.warning },
+              ])}
             >
               <Text style={[styles.rowTitle, { color: palette.text }]}>
                 Inspect {lost.length} unavailable session
@@ -162,13 +171,13 @@ export default function OverviewScreen() {
           >
             <Pressable
               accessibilityRole="button"
-              style={[
+              style={StyleSheet.flatten([
                 styles.sessionRow,
                 {
                   backgroundColor: palette.surface,
                   borderColor: palette.border,
                 },
-              ]}
+              ])}
             >
               <View style={styles.grow}>
                 <Text style={[styles.rowTitle, { color: palette.text }]}>
@@ -194,7 +203,10 @@ export default function OverviewScreen() {
           <Link href="/(tabs)/sessions" asChild>
             <Pressable
               accessibilityRole="button"
-              style={[styles.secondary, { borderColor: palette.border }]}
+              style={StyleSheet.flatten([
+                styles.secondary,
+                { borderColor: palette.border },
+              ])}
             >
               <Text style={{ color: palette.text, fontWeight: '800' }}>
                 View all sessions
