@@ -13,10 +13,11 @@ jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
 );
 
-const fingerprint = 'delegated-principal-fingerprint';
+const digest = `sha256:${'c'.repeat(64)}`;
+const digestProvider = async () => digest;
 const handle: WorkspaceV2ReceiptHandle = {
   schema: WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
-  authorization_fingerprint: fingerprint,
+  authorization_digest: digest,
   project: 'project-mobile',
   idempotency_key: 'workspace-create-1',
   preview_id: 'preview-workspace-1',
@@ -33,24 +34,32 @@ beforeEach(async () => {
 });
 
 test('persists only a bounded lookup handle across store recreation', async () => {
-  await createWorkspaceV2ReceiptStore(fingerprint).put(handle);
+  await createWorkspaceV2ReceiptStore(digestProvider).put(handle);
   const encoded = JSON.stringify(
-    await createWorkspaceV2ReceiptStore(fingerprint).list(),
+    await createWorkspaceV2ReceiptStore(digestProvider).list(),
   );
   expect(JSON.parse(encoded)).toEqual([handle]);
   expect(encoded).not.toContain('resolved_parents');
   expect(encoded).not.toContain('effective_authority');
   expect(encoded).not.toContain('intent');
+  expect(encoded).not.toContain('get_mutation_receipt');
+  const keys = await AsyncStorage.getAllKeys();
+  expect(keys).toEqual([
+    `automonique.mobile.workspace-v2-receipts.v2.${digest}`,
+  ]);
 });
 
 test('refuses collisions, foreign authorization scope, and malformed storage', async () => {
-  const store = createWorkspaceV2ReceiptStore(fingerprint);
+  const store = createWorkspaceV2ReceiptStore(digestProvider);
   await store.put(handle);
   await expect(
     store.put({ ...handle, project: 'project-other' }),
   ).rejects.toThrow('workspace_v2_receipt_handle_collision');
   await expect(
-    store.put({ ...handle, authorization_fingerprint: 'foreign' }),
+    store.put({
+      ...handle,
+      authorization_digest: `sha256:${'d'.repeat(64)}`,
+    }),
   ).rejects.toThrow('workspace_v2_receipt_handle_scope_mismatch');
 
   const key = (await AsyncStorage.getAllKeys())[0]!;
@@ -61,10 +70,14 @@ test('refuses collisions, foreign authorization scope, and malformed storage', a
   await expect(store.list()).rejects.toThrow(
     'workspace_v2_receipt_store_invalid',
   );
+  await AsyncStorage.setItem(key, 'x'.repeat(16 * 1024 + 1));
+  await expect(store.list()).rejects.toThrow(
+    'workspace_v2_receipt_store_too_large',
+  );
 });
 
 test('keeps the bounded store intact when capacity is exhausted', async () => {
-  const store = createWorkspaceV2ReceiptStore(fingerprint);
+  const store = createWorkspaceV2ReceiptStore(digestProvider);
   for (let index = 0; index < 20; index += 1) {
     await store.put({
       ...handle,

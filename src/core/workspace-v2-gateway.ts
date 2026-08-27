@@ -32,7 +32,7 @@ import {
   type WorkspaceIntentOutcome,
 } from '@automonique/sdk';
 import {
-  mobileV2AuthorizationFingerprint,
+  mobileV2AuthorizationDigest,
   type DelegatedMobileV2Authorization,
   type MobileV2Action,
 } from './mobile-v2-authorization';
@@ -161,8 +161,11 @@ export interface WorkspaceV2Gateway {
 }
 
 export class WorkspaceV2GatewayError extends Error {
-  constructor(readonly category: string) {
-    super(category);
+  constructor(
+    readonly category: string,
+    options?: ErrorOptions,
+  ) {
+    super(category, options);
     this.name = 'WorkspaceV2GatewayError';
   }
 }
@@ -233,6 +236,7 @@ interface WorkspaceV2Client {
 interface WorkspaceV2GatewayOptions {
   readonly client: WorkspaceV2Client;
   readonly authorization: DelegatedMobileV2Authorization;
+  readonly authorizationDigest?: () => Promise<string>;
   readonly now?: () => number;
   readonly operationGuard?: WorkspaceV2OperationGuard;
   readonly receiptStore: WorkspaceV2ReceiptStore;
@@ -567,8 +571,14 @@ export function createWorkspaceV2Gateway(
     ProjectIdValue,
     readonly WorkContextRecord[]
   >();
-  const authorizationFingerprint =
-    mobileV2AuthorizationFingerprint(authorization);
+  let digestPromise: Promise<string> | null = null;
+  const authorizationDigest = (): Promise<string> => {
+    digestPromise ??= (
+      options.authorizationDigest ??
+      (() => mobileV2AuthorizationDigest(authorization))
+    )();
+    return digestPromise;
+  };
   const receiptStore = options.receiptStore;
 
   function requireAction(action: MobileV2Action): void {
@@ -583,14 +593,27 @@ export function createWorkspaceV2Gateway(
     }
   }
 
-  async function guarded<T>(
-    signal: AbortSignal | undefined,
-    operation: (combined: AbortSignal | undefined) => Promise<T>,
-  ): Promise<T> {
+  function admitCurrentGeneration(): void {
     if (authorization.expires_at_ms <= BigInt(now())) {
       throw new WorkspaceV2GatewayError('mobile_v2_authorization_expired');
     }
     options.operationGuard?.admit();
+  }
+
+  async function guardedReceiptOperation<T>(
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    admitCurrentGeneration();
+    const result = await operation();
+    admitCurrentGeneration();
+    return result;
+  }
+
+  async function guarded<T>(
+    signal: AbortSignal | undefined,
+    operation: (combined: AbortSignal | undefined) => Promise<T>,
+  ): Promise<T> {
+    admitCurrentGeneration();
     const controller = new AbortController();
     const sources = [signal, options.operationGuard?.signal].filter(
       (source): source is AbortSignal => source !== undefined,
@@ -610,10 +633,7 @@ export function createWorkspaceV2Gateway(
       const result = await operation(
         sources.length === 0 ? undefined : controller.signal,
       );
-      options.operationGuard?.admit();
-      if (authorization.expires_at_ms <= BigInt(now())) {
-        throw new WorkspaceV2GatewayError('mobile_v2_authorization_expired');
-      }
+      admitCurrentGeneration();
       return result;
     } finally {
       for (const { source, listener } of listeners) {
@@ -825,9 +845,19 @@ export function createWorkspaceV2Gateway(
       requireLivePreview(prepared.preview, now());
       requireAction('submit_mutation');
       requireProject(prepared.project);
+      let persistedAuthorizationDigest: string;
+      try {
+        persistedAuthorizationDigest = await guardedReceiptOperation(() =>
+          authorizationDigest(),
+        );
+      } catch (error) {
+        throw new WorkspaceV2GatewayError('workspace_mutation_not_submitted', {
+          cause: error,
+        });
+      }
       const handle: WorkspaceV2ReceiptHandle = {
         schema: WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
-        authorization_fingerprint: authorizationFingerprint,
+        authorization_digest: persistedAuthorizationDigest,
         project: prepared.project,
         idempotency_key: prepared.preview.proposal.idempotency_key,
         preview_id: prepared.preview.preview.id,
@@ -840,19 +870,52 @@ export function createWorkspaceV2Gateway(
         created_at_ms: BigInt(now()).toString(),
       };
       // Persist only a bounded lookup capability before the one-shot submit.
-      // It contains no intent, authority, preview payload, or replayable outbox.
-      await receiptStore.put(handle);
-      let submitted: Awaited<ReturnType<WorkspaceV2Client['submitMutation']>>;
+      // Its digest is non-authority metadata; no grant, intent, preview payload,
+      // or replayable outbox crosses the durable boundary.
+      let inserted = false;
       try {
-        submitted = await guarded(signal, (combined) =>
-          options.client.submitMutation(
+        admitCurrentGeneration();
+        inserted = await receiptStore.put(handle);
+        admitCurrentGeneration();
+      } catch (error) {
+        // The SDK submit has not been invoked. If this call inserted a handle,
+        // compensate exactly that known-unsent local write even though the
+        // generation may have changed while Async Storage was pending.
+        if (inserted) {
+          await receiptStore
+            .remove(handle.idempotency_key)
+            .catch(() => undefined);
+        }
+        throw new WorkspaceV2GatewayError('workspace_mutation_not_submitted', {
+          cause: error,
+        });
+      }
+      let submitted: Awaited<ReturnType<WorkspaceV2Client['submitMutation']>>;
+      let submitInvoked = false;
+      try {
+        submitted = await guarded(signal, (combined) => {
+          submitInvoked = true;
+          return options.client.submitMutation(
             prepared.preview.preview,
             prepared.previewDigest,
             approval?.id ?? null,
             combined,
-          ),
-        );
-      } catch {
+          );
+        });
+      } catch (error) {
+        if (!submitInvoked) {
+          if (inserted) {
+            await receiptStore
+              .remove(handle.idempotency_key)
+              .catch(() => undefined);
+          }
+          throw new WorkspaceV2GatewayError(
+            'workspace_mutation_not_submitted',
+            {
+              cause: error,
+            },
+          );
+        }
         return {
           kind: 'ambiguous',
           idempotencyKey: handle.idempotency_key,
@@ -863,7 +926,9 @@ export function createWorkspaceV2Gateway(
         submitted.kind === 'platform_v2_refused' ||
         submitted.kind === 'mutation_refused'
       ) {
-        await receiptStore.remove(handle.idempotency_key);
+        await guardedReceiptOperation(() =>
+          receiptStore.remove(handle.idempotency_key),
+        );
         refusal(submitted.refusal);
       }
       const receipt = decodeWorkspaceV2Receipt(
@@ -871,8 +936,11 @@ export function createWorkspaceV2Gateway(
         handle,
       );
       if (workspaceV2ReceiptSettled(receipt)) {
-        await receiptStore.remove(handle.idempotency_key);
+        await guardedReceiptOperation(() =>
+          receiptStore.remove(handle.idempotency_key),
+        );
       }
+      admitCurrentGeneration();
       return {
         kind: 'submitted',
         idempotencyKey: handle.idempotency_key,
@@ -883,19 +951,13 @@ export function createWorkspaceV2Gateway(
 
     async pendingMutationReceipts() {
       requireAction('get_mutation_receipt');
-      if (authorization.expires_at_ms <= BigInt(now())) {
-        throw new WorkspaceV2GatewayError('mobile_v2_authorization_expired');
-      }
-      options.operationGuard?.admit();
-      const handles = await receiptStore.list();
-      options.operationGuard?.admit();
-      return handles;
+      return guardedReceiptOperation(() => receiptStore.list());
     },
 
     async reconcileMutation(idempotencyKeyValue, signal) {
       requireAction('get_mutation_receipt');
       const idempotencyKey = IdempotencyKey(idempotencyKeyValue);
-      const handles = await receiptStore.list();
+      const handles = await guardedReceiptOperation(() => receiptStore.list());
       const handle = handles.find(
         (candidate) => candidate.idempotency_key === idempotencyKey,
       );
@@ -921,7 +983,10 @@ export function createWorkspaceV2Gateway(
         handle,
       );
       if (workspaceV2ReceiptSettled(receipt)) {
-        await receiptStore.remove(handle.idempotency_key);
+        await guardedReceiptOperation(() =>
+          receiptStore.remove(handle.idempotency_key),
+        );
+        admitCurrentGeneration();
         return {
           kind: 'settled',
           handle,
@@ -1012,6 +1077,7 @@ export function createWorkspaceV2Gateway(
 
 export interface AuthorizedWorkspaceV2GatewayOptions {
   readonly authorization: DelegatedMobileV2Authorization;
+  readonly authorizationDigest?: () => Promise<string>;
   readonly endpoint: string;
   readonly fetcher?: typeof fetch;
   readonly now?: () => number;
@@ -1026,6 +1092,9 @@ export function createAuthorizedWorkspaceV2Gateway(
 ): WorkspaceV2Gateway {
   return createWorkspaceV2Gateway({
     authorization: options.authorization,
+    ...(options.authorizationDigest === undefined
+      ? {}
+      : { authorizationDigest: options.authorizationDigest }),
     client: new PlatformV2Client(
       new HttpsPlatformV2Transport(
         options.endpoint,

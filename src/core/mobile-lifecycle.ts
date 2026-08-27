@@ -24,6 +24,7 @@ import {
 } from './workspace-v2-gateway';
 import {
   admitDelegatedMobileV2Authorization,
+  mobileV2AuthorizationDigest,
   mobileV2AuthorizationFingerprint,
 } from './mobile-v2-authorization';
 import { createWorkspaceV2ReceiptStore } from './workspace-v2-receipt-storage';
@@ -470,13 +471,8 @@ export class MobileLifecycleCoordinator {
           }
         },
       },
-      receiptStore: createWorkspaceV2ReceiptStore(
-        mobileV2AuthorizationFingerprint(workspaceAuthorization),
-        [
-          workspaceAuthorization.server_identity,
-          workspaceAuthorization.credential_id,
-          workspaceAuthorization.principal_generation.toString(),
-        ].join('.'),
+      receiptStore: createWorkspaceV2ReceiptStore(() =>
+        mobileV2AuthorizationDigest(workspaceAuthorization),
       ),
       token: async () => {
         const token = await this.accessToken();

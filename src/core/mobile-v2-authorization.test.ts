@@ -6,8 +6,19 @@ import {
   MOBILE_V2_ACTIONS,
   MOBILE_V2_AUTHORIZATION_SCHEMA,
   admitDelegatedMobileV2Authorization,
+  mobileV2AuthorizationDigest,
   mobileV2AuthorizationFingerprint,
 } from './mobile-v2-authorization';
+
+jest.mock('expo-crypto', () => {
+  const crypto =
+    jest.requireActual<typeof import('node:crypto')>('node:crypto');
+  return {
+    CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+    digestStringAsync: async (_algorithm: string, value: string) =>
+      crypto.createHash('sha256').update(value).digest('hex'),
+  };
+});
 
 const NOW = 1_777_000_000_000;
 const expected = {
@@ -36,7 +47,7 @@ function document() {
   };
 }
 
-test('admits and fingerprints the entire server-issued delegated principal', () => {
+test('admits and process-locally fingerprints the entire delegated principal', () => {
   const admitted = admitDelegatedMobileV2Authorization(document(), expected);
   const changed = { ...admitted, principal_generation: 8n };
   expect(mobileV2AuthorizationFingerprint(admitted)).not.toBe(
@@ -45,6 +56,19 @@ test('admits and fingerprints the entire server-issued delegated principal', () 
   expect(mobileV2AuthorizationFingerprint(admitted)).toContain(
     'get_mutation_receipt',
   );
+});
+
+test('derives a fixed cryptographic persistence digest without exposing authority', async () => {
+  const admitted = admitDelegatedMobileV2Authorization(document(), expected);
+  const digest = await mobileV2AuthorizationDigest(admitted);
+  const changed = await mobileV2AuthorizationDigest({
+    ...admitted,
+    principal_generation: 8n,
+  });
+  expect(digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+  expect(changed).not.toBe(digest);
+  expect(digest).not.toContain('get_mutation_receipt');
+  expect(digest).not.toContain('project-a');
 });
 
 test.each([

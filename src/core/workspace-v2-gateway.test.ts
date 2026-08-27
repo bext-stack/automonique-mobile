@@ -45,11 +45,16 @@ import {
   WorkspaceV2GatewayError,
   createAuthorizedWorkspaceV2Gateway,
   createWorkspaceV2Gateway,
+  type WorkspaceV2OperationGuard,
 } from './workspace-v2-gateway';
-import type {
-  WorkspaceV2ReceiptHandle,
-  WorkspaceV2ReceiptStore,
+import {
+  WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
+  type WorkspaceV2ReceiptHandle,
+  type WorkspaceV2ReceiptStore,
 } from './workspace-v2-receipts';
+type ReceiptStore = WorkspaceV2ReceiptStore & {
+  readonly handles: WorkspaceV2ReceiptHandle[];
+};
 
 const project = ProjectId('project-mobile');
 const projectIdentity = { kind: 'project' as const, id: project };
@@ -81,6 +86,7 @@ const emptyAuthority = {
   providers: [],
   tools: [],
 } as const;
+const authorizationDigest = `sha256:${'c'.repeat(64)}`;
 
 function delegatedAuthorization(now = 1_500): DelegatedMobileV2Authorization {
   return {
@@ -100,9 +106,7 @@ function delegatedAuthorization(now = 1_500): DelegatedMobileV2Authorization {
   };
 }
 
-function memoryReceiptStore(): WorkspaceV2ReceiptStore & {
-  readonly handles: WorkspaceV2ReceiptHandle[];
-} {
+function memoryReceiptStore(): ReceiptStore {
   const handles: WorkspaceV2ReceiptHandle[] = [];
   return {
     handles,
@@ -113,8 +117,12 @@ function memoryReceiptStore(): WorkspaceV2ReceiptStore & {
       const index = handles.findIndex(
         (candidate) => candidate.idempotency_key === handle.idempotency_key,
       );
-      if (index === -1) handles.push(handle);
-      else handles[index] = handle;
+      if (index === -1) {
+        handles.push(handle);
+        return true;
+      }
+      handles[index] = handle;
+      return false;
     },
     async remove(idempotencyKey) {
       const index = handles.findIndex(
@@ -187,12 +195,15 @@ function gatewayFor(
   now = 1_500,
   receiptStore = memoryReceiptStore(),
   authorization = delegatedAuthorization(now),
+  operationGuard?: WorkspaceV2OperationGuard,
 ) {
   const adapter = new DeterministicPlatformV2Adapter(steps);
   const gateway = createWorkspaceV2Gateway({
     authorization,
+    authorizationDigest: async () => authorizationDigest,
     client: new PlatformV2Client(adapter),
     now: () => now,
+    ...(operationGuard === undefined ? {} : { operationGuard }),
     receiptStore,
   });
   return { adapter, gateway, receiptStore };
@@ -671,7 +682,7 @@ test('persists a receipt lookup before submit and reconciles ambiguity across re
   const originalPut = receiptStore.put;
   receiptStore.put = async (handle) => {
     order.push('persist');
-    await originalPut(handle);
+    return originalPut(handle);
   };
   const first = gatewayFor(
     [
@@ -827,7 +838,7 @@ test('storage failure prevents submit and mismatched canonical receipts remain r
   );
   await expect(
     blocked.gateway.confirmMutation(blockedPrepared, 'grant'),
-  ).rejects.toThrow('receipt_store_failed');
+  ).rejects.toMatchObject({ category: 'workspace_mutation_not_submitted' });
   expect(blocked.adapter.pendingSteps).toBe(0);
 
   const receiptStore = memoryReceiptStore();
@@ -882,6 +893,197 @@ test('storage failure prevents submit and mismatched canonical receipts remain r
   await expect(
     mismatched.gateway.pendingMutationReceipts(),
   ).resolves.toHaveLength(1);
+});
+
+test('generation loss during receipt persistence is known-unsent and never invokes submit', async () => {
+  const intent = createIntent();
+  const value = preview(intent, undefined, 'not_required');
+  const receiptStore = memoryReceiptStore();
+  const originalPut = receiptStore.put;
+  let putStarted!: () => void;
+  let releasePut!: () => void;
+  const started = new Promise<void>((resolve) => {
+    putStarted = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    releasePut = resolve;
+  });
+  receiptStore.put = async (handle) => {
+    const inserted = await originalPut(handle);
+    putStarted();
+    await held;
+    return inserted;
+  };
+  const lifecycle = new AbortController();
+  const operationGuard: WorkspaceV2OperationGuard = {
+    signal: lifecycle.signal,
+    admit() {
+      if (lifecycle.signal.aborted)
+        throw new Error('gateway_generation_replaced');
+    },
+  };
+  const { adapter, gateway } = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'prepare_mutation',
+          request: {
+            idempotency_key: value.proposal.idempotency_key,
+            intent,
+          },
+        },
+        result: { kind: 'mutation_preview', preview: value },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'submit_mutation',
+          request: {
+            approval_id: null,
+            preview: value.preview,
+            preview_digest: mutationPreviewDigest(value),
+          },
+        },
+        result: {
+          kind: 'mutation_receipt',
+          receipt: { canonical: rawReceipt(value) },
+        },
+      },
+    ],
+    1_500,
+    receiptStore,
+    delegatedAuthorization(),
+    operationGuard,
+  );
+  await negotiate(gateway);
+  await gateway.loadProject(project);
+  const prepared = await gateway.prepareMutation(
+    project,
+    intent,
+    value.proposal.idempotency_key,
+  );
+  const confirmation = gateway.confirmMutation(prepared, 'grant');
+  await started;
+  lifecycle.abort('credential_rotated');
+  releasePut();
+  await expect(confirmation).rejects.toMatchObject({
+    category: 'workspace_mutation_not_submitted',
+  });
+  expect(receiptStore.handles).toEqual([]);
+  expect(adapter.pendingSteps).toBe(1);
+});
+
+test('generation loss fences delayed receipt reads and settled cleanup results', async () => {
+  const readStore = memoryReceiptStore();
+  const originalList = readStore.list;
+  let listStarted!: () => void;
+  let releaseList!: () => void;
+  const listed = new Promise<void>((resolve) => {
+    listStarted = resolve;
+  });
+  const heldList = new Promise<void>((resolve) => {
+    releaseList = resolve;
+  });
+  readStore.list = async () => {
+    listStarted();
+    await heldList;
+    return originalList();
+  };
+  const readLifecycle = new AbortController();
+  const readGateway = gatewayFor(
+    [],
+    1_500,
+    readStore,
+    delegatedAuthorization(),
+    {
+      signal: readLifecycle.signal,
+      admit() {
+        if (readLifecycle.signal.aborted) {
+          throw new Error('gateway_generation_replaced');
+        }
+      },
+    },
+  ).gateway;
+  const pendingRead = readGateway.pendingMutationReceipts();
+  await listed;
+  readLifecycle.abort('credential_rotated');
+  releaseList();
+  await expect(pendingRead).rejects.toThrow('gateway_generation_replaced');
+
+  const intent = createIntent();
+  const value = preview(intent, undefined, 'not_required');
+  const cleanupStore = memoryReceiptStore();
+  await cleanupStore.put({
+    schema: WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
+    authorization_digest: authorizationDigest,
+    project,
+    idempotency_key: value.proposal.idempotency_key,
+    preview_id: value.preview.id,
+    preview_revision: value.preview.revision.toString(),
+    preview_digest: mutationPreviewDigest(value),
+    request_digest: value.proposal.request_digest,
+    approval_id: null,
+    expected_resulting_revision: value.resulting.revision.toString(),
+    created_at_ms: '1500',
+  });
+  const originalRemove = cleanupStore.remove;
+  let removeStarted!: () => void;
+  let releaseRemove!: () => void;
+  const removing = new Promise<void>((resolve) => {
+    removeStarted = resolve;
+  });
+  const heldRemove = new Promise<void>((resolve) => {
+    releaseRemove = resolve;
+  });
+  cleanupStore.remove = async (key) => {
+    await originalRemove(key);
+    removeStarted();
+    await heldRemove;
+  };
+  const cleanupLifecycle = new AbortController();
+  const cleanupGateway = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_mutation_receipt',
+          lookup: {
+            project,
+            idempotency_key: value.proposal.idempotency_key,
+          },
+        },
+        result: {
+          kind: 'mutation_receipt',
+          receipt: {
+            canonical: rawReceipt(value, { outcome: 'completed' }),
+          },
+        },
+      },
+    ],
+    1_500,
+    cleanupStore,
+    delegatedAuthorization(),
+    {
+      signal: cleanupLifecycle.signal,
+      admit() {
+        if (cleanupLifecycle.signal.aborted) {
+          throw new Error('gateway_generation_replaced');
+        }
+      },
+    },
+  ).gateway;
+  await negotiate(cleanupGateway);
+  const reconciliation = cleanupGateway.reconcileMutation(
+    value.proposal.idempotency_key,
+  );
+  await removing;
+  cleanupLifecycle.abort('credential_rotated');
+  releaseRemove();
+  await expect(reconciliation).rejects.toThrow('gateway_generation_replaced');
 });
 
 test('records a server denial and drops previews across app reload', async () => {
@@ -1241,6 +1443,7 @@ test('rejects a decoded response when the immutable lifecycle generation changes
   const lifecycle = new AbortController();
   const gateway = createWorkspaceV2Gateway({
     authorization: delegatedAuthorization(),
+    authorizationDigest: async () => authorizationDigest,
     client: new PlatformV2Client(adapter),
     now: () => 1_500,
     receiptStore: memoryReceiptStore(),

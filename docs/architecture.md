@@ -66,9 +66,10 @@ provider rechecks the original authorization fingerprint after asynchronous
 refresh, and 401/403/410 responses move the process-wide lifecycle to
 `refresh_required`. Prepared lifecycle previews are held only in memory and
 are single-use; app reload, credential replacement, expiry, denial, or replay
-cannot submit them. Before submit, mobile persists only a bounded,
-principal-fingerprinted receipt lookup handle—never the preview, intent,
-authority, or an outbox. Canonical receipts must match the exact project-bound
+cannot submit them. Before submit, mobile persists only a bounded receipt
+lookup handle carrying a fixed SHA-256 digest of the principal—never the
+principal grant, preview, intent, authority, or an outbox. Canonical receipts
+must match the exact project-bound
 handle, preview, digests, idempotency key, approval, and resulting revision.
 Accepted or transport-lost submissions remain explicitly reconcilable across
 reload without replay, and settled receipts require an authoritative

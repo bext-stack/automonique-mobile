@@ -9,25 +9,31 @@ import {
   type WorkspaceV2ReceiptStore,
 } from './workspace-v2-receipts';
 
-const RECEIPT_STORAGE_PREFIX = 'automonique.mobile.workspace-v2-receipts.v1';
+const RECEIPT_STORAGE_PREFIX = 'automonique.mobile.workspace-v2-receipts.v2';
 const MAX_RECEIPT_HANDLES = 20;
-const MAX_RECEIPT_STORAGE_BYTES = 256 * 1024;
+const MAX_RECEIPT_STORAGE_BYTES = 16 * 1024;
 
 export function createWorkspaceV2ReceiptStore(
-  authorizationFingerprint: string,
-  storageScope = authorizationFingerprint,
+  authorizationDigest: () => Promise<string>,
 ): WorkspaceV2ReceiptStore {
-  if (
-    storageScope.length === 0 ||
-    new TextEncoder().encode(storageScope).byteLength > 512 ||
-    /\p{Cc}/u.test(storageScope)
-  ) {
-    throw new Error('workspace_v2_receipt_store_scope_invalid');
+  let admittedDigest: Promise<string> | null = null;
+  async function digest(): Promise<string> {
+    admittedDigest ??= authorizationDigest().then((value) => {
+      if (!/^sha256:[0-9a-f]{64}$/u.test(value)) {
+        throw new Error('workspace_v2_receipt_store_scope_invalid');
+      }
+      return value;
+    });
+    return admittedDigest;
   }
-  const storageKey = `${RECEIPT_STORAGE_PREFIX}.${storageScope}`;
+
+  async function storageKey(): Promise<string> {
+    return `${RECEIPT_STORAGE_PREFIX}.${await digest()}`;
+  }
 
   async function list(): Promise<readonly WorkspaceV2ReceiptHandle[]> {
-    const encoded = await AsyncStorage.getItem(storageKey);
+    const expectedDigest = await digest();
+    const encoded = await AsyncStorage.getItem(await storageKey());
     if (encoded === null) return [];
     if (
       new TextEncoder().encode(encoded).byteLength > MAX_RECEIPT_STORAGE_BYTES
@@ -48,10 +54,7 @@ export function createWorkspaceV2ReceiptStore(
       if (
         new Set(handles.map((handle) => handle.idempotency_key)).size !==
           handles.length ||
-        handles.some(
-          (handle) =>
-            handle.authorization_fingerprint !== authorizationFingerprint,
-        )
+        handles.some((handle) => handle.authorization_digest !== expectedDigest)
       ) {
         throw new Error('workspace_v2_receipt_store_invalid');
       }
@@ -73,14 +76,14 @@ export function createWorkspaceV2ReceiptStore(
     ) {
       throw new Error('workspace_v2_receipt_store_too_large');
     }
-    await AsyncStorage.setItem(storageKey, encoded);
+    await AsyncStorage.setItem(await storageKey(), encoded);
   }
 
   return {
     list,
     async put(value) {
       const handle = admitWorkspaceV2ReceiptHandle(value);
-      if (handle.authorization_fingerprint !== authorizationFingerprint) {
+      if (handle.authorization_digest !== (await digest())) {
         throw new Error('workspace_v2_receipt_handle_scope_mismatch');
       }
       const handles = await list();
@@ -91,9 +94,10 @@ export function createWorkspaceV2ReceiptStore(
         if (JSON.stringify(existing) !== JSON.stringify(handle)) {
           throw new Error('workspace_v2_receipt_handle_collision');
         }
-        return;
+        return false;
       }
       await write([...handles, handle]);
+      return true;
     },
     async remove(idempotencyKey) {
       IdempotencyKey(idempotencyKey);

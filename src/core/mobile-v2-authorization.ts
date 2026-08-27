@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import { ProjectId, type ProjectId as ProjectIdValue } from '@automonique/sdk';
+import * as Crypto from 'expo-crypto';
 
 export const MOBILE_V2_AUTHORIZATION_SCHEMA =
   'automonique.mobile-platform-v2-authorization/v1' as const;
@@ -179,4 +180,21 @@ export function mobileV2AuthorizationFingerprint(
     projectRoots: value.project_roots,
     actions: value.actions,
   });
+}
+
+/**
+ * Fixed-size, non-authority persistence binding for the complete delegated
+ * principal. The canonical fingerprint above remains process-local only.
+ */
+export async function mobileV2AuthorizationDigest(
+  value: DelegatedMobileV2Authorization,
+): Promise<string> {
+  const digest = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    mobileV2AuthorizationFingerprint(value),
+  );
+  if (!/^[0-9a-f]{64}$/u.test(digest)) {
+    throw new Error('mobile_v2_authorization_digest_invalid');
+  }
+  return `sha256:${digest}`;
 }

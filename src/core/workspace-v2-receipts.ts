@@ -16,11 +16,11 @@ import {
 } from '@automonique/sdk';
 
 export const WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA =
-  'automonique.mobile-workspace-v2-receipt-handle/v1' as const;
+  'automonique.mobile-workspace-v2-receipt-handle/v2' as const;
 
 export interface WorkspaceV2ReceiptHandle {
   readonly schema: typeof WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA;
-  readonly authorization_fingerprint: string;
+  readonly authorization_digest: string;
   readonly project: string;
   readonly idempotency_key: string;
   readonly preview_id: string;
@@ -34,7 +34,8 @@ export interface WorkspaceV2ReceiptHandle {
 
 export interface WorkspaceV2ReceiptStore {
   list(): Promise<readonly WorkspaceV2ReceiptHandle[]>;
-  put(handle: WorkspaceV2ReceiptHandle): Promise<void>;
+  /** True only when this call inserted a new durable handle. */
+  put(handle: WorkspaceV2ReceiptHandle): Promise<boolean>;
   remove(idempotencyKey: string): Promise<void>;
 }
 
@@ -81,7 +82,7 @@ export function admitWorkspaceV2ReceiptHandle(
 ): WorkspaceV2ReceiptHandle {
   const candidate = exactObject(value, [
     'schema',
-    'authorization_fingerprint',
+    'authorization_digest',
     'project',
     'idempotency_key',
     'preview_id',
@@ -101,10 +102,13 @@ export function admitWorkspaceV2ReceiptHandle(
       : MutationApprovalId(string(candidate.approval_id));
   return {
     schema: WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
-    authorization_fingerprint: string(
-      candidate.authorization_fingerprint,
-      12 * 1_024,
-    ),
+    authorization_digest: (() => {
+      const value = string(candidate.authorization_digest, 71);
+      if (!/^sha256:[0-9a-f]{64}$/u.test(value)) {
+        throw new Error('workspace_v2_receipt_handle_invalid');
+      }
+      return value;
+    })(),
     project: ProjectId(string(candidate.project)),
     idempotency_key: IdempotencyKey(string(candidate.idempotency_key)),
     preview_id: MutationPreviewId(string(candidate.preview_id)),
