@@ -803,6 +803,63 @@ test('persists a receipt lookup before submit and reconciles ambiguity across re
   );
 });
 
+test('an identical durable handle requires reconciliation and never replays submit', async () => {
+  const intent = createIntent();
+  const value = preview(intent, undefined, 'not_required');
+  const receiptStore = memoryReceiptStore();
+  await receiptStore.put({
+    schema: WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
+    authorization_digest: authorizationDigest,
+    project,
+    idempotency_key: value.proposal.idempotency_key,
+    preview_id: value.preview.id,
+    preview_revision: value.preview.revision.toString(),
+    preview_digest: mutationPreviewDigest(value),
+    request_digest: value.proposal.request_digest,
+    approval_id: null,
+    expected_resulting_revision: value.resulting.revision.toString(),
+    created_at_ms: '1500',
+  });
+  const replay = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'prepare_mutation',
+          request: {
+            idempotency_key: value.proposal.idempotency_key,
+            intent,
+          },
+        },
+        result: { kind: 'mutation_preview', preview: value },
+      },
+    ],
+    1_500,
+    receiptStore,
+  );
+  await negotiate(replay.gateway);
+  await replay.gateway.loadProject(project);
+  const prepared = await replay.gateway.prepareMutation(
+    project,
+    intent,
+    value.proposal.idempotency_key,
+  );
+
+  await expect(
+    replay.gateway.confirmMutation(prepared, 'grant'),
+  ).resolves.toEqual({
+    kind: 'ambiguous',
+    idempotencyKey: value.proposal.idempotency_key,
+    projectionRefreshRequired: true,
+  });
+  expect(replay.adapter.pendingSteps).toBe(0);
+  await expect(replay.gateway.pendingMutationReceipts()).resolves.toHaveLength(
+    1,
+  );
+});
+
 test('storage failure prevents submit and mismatched canonical receipts remain reconcilable', async () => {
   const intent = createIntent();
   const value = preview(intent, undefined, 'not_required');

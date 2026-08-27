@@ -94,3 +94,33 @@ test('keeps the bounded store intact when capacity is exhausted', async () => {
   ).rejects.toThrow('workspace_v2_receipt_store_full');
   await expect(store.list()).resolves.toHaveLength(20);
 });
+
+test('serializes concurrent mutations across store instances for one durable key', async () => {
+  const first = createWorkspaceV2ReceiptStore(digestProvider);
+  const second = createWorkspaceV2ReceiptStore(digestProvider);
+  const other = {
+    ...handle,
+    idempotency_key: 'workspace-create-2',
+    preview_id: 'preview-workspace-2',
+  };
+
+  await Promise.all([first.put(handle), second.put(other)]);
+  await expect(first.list()).resolves.toEqual([handle, other]);
+
+  await Promise.all([
+    first.remove(handle.idempotency_key),
+    second.put({
+      ...handle,
+      idempotency_key: 'workspace-create-3',
+      preview_id: 'preview-workspace-3',
+    }),
+  ]);
+  await expect(second.list()).resolves.toEqual([
+    other,
+    {
+      ...handle,
+      idempotency_key: 'workspace-create-3',
+      preview_id: 'preview-workspace-3',
+    },
+  ]);
+});

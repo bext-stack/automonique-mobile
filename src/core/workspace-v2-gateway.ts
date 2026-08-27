@@ -890,6 +890,13 @@ export function createWorkspaceV2Gateway(
           cause: error,
         });
       }
+      if (!inserted) {
+        return {
+          kind: 'ambiguous',
+          idempotencyKey: handle.idempotency_key,
+          projectionRefreshRequired: true,
+        };
+      }
       let submitted: Awaited<ReturnType<WorkspaceV2Client['submitMutation']>>;
       let submitInvoked = false;
       try {

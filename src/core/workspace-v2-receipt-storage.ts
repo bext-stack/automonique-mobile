@@ -12,6 +12,27 @@ import {
 const RECEIPT_STORAGE_PREFIX = 'automonique.mobile.workspace-v2-receipts.v2';
 const MAX_RECEIPT_HANDLES = 20;
 const MAX_RECEIPT_STORAGE_BYTES = 16 * 1024;
+const storageTails = new Map<string, Promise<void>>();
+
+async function withStorageLock<T>(
+  key: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = storageTails.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.catch(() => undefined).then(() => turn);
+  storageTails.set(key, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (storageTails.get(key) === tail) storageTails.delete(key);
+  }
+}
 
 export function createWorkspaceV2ReceiptStore(
   authorizationDigest: () => Promise<string>,
@@ -31,9 +52,11 @@ export function createWorkspaceV2ReceiptStore(
     return `${RECEIPT_STORAGE_PREFIX}.${await digest()}`;
   }
 
-  async function list(): Promise<readonly WorkspaceV2ReceiptHandle[]> {
-    const expectedDigest = await digest();
-    const encoded = await AsyncStorage.getItem(await storageKey());
+  async function read(
+    key: string,
+    expectedDigest: string,
+  ): Promise<readonly WorkspaceV2ReceiptHandle[]> {
+    const encoded = await AsyncStorage.getItem(key);
     if (encoded === null) return [];
     if (
       new TextEncoder().encode(encoded).byteLength > MAX_RECEIPT_STORAGE_BYTES
@@ -65,6 +88,7 @@ export function createWorkspaceV2ReceiptStore(
   }
 
   async function write(
+    key: string,
     handles: readonly WorkspaceV2ReceiptHandle[],
   ): Promise<void> {
     if (handles.length > MAX_RECEIPT_HANDLES) {
@@ -76,36 +100,47 @@ export function createWorkspaceV2ReceiptStore(
     ) {
       throw new Error('workspace_v2_receipt_store_too_large');
     }
-    await AsyncStorage.setItem(await storageKey(), encoded);
+    await AsyncStorage.setItem(key, encoded);
   }
 
   return {
-    list,
+    async list() {
+      const expectedDigest = await digest();
+      const key = await storageKey();
+      return withStorageLock(key, () => read(key, expectedDigest));
+    },
     async put(value) {
       const handle = admitWorkspaceV2ReceiptHandle(value);
-      if (handle.authorization_digest !== (await digest())) {
+      const expectedDigest = await digest();
+      if (handle.authorization_digest !== expectedDigest) {
         throw new Error('workspace_v2_receipt_handle_scope_mismatch');
       }
-      const handles = await list();
-      const existing = handles.find(
-        (candidate) => candidate.idempotency_key === handle.idempotency_key,
-      );
-      if (existing !== undefined) {
-        if (JSON.stringify(existing) !== JSON.stringify(handle)) {
-          throw new Error('workspace_v2_receipt_handle_collision');
+      const key = await storageKey();
+      return withStorageLock(key, async () => {
+        const handles = await read(key, expectedDigest);
+        const existing = handles.find(
+          (candidate) => candidate.idempotency_key === handle.idempotency_key,
+        );
+        if (existing !== undefined) {
+          if (JSON.stringify(existing) !== JSON.stringify(handle)) {
+            throw new Error('workspace_v2_receipt_handle_collision');
+          }
+          return false;
         }
-        return false;
-      }
-      await write([...handles, handle]);
-      return true;
+        await write(key, [...handles, handle]);
+        return true;
+      });
     },
     async remove(idempotencyKey) {
       IdempotencyKey(idempotencyKey);
-      await write(
-        (await list()).filter(
+      const expectedDigest = await digest();
+      const key = await storageKey();
+      await withStorageLock(key, async () => {
+        const handles = (await read(key, expectedDigest)).filter(
           (handle) => handle.idempotency_key !== idempotencyKey,
-        ),
-      );
+        );
+        await write(key, handles);
+      });
     },
   };
 }
