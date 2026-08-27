@@ -963,6 +963,36 @@ test('rotation before first legacy load reloads and reconciles exactly once with
   }
 });
 
+test('receipt recovery never returns or queries a project outside the current grant', async () => {
+  const receiptStore = memoryReceiptStore();
+  const removedProject = ProjectId('project-removed');
+  await receiptStore.put({
+    schema: WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
+    authorization_digest: authorizationDigest,
+    project: removedProject,
+    idempotency_key: 'workspace-create-removed-project',
+    preview_id: 'preview-removed-project',
+    preview_revision: '1',
+    preview_digest: `sha256:${'a'.repeat(64)}`,
+    request_digest: `sha256:${'b'.repeat(64)}`,
+    approval_id: null,
+    expected_resulting_revision: '1',
+    created_at_ms: '1500',
+  });
+  const { adapter, gateway } = gatewayFor(
+    [],
+    1_500,
+    receiptStore,
+    delegatedAuthorization(),
+  );
+
+  await expect(gateway.pendingMutationReceipts()).resolves.toEqual([]);
+  await expect(
+    gateway.reconcileMutation('workspace-create-removed-project'),
+  ).rejects.toMatchObject({ category: 'mobile_v2_project_unauthorized' });
+  expect(adapter.pendingSteps).toBe(0);
+});
+
 test('storage failure prevents submit and mismatched canonical receipts remain reconcilable', async () => {
   const intent = createIntent();
   const value = preview(intent, undefined, 'not_required');

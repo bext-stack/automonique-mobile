@@ -69,11 +69,13 @@ Drafts remain inert data. Authority previews are never cached.
   live state.
 - Durable v2 receipt lookup handles contain only a fixed SHA-256 principal
   binding and exact receipt coordinates. A bounded non-authority index uses a
-  stable server-identity/credential-ID digest to retain handles across token
-  rotation; reconciliation still requires the current live action and project
-  grants. Legacy authorization-digest handles are migrated before remote
-  rotation using only the exact old admitted secure grant; no cross-family key
-  scan is permitted. Project roots, action grants, tenant and actor metadata,
+  stable server-identity/credential-ID/delegation-ID digest to retain handles
+  across same-delegation token rotation. A regrant changes that family, so
+  prior-delegation handles are neither listed nor queried; current action and
+  project grants filter every recovery surface. Legacy authorization-digest
+  handles are migrated before remote rotation using only the exact old admitted
+  secure grant and into only its old delegation family; no cross-family key scan
+  is permitted. Project roots, action grants, tenant and actor metadata,
   previews, intents, and replayable payloads are excluded; the complete encoded
   set is capped at 16 KiB.
 

@@ -11,8 +11,8 @@ import {
 
 const LEGACY_RECEIPT_STORAGE_PREFIX =
   'automonique.mobile.workspace-v2-receipts.v2';
-const RECEIPT_STORAGE_PREFIX = 'automonique.mobile.workspace-v2-receipts.v3';
-const RECEIPT_INDEX_SCHEMA = 'automonique.mobile-workspace-v2-receipt-index/v3';
+const RECEIPT_STORAGE_PREFIX = 'automonique.mobile.workspace-v2-receipts.v4';
+const RECEIPT_INDEX_SCHEMA = 'automonique.mobile-workspace-v2-receipt-index/v4';
 const MAX_RECEIPT_HANDLES = 20;
 const MAX_RECEIPT_STORAGE_BYTES = 16 * 1024;
 const storageTails = new Map<string, Promise<void>>();
@@ -183,15 +183,15 @@ async function migrateLegacyIndex(
 
 /**
  * Move one exactly identified legacy authorization generation into its stable
- * credential-family namespace. Callers must derive both digests from the same
+ * delegation-family namespace. Callers must derive both digests from the same
  * admitted secure grant; this deliberately never scans unrelated app keys.
  */
 export async function migrateLegacyWorkspaceV2Receipts(
-  credentialFamilyDigest: () => Promise<string>,
+  delegationFamilyDigest: () => Promise<string>,
   legacyAuthorizationDigest: () => Promise<string>,
 ): Promise<void> {
   const [family, legacyDigest] = await Promise.all([
-    credentialFamilyDigest().then(admitDigest),
+    delegationFamilyDigest().then(admitDigest),
     legacyAuthorizationDigest().then(admitDigest),
   ]);
   const key = `${RECEIPT_STORAGE_PREFIX}.${family}`;
@@ -201,13 +201,13 @@ export async function migrateLegacyWorkspaceV2Receipts(
 }
 
 export function createWorkspaceV2ReceiptStore(
-  credentialFamilyDigest: () => Promise<string>,
+  delegationFamilyDigest: () => Promise<string>,
   authorizationDigest: () => Promise<string>,
 ): WorkspaceV2ReceiptStore {
   let admittedFamily: Promise<string> | null = null;
   let admittedAuthorization: Promise<string> | null = null;
   const familyDigest = (): Promise<string> => {
-    admittedFamily ??= credentialFamilyDigest().then(admitDigest);
+    admittedFamily ??= delegationFamilyDigest().then(admitDigest);
     return admittedFamily;
   };
   const currentAuthorizationDigest = (): Promise<string> => {

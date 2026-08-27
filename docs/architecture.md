@@ -68,14 +68,16 @@ are single-use; app reload, credential replacement, expiry, denial, or replay
 cannot submit them. Before submit, mobile persists only a bounded receipt
 lookup handle carrying a fixed SHA-256 digest of the principal—never the
 principal grant, preview, intent, authority, or an outbox. A bounded
-non-authority index is keyed by a stable digest of server identity plus
-credential ID, so exact old-generation handles remain discoverable after a
-legitimate rotation while the current live grant remains the only authority.
+non-authority index is keyed by a stable digest of server identity, credential
+ID, and delegation ID, so exact old-generation handles remain discoverable
+after a same-delegation token rotation while the current live grant remains the
+only authority. A regrant changes the delegation family, making prior handles
+invisible; current project roots also filter every recovery listing and lookup.
 Before remote credential rotation, the lifecycle uses the still-admitted old
 secure grant to migrate only its exact legacy full-authorization-digest key
-into that stable family; it never enumerates or adopts another credential's
-keys. The stable copy commits before the legacy copy is removed, making an
-interrupted migration idempotently recoverable.
+into that exact old delegation family; it never enumerates or adopts another
+credential or delegation's keys. The stable copy commits before the legacy copy
+is removed, making an interrupted migration idempotently recoverable.
 Canonical receipts
 must match the exact project-bound
 handle, preview, digests, idempotency key, approval, and resulting revision.

@@ -38,7 +38,8 @@ import {
   MOBILE_V2_ACTIONS,
   MOBILE_V2_AUTHORIZATION_SCHEMA,
   mobileV2AuthorizationDigest,
-  mobileV2CredentialFamilyDigest,
+  mobileV2DelegationFamilyDigest,
+  type DelegatedMobileV2Authorization,
 } from './mobile-v2-authorization';
 import { createWorkspaceV2ReceiptStore } from './workspace-v2-receipt-storage';
 
@@ -174,9 +175,9 @@ function withWorkspaceAuthorization(value: ScopedConnection): ScopedConnection {
   };
 }
 
-function workspaceAuthorizationResponse(value: ScopedConnection): Response {
-  const authorization =
-    withWorkspaceAuthorization(value).workspaceAuthorization!;
+function delegatedAuthorizationResponse(
+  authorization: DelegatedMobileV2Authorization,
+): Response {
   return new Response(
     JSON.stringify({
       actions: authorization.actions,
@@ -201,6 +202,12 @@ function workspaceAuthorizationResponse(value: ScopedConnection): Response {
           'application/vnd.automonique.mobile-platform-v2-authorization.v1+json',
       },
     },
+  );
+}
+
+function workspaceAuthorizationResponse(value: ScopedConnection): Response {
+  return delegatedAuthorizationResponse(
+    withWorkspaceAuthorization(value).workspaceAuthorization!,
   );
 }
 
@@ -259,7 +266,7 @@ test('refresh migrates the old receipt digest before remote rotation and reloads
   );
   const oldAuthorization = active.workspaceAuthorization!;
   const oldDigest = await mobileV2AuthorizationDigest(oldAuthorization);
-  const familyDigest = await mobileV2CredentialFamilyDigest(oldAuthorization);
+  const familyDigest = await mobileV2DelegationFamilyDigest(oldAuthorization);
   const handle = {
     schema: 'automonique.mobile-workspace-v2-receipt-handle/v2' as const,
     authorization_digest: oldDigest,
@@ -274,7 +281,7 @@ test('refresh migrates the old receipt digest before remote rotation and reloads
     created_at_ms: String(NOW),
   };
   const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${oldDigest}`;
-  const familyKey = `automonique.mobile.workspace-v2-receipts.v3.${familyDigest}`;
+  const familyKey = `automonique.mobile.workspace-v2-receipts.v4.${familyDigest}`;
   await AsyncStorage.setItem(legacyKey, JSON.stringify([handle]));
 
   const rotatedIssued = issued(2n, 'd', NOW + 900_000);
@@ -305,10 +312,90 @@ test('refresh migrates the old receipt digest before remote rotation and reloads
 
   // Recreate the store as an app reload would, using only the rotated grant.
   const reloaded = createWorkspaceV2ReceiptStore(
-    () => mobileV2CredentialFamilyDigest(rotatedAuthorization),
+    () => mobileV2DelegationFamilyDigest(rotatedAuthorization),
     () => mobileV2AuthorizationDigest(rotatedAuthorization),
   );
   await expect(reloaded.list()).resolves.toEqual([handle]);
+});
+
+test('refresh migrates legacy custody only into the old delegation family and a regrant cannot adopt it', async () => {
+  const active = withWorkspaceAuthorization(
+    connection(issued(1n, 'c', NOW + 60_000)),
+  );
+  const oldAuthorization = active.workspaceAuthorization!;
+  const oldDigest = await mobileV2AuthorizationDigest(oldAuthorization);
+  const oldFamilyDigest =
+    await mobileV2DelegationFamilyDigest(oldAuthorization);
+  const handle = {
+    schema: 'automonique.mobile-workspace-v2-receipt-handle/v2' as const,
+    authorization_digest: oldDigest,
+    project: 'project-mobile',
+    idempotency_key: 'workspace-create-before-regrant',
+    preview_id: 'preview-before-regrant',
+    preview_revision: '1',
+    preview_digest: `sha256:${'a'.repeat(64)}`,
+    request_digest: `sha256:${'b'.repeat(64)}`,
+    approval_id: null,
+    expected_resulting_revision: '1',
+    created_at_ms: String(NOW),
+  };
+  const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${oldDigest}`;
+  await AsyncStorage.setItem(legacyKey, JSON.stringify([handle]));
+
+  const rotatedIssued = issued(2n, 'd', NOW + 900_000);
+  const rotated = connection(rotatedIssued);
+  const ordinaryRotatedAuthorization =
+    withWorkspaceAuthorization(rotated).workspaceAuthorization!;
+  const regrantedAuthorization = {
+    ...ordinaryRotatedAuthorization,
+    principal_generation: 3n,
+    delegation_id: 'delegation-regranted',
+  };
+  const regrantedFamilyDigest = await mobileV2DelegationFamilyDigest(
+    regrantedAuthorization,
+  );
+  expect(regrantedFamilyDigest).not.toBe(oldFamilyDigest);
+
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  saveIssued.mockResolvedValue(rotated);
+  const refresh = jest.fn(async () => {
+    expect(await AsyncStorage.getItem(legacyKey)).toBeNull();
+    expect(
+      await AsyncStorage.getItem(
+        `automonique.mobile.workspace-v2-receipts.v4.${oldFamilyDigest}`,
+      ),
+    ).not.toBeNull();
+    expect(
+      await AsyncStorage.getItem(
+        `automonique.mobile.workspace-v2-receipts.v4.${regrantedFamilyDigest}`,
+      ),
+    ).toBeNull();
+    return rotatedIssued;
+  });
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: jest.fn(async () =>
+      delegatedAuthorizationResponse(regrantedAuthorization),
+    ),
+    discover: jest.fn(async () => ({
+      discovery: DISCOVERY,
+      refresh,
+      revoke: jest.fn(),
+    })),
+  });
+  await lifecycle.hydrate();
+  await lifecycle.refresh();
+
+  const regrantedStore = createWorkspaceV2ReceiptStore(
+    () => mobileV2DelegationFamilyDigest(regrantedAuthorization),
+    () => mobileV2AuthorizationDigest(regrantedAuthorization),
+  );
+  await expect(regrantedStore.list()).resolves.toEqual([]);
+  const oldFamilyStore = createWorkspaceV2ReceiptStore(
+    () => mobileV2DelegationFamilyDigest(oldAuthorization),
+    () => mobileV2AuthorizationDigest(oldAuthorization),
+  );
+  await expect(oldFamilyStore.list()).resolves.toEqual([handle]);
 });
 
 test('a consumed remote refresh plus failed secure commit requires re-pairing', async () => {

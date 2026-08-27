@@ -18,8 +18,8 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 
 const digest = `sha256:${'c'.repeat(64)}`;
 const digestProvider = async () => digest;
-const familyDigest = `sha256:${'f'.repeat(64)}`;
-const familyDigestProvider = async () => familyDigest;
+const delegationFamilyDigest = `sha256:${'f'.repeat(64)}`;
+const delegationFamilyDigestProvider = async () => delegationFamilyDigest;
 const handle: WorkspaceV2ReceiptHandle = {
   schema: WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
   authorization_digest: digest,
@@ -39,12 +39,13 @@ beforeEach(async () => {
 });
 
 test('persists only a bounded lookup handle across store recreation', async () => {
-  await createWorkspaceV2ReceiptStore(familyDigestProvider, digestProvider).put(
-    handle,
-  );
+  await createWorkspaceV2ReceiptStore(
+    delegationFamilyDigestProvider,
+    digestProvider,
+  ).put(handle);
   const encoded = JSON.stringify(
     await createWorkspaceV2ReceiptStore(
-      familyDigestProvider,
+      delegationFamilyDigestProvider,
       digestProvider,
     ).list(),
   );
@@ -55,13 +56,13 @@ test('persists only a bounded lookup handle across store recreation', async () =
   expect(encoded).not.toContain('get_mutation_receipt');
   const keys = await AsyncStorage.getAllKeys();
   expect(keys).toEqual([
-    `automonique.mobile.workspace-v2-receipts.v3.${familyDigest}`,
+    `automonique.mobile.workspace-v2-receipts.v4.${delegationFamilyDigest}`,
   ]);
 });
 
 test('refuses collisions, foreign authorization scope, and malformed storage', async () => {
   const store = createWorkspaceV2ReceiptStore(
-    familyDigestProvider,
+    delegationFamilyDigestProvider,
     digestProvider,
   );
   await store.put(handle);
@@ -91,7 +92,7 @@ test('refuses collisions, foreign authorization scope, and malformed storage', a
 
 test('keeps the bounded store intact when capacity is exhausted', async () => {
   const store = createWorkspaceV2ReceiptStore(
-    familyDigestProvider,
+    delegationFamilyDigestProvider,
     digestProvider,
   );
   for (let index = 0; index < 20; index += 1) {
@@ -113,11 +114,11 @@ test('keeps the bounded store intact when capacity is exhausted', async () => {
 
 test('serializes concurrent mutations across store instances for one durable key', async () => {
   const first = createWorkspaceV2ReceiptStore(
-    familyDigestProvider,
+    delegationFamilyDigestProvider,
     digestProvider,
   );
   const second = createWorkspaceV2ReceiptStore(
-    familyDigestProvider,
+    delegationFamilyDigestProvider,
     digestProvider,
   );
   const other = {
@@ -151,7 +152,7 @@ test('migrates the legacy digest key and preserves handles across rotation', asy
   const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${digest}`;
   await AsyncStorage.setItem(legacyKey, JSON.stringify([handle]));
   const current = createWorkspaceV2ReceiptStore(
-    familyDigestProvider,
+    delegationFamilyDigestProvider,
     digestProvider,
   );
   await expect(current.list()).resolves.toEqual([handle]);
@@ -159,7 +160,7 @@ test('migrates the legacy digest key and preserves handles across rotation', asy
 
   const rotatedDigest = `sha256:${'d'.repeat(64)}`;
   const rotated = createWorkspaceV2ReceiptStore(
-    familyDigestProvider,
+    delegationFamilyDigestProvider,
     async () => rotatedDigest,
   );
   await expect(rotated.list()).resolves.toEqual([handle]);
@@ -173,27 +174,30 @@ test('migrates the legacy digest key and preserves handles across rotation', asy
   await expect(rotated.list()).resolves.toEqual([handle, rotatedHandle]);
 });
 
-test('migrates the old admitted digest before rotation without scanning another family', async () => {
+test('migrates the old admitted digest before rotation without adopting a regranted delegation family', async () => {
   const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${digest}`;
   await AsyncStorage.setItem(legacyKey, JSON.stringify([handle]));
 
   // Rotation admission invokes this exact migration before any store has
   // loaded the legacy generation.
-  await migrateLegacyWorkspaceV2Receipts(familyDigestProvider, digestProvider);
+  await migrateLegacyWorkspaceV2Receipts(
+    delegationFamilyDigestProvider,
+    digestProvider,
+  );
 
   const rotatedDigest = `sha256:${'d'.repeat(64)}`;
   const reloaded = createWorkspaceV2ReceiptStore(
-    familyDigestProvider,
+    delegationFamilyDigestProvider,
     async () => rotatedDigest,
   );
   await expect(reloaded.list()).resolves.toEqual([handle]);
   await expect(AsyncStorage.getItem(legacyKey)).resolves.toBeNull();
 
-  const otherFamily = createWorkspaceV2ReceiptStore(
+  const regrantedDelegation = createWorkspaceV2ReceiptStore(
     async () => `sha256:${'e'.repeat(64)}`,
     async () => rotatedDigest,
   );
-  await expect(otherFamily.list()).resolves.toEqual([]);
+  await expect(regrantedDelegation.list()).resolves.toEqual([]);
 });
 
 test('replays an interrupted copy-before-remove migration without duplicating a handle', async () => {
@@ -203,13 +207,22 @@ test('replays an interrupted copy-before-remove migration without duplicating a 
     .mocked(AsyncStorage.removeItem)
     .mockRejectedValueOnce(new Error('interrupted_after_family_commit'));
   await expect(
-    migrateLegacyWorkspaceV2Receipts(familyDigestProvider, digestProvider),
+    migrateLegacyWorkspaceV2Receipts(
+      delegationFamilyDigestProvider,
+      digestProvider,
+    ),
   ).rejects.toThrow('interrupted_after_family_commit');
   await expect(AsyncStorage.getItem(legacyKey)).resolves.not.toBeNull();
 
-  await migrateLegacyWorkspaceV2Receipts(familyDigestProvider, digestProvider);
+  await migrateLegacyWorkspaceV2Receipts(
+    delegationFamilyDigestProvider,
+    digestProvider,
+  );
   await expect(
-    createWorkspaceV2ReceiptStore(familyDigestProvider, digestProvider).list(),
+    createWorkspaceV2ReceiptStore(
+      delegationFamilyDigestProvider,
+      digestProvider,
+    ).list(),
   ).resolves.toEqual([handle]);
   await expect(AsyncStorage.getItem(legacyKey)).resolves.toBeNull();
 });

@@ -27,7 +27,7 @@ import {
   admitDelegatedMobileV2Authorization,
   mobileV2AuthorizationDigest,
   mobileV2AuthorizationFingerprint,
-  mobileV2CredentialFamilyDigest,
+  mobileV2DelegationFamilyDigest,
 } from './mobile-v2-authorization';
 import {
   createWorkspaceV2ReceiptStore,
@@ -654,7 +654,7 @@ export class MobileLifecycleCoordinator {
         },
       },
       receiptStore: createWorkspaceV2ReceiptStore(
-        () => mobileV2CredentialFamilyDigest(workspaceAuthorization),
+        () => mobileV2DelegationFamilyDigest(workspaceAuthorization),
         () => mobileV2AuthorizationDigest(workspaceAuthorization),
       ),
       token: async () => {
@@ -689,12 +689,12 @@ export class MobileLifecycleCoordinator {
     try {
       // The legacy receipt namespace used the complete authorization digest,
       // which changes on rotation. Migrate it while the old secure generation
-      // is still admitted and can identify its exact stable credential family.
+      // is still admitted and can identify its exact stable delegation family.
       // No unrelated Async Storage keys are enumerated or adopted.
       if (current.workspaceAuthorization !== undefined) {
         const previousWorkspaceAuthorization = current.workspaceAuthorization;
         await migrateLegacyWorkspaceV2Receipts(
-          () => mobileV2CredentialFamilyDigest(previousWorkspaceAuthorization),
+          () => mobileV2DelegationFamilyDigest(previousWorkspaceAuthorization),
           () => mobileV2AuthorizationDigest(previousWorkspaceAuthorization),
         );
         if (!this.isCurrent(operation.generation)) {

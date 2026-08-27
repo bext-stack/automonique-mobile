@@ -958,7 +958,10 @@ export function createWorkspaceV2Gateway(
 
     async pendingMutationReceipts() {
       requireAction('get_mutation_receipt');
-      return guardedReceiptOperation(() => receiptStore.list());
+      const handles = await guardedReceiptOperation(() => receiptStore.list());
+      return handles.filter((handle) =>
+        authorization.project_roots.includes(ProjectId(handle.project)),
+      );
     },
 
     async reconcileMutation(idempotencyKeyValue, signal) {

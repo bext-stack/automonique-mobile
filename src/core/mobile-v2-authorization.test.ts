@@ -8,7 +8,7 @@ import {
   admitDelegatedMobileV2Authorization,
   mobileV2AuthorizationDigest,
   mobileV2AuthorizationFingerprint,
-  mobileV2CredentialFamilyDigest,
+  mobileV2DelegationFamilyDigest,
 } from './mobile-v2-authorization';
 
 jest.mock('expo-crypto', () => {
@@ -72,9 +72,9 @@ test('derives a fixed cryptographic persistence digest without exposing authorit
   expect(digest).not.toContain('project-a');
 });
 
-test('keeps the non-authority receipt family stable across rotation', async () => {
+test('keeps one delegation receipt family stable across token rotation but not regrant', async () => {
   const admitted = admitDelegatedMobileV2Authorization(document(), expected);
-  const family = await mobileV2CredentialFamilyDigest(admitted);
+  const family = await mobileV2DelegationFamilyDigest(admitted);
   const rotatedAuthorization = {
     ...admitted,
     credential_revision: 4n,
@@ -82,8 +82,13 @@ test('keeps the non-authority receipt family stable across rotation', async () =
     project_roots: [ProjectId('project-other')],
     actions: ['get_mutation_receipt'] as const,
   };
-  const rotated = await mobileV2CredentialFamilyDigest(rotatedAuthorization);
+  const rotated = await mobileV2DelegationFamilyDigest(rotatedAuthorization);
+  const regranted = await mobileV2DelegationFamilyDigest({
+    ...rotatedAuthorization,
+    delegation_id: 'delegation-regranted',
+  });
   expect(rotated).toBe(family);
+  expect(regranted).not.toBe(family);
   expect(family).toMatch(/^sha256:[0-9a-f]{64}$/u);
   expect(family).not.toContain(admitted.credential_id);
 });
