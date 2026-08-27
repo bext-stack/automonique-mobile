@@ -154,3 +154,19 @@ operations. App-store publication requires a separate decision.
   model/profile/tool administration. On-device voice dictation is only an
   editable input method for the existing text follow-up contract.
 - Production deployment, signed store binaries, or app-store publication.
+
+## Read-only workspace companion expansion
+
+Issue #34 deliberately revisits the multi-server-cockpit non-goal for bounded,
+revocable reads only. An operator may eventually find an authorized task or
+workspace across server profiles and continue into retained mobile surfaces.
+The foundation models project, host, external work item, workspace, attempt,
+session, branch/repository display context, freshness, and unread attention.
+External task status remains visibly and structurally distinct from internal
+orchestration status.
+
+The expansion does not ship a production workspace transport. Typed
+task-prefilled create/resume drafts and authority previews are ready for the
+canonical Platform v2 SDK, but execution remains disabled. Terminal relay,
+attachments, uploads, and background mutation remain separate risk-reviewed
+work. See [workspace-companion-threat-model.md](workspace-companion-threat-model.md).

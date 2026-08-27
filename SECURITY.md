@@ -19,6 +19,11 @@ release, or production deployment is currently claimed by this repository.
 Security invariants include HTTPS-only production endpoints, OS secure storage
 for credentials, no offline mutation outbox, exact revision/idempotency binding,
 server-owned authority, bounded cached reads, and fail-closed unknown events.
+The read-only workspace expansion and every decision that changes a historical
+first-slice non-goal are reviewed in
+[docs/workspace-companion-threat-model.md](docs/workspace-companion-threat-model.md).
+Workspace visibility never implies host paths, credentials, shell, terminal,
+or repository mutation authority.
 The Expo SDK 57 native tooling hardens the pinned `xcode@3.0.1` dependency at
 install time: an exact-digest patch replaces its CommonJS `uuid.v4()` call with
 Node's `crypto.randomUUID()`, while npm resolves `uuid@14.0.2`. Installation and
