@@ -69,3 +69,9 @@ The consequence is deliberate: a server change does not require a mobile
 re-vendor and a new build. A re-vendor is required when the mobile protocol
 surface itself changes, and that shows up as a protocol version the app must
 learn to speak, not as a digest that moved.
+
+`npm run sdk:drift` makes movement visible without turning it into a gate. A
+scheduled weekday workflow runs the same bounded comparison, reuses one marked
+GitHub issue while drift exists, and closes that issue after the vendored digest
+catches up. Unrelated Automonique commits do not churn the issue because the
+comparison resolves the latest commit that changed the SDK package metadata.

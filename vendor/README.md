@@ -13,6 +13,13 @@ installed package identity and license, the schema digest on all three of the
 manifest, the installed `package.json` and the SDK's runtime constant, and the
 presence of the mobile client surface.
 
+Run `npm run sdk:drift` when preparing a release or reviewing upstream protocol
+work. It compares the recorded digest with the latest Automonique `main` commit
+that changed the SDK package metadata. A difference is informational and exits
+successfully because compatibility is negotiated by protocol version. The
+scheduled `Automonique SDK drift` workflow performs the same comparison and
+reuses one tracking issue until the vendored digest catches up.
+
 ## What the recorded fields mean
 
 | Field           | Meaning                                                                                                                                           |
