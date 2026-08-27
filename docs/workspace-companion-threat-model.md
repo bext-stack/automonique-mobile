@@ -71,9 +71,11 @@ Drafts remain inert data. Authority previews are never cached.
   binding and exact receipt coordinates. A bounded non-authority index uses a
   stable server-identity/credential-ID digest to retain handles across token
   rotation; reconciliation still requires the current live action and project
-  grants. Project roots, action grants, tenant and actor metadata, previews,
-  intents, and replayable payloads are excluded; the complete encoded set is
-  capped at 16 KiB.
+  grants. Legacy authorization-digest handles are migrated before remote
+  rotation using only the exact old admitted secure grant; no cross-family key
+  scan is permitted. Project roots, action grants, tenant and actor metadata,
+  previews, intents, and replayable payloads are excluded; the complete encoded
+  set is capped at 16 KiB.
 
 ## Deferred evidence
 

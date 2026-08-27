@@ -32,6 +32,7 @@ import {
   type WorkContextRecord,
 } from '@automonique/sdk';
 import { DeterministicPlatformV2Adapter } from '@automonique/sdk/testing';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fireEvent, render } from '@testing-library/react-native';
 import { createElement } from 'react';
 
@@ -52,6 +53,15 @@ import {
   type WorkspaceV2ReceiptHandle,
   type WorkspaceV2ReceiptStore,
 } from './workspace-v2-receipts';
+import {
+  createWorkspaceV2ReceiptStore,
+  migrateLegacyWorkspaceV2Receipts,
+} from './workspace-v2-receipt-storage';
+
+jest.mock('@react-native-async-storage/async-storage', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
 type ReceiptStore = WorkspaceV2ReceiptStore & {
   readonly handles: WorkspaceV2ReceiptHandle[];
 };
@@ -190,17 +200,18 @@ function record(
   return { ...common, relations: [] };
 }
 
-function gatewayFor(
+function gatewayFor<T extends WorkspaceV2ReceiptStore = ReceiptStore>(
   steps: ConstructorParameters<typeof DeterministicPlatformV2Adapter>[0],
   now = 1_500,
-  receiptStore = memoryReceiptStore(),
+  receiptStore: T = memoryReceiptStore() as unknown as T,
   authorization = delegatedAuthorization(now),
   operationGuard?: WorkspaceV2OperationGuard,
+  digest = authorizationDigest,
 ) {
   const adapter = new DeterministicPlatformV2Adapter(steps);
   const gateway = createWorkspaceV2Gateway({
     authorization,
-    authorizationDigest: async () => authorizationDigest,
+    authorizationDigest: async () => digest,
     client: new PlatformV2Client(adapter),
     now: () => now,
     ...(operationGuard === undefined ? {} : { operationGuard }),
@@ -858,6 +869,98 @@ test('an identical durable handle requires reconciliation and never replays subm
   await expect(replay.gateway.pendingMutationReceipts()).resolves.toHaveLength(
     1,
   );
+});
+
+test('rotation before first legacy load reloads and reconciles exactly once without replay or cross-family visibility', async () => {
+  await AsyncStorage.clear();
+  try {
+    const intent = createIntent();
+    const value = preview(intent, undefined, 'not_required');
+    const oldDigest = authorizationDigest;
+    const rotatedDigest = `sha256:${'d'.repeat(64)}`;
+    const familyDigest = `sha256:${'f'.repeat(64)}`;
+    const durableHandle: WorkspaceV2ReceiptHandle = {
+      schema: WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
+      authorization_digest: oldDigest,
+      project,
+      idempotency_key: value.proposal.idempotency_key,
+      preview_id: value.preview.id,
+      preview_revision: value.preview.revision.toString(),
+      preview_digest: mutationPreviewDigest(value),
+      request_digest: value.proposal.request_digest,
+      approval_id: null,
+      expected_resulting_revision: value.resulting.revision.toString(),
+      created_at_ms: '1500',
+    };
+    await AsyncStorage.setItem(
+      `automonique.mobile.workspace-v2-receipts.v2.${oldDigest}`,
+      JSON.stringify([durableHandle]),
+    );
+
+    // The credential lifecycle performs this exact, old-generation-bound step
+    // before committing the rotated grant. The legacy store was never loaded.
+    await migrateLegacyWorkspaceV2Receipts(
+      async () => familyDigest,
+      async () => oldDigest,
+    );
+
+    const reloadedStore = createWorkspaceV2ReceiptStore(
+      async () => familyDigest,
+      async () => rotatedDigest,
+    );
+    const rotatedAuthorization = {
+      ...delegatedAuthorization(),
+      credential_revision: 2n,
+      principal_generation: 2n,
+    };
+    const reloaded = gatewayFor(
+      [
+        { lane: 'negotiation', result: negotiatedV2 },
+        {
+          lane: 'v2',
+          request: {
+            kind: 'get_mutation_receipt',
+            lookup: {
+              project,
+              idempotency_key: value.proposal.idempotency_key,
+            },
+          },
+          result: {
+            kind: 'mutation_receipt',
+            receipt: { canonical: rawReceipt(value) },
+          },
+        },
+      ],
+      1_500,
+      reloadedStore,
+      rotatedAuthorization,
+      undefined,
+      rotatedDigest,
+    );
+    await negotiate(reloaded.gateway);
+    await expect(reloaded.gateway.pendingMutationReceipts()).resolves.toEqual([
+      durableHandle,
+    ]);
+    await expect(
+      reloaded.gateway.reconcileMutation(value.proposal.idempotency_key),
+    ).resolves.toMatchObject({
+      kind: 'accepted',
+      handle: durableHandle,
+      receipt: { outcome: 'accepted' },
+    });
+    expect(reloaded.adapter.pendingSteps).toBe(0);
+    await expect(reloaded.gateway.pendingMutationReceipts()).resolves.toEqual([
+      durableHandle,
+    ]);
+
+    const foreignFamily = createWorkspaceV2ReceiptStore(
+      async () => `sha256:${'e'.repeat(64)}`,
+      async () => rotatedDigest,
+    );
+    await expect(foreignFamily.list()).resolves.toEqual([]);
+  } finally {
+    await AsyncStorage.clear();
+  }
 });
 
 test('storage failure prevents submit and mismatched canonical receipts remain reconcilable', async () => {

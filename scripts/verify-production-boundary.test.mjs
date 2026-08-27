@@ -58,3 +58,28 @@ test('reports every clean route and its reachable dependency once', async () => 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('follows side-effect imports and CommonJS requires from route source', async () => {
+  const root = await fixture();
+  try {
+    await mkdir(join(root, 'src/core'), { recursive: true });
+    await writeFile(
+      join(root, 'src/core/side-effect.ts'),
+      'export const syntheticSnapshot = true;\n',
+    );
+    await writeFile(
+      join(root, 'src/core/required.ts'),
+      'export const createMockGateway = true;\n',
+    );
+    await writeFile(
+      join(root, 'src/app/settings.tsx'),
+      "import '@/core/side-effect'; const dependency = require('@/core/required'); export default dependency;\n",
+    );
+    await assert.rejects(
+      verifyProductionBoundary({ root }),
+      /production_mock_boundary_failed:src\/core\/(?:required|side-effect)\.ts:(?:createMockGateway|syntheticSnapshot)/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

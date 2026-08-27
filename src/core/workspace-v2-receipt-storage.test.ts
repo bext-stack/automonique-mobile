@@ -2,7 +2,10 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { createWorkspaceV2ReceiptStore } from './workspace-v2-receipt-storage';
+import {
+  createWorkspaceV2ReceiptStore,
+  migrateLegacyWorkspaceV2Receipts,
+} from './workspace-v2-receipt-storage';
 import {
   WORKSPACE_V2_RECEIPT_HANDLE_SCHEMA,
   type WorkspaceV2ReceiptHandle,
@@ -168,4 +171,45 @@ test('migrates the legacy digest key and preserves handles across rotation', asy
   };
   await rotated.put(rotatedHandle);
   await expect(rotated.list()).resolves.toEqual([handle, rotatedHandle]);
+});
+
+test('migrates the old admitted digest before rotation without scanning another family', async () => {
+  const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${digest}`;
+  await AsyncStorage.setItem(legacyKey, JSON.stringify([handle]));
+
+  // Rotation admission invokes this exact migration before any store has
+  // loaded the legacy generation.
+  await migrateLegacyWorkspaceV2Receipts(familyDigestProvider, digestProvider);
+
+  const rotatedDigest = `sha256:${'d'.repeat(64)}`;
+  const reloaded = createWorkspaceV2ReceiptStore(
+    familyDigestProvider,
+    async () => rotatedDigest,
+  );
+  await expect(reloaded.list()).resolves.toEqual([handle]);
+  await expect(AsyncStorage.getItem(legacyKey)).resolves.toBeNull();
+
+  const otherFamily = createWorkspaceV2ReceiptStore(
+    async () => `sha256:${'e'.repeat(64)}`,
+    async () => rotatedDigest,
+  );
+  await expect(otherFamily.list()).resolves.toEqual([]);
+});
+
+test('replays an interrupted copy-before-remove migration without duplicating a handle', async () => {
+  const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${digest}`;
+  await AsyncStorage.setItem(legacyKey, JSON.stringify([handle]));
+  jest
+    .mocked(AsyncStorage.removeItem)
+    .mockRejectedValueOnce(new Error('interrupted_after_family_commit'));
+  await expect(
+    migrateLegacyWorkspaceV2Receipts(familyDigestProvider, digestProvider),
+  ).rejects.toThrow('interrupted_after_family_commit');
+  await expect(AsyncStorage.getItem(legacyKey)).resolves.not.toBeNull();
+
+  await migrateLegacyWorkspaceV2Receipts(familyDigestProvider, digestProvider);
+  await expect(
+    createWorkspaceV2ReceiptStore(familyDigestProvider, digestProvider).list(),
+  ).resolves.toEqual([handle]);
+  await expect(AsyncStorage.getItem(legacyKey)).resolves.toBeNull();
 });

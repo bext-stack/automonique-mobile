@@ -71,6 +71,11 @@ principal grant, preview, intent, authority, or an outbox. A bounded
 non-authority index is keyed by a stable digest of server identity plus
 credential ID, so exact old-generation handles remain discoverable after a
 legitimate rotation while the current live grant remains the only authority.
+Before remote credential rotation, the lifecycle uses the still-admitted old
+secure grant to migrate only its exact legacy full-authorization-digest key
+into that stable family; it never enumerates or adopts another credential's
+keys. The stable copy commits before the legacy copy is removed, making an
+interrupted migration idempotently recoverable.
 Canonical receipts
 must match the exact project-bound
 handle, preview, digests, idempotency key, approval, and resulting revision.

@@ -23,6 +23,7 @@ import {
   type MobileDiscovery,
   type MobilePairingOffer,
 } from '@automonique/sdk';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
   loadStoredConnection,
@@ -36,12 +37,25 @@ import { SUPPORTED_MOBILE_PROTOCOL_VERSIONS } from './negotiation';
 import {
   MOBILE_V2_ACTIONS,
   MOBILE_V2_AUTHORIZATION_SCHEMA,
+  mobileV2AuthorizationDigest,
+  mobileV2CredentialFamilyDigest,
 } from './mobile-v2-authorization';
+import { createWorkspaceV2ReceiptStore } from './workspace-v2-receipt-storage';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
 );
+
+jest.mock('expo-crypto', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const crypto = require('node:crypto') as typeof import('node:crypto');
+  return {
+    CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+    digestStringAsync: async (_algorithm: string, value: string) =>
+      crypto.createHash('sha256').update(value).digest('hex'),
+  };
+});
 
 jest.mock('./credential-store', () => ({
   loadStoredConnection: jest.fn(),
@@ -190,8 +204,9 @@ function workspaceAuthorizationResponse(value: ScopedConnection): Response {
   );
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
+  await AsyncStorage.clear();
   removeLocal.mockResolvedValue();
   saveWorkspace.mockImplementation(async (value, workspaceAuthorization) =>
     workspaceAuthorization === undefined
@@ -236,6 +251,64 @@ test('expired access calls share one refresh and one local generation commit', a
   expect(refresh).toHaveBeenCalledTimes(1);
   expect(saveIssued).toHaveBeenCalledTimes(1);
   expect(lifecycle.snapshot()).toMatchObject({ phase: 'ready' });
+});
+
+test('refresh migrates the old receipt digest before remote rotation and reloads it under the new grant', async () => {
+  const active = withWorkspaceAuthorization(
+    connection(issued(1n, 'c', NOW + 60_000)),
+  );
+  const oldAuthorization = active.workspaceAuthorization!;
+  const oldDigest = await mobileV2AuthorizationDigest(oldAuthorization);
+  const familyDigest = await mobileV2CredentialFamilyDigest(oldAuthorization);
+  const handle = {
+    schema: 'automonique.mobile-workspace-v2-receipt-handle/v2' as const,
+    authorization_digest: oldDigest,
+    project: 'project-mobile',
+    idempotency_key: 'workspace-create-before-rotation',
+    preview_id: 'preview-before-rotation',
+    preview_revision: '1',
+    preview_digest: `sha256:${'a'.repeat(64)}`,
+    request_digest: `sha256:${'b'.repeat(64)}`,
+    approval_id: null,
+    expected_resulting_revision: '1',
+    created_at_ms: String(NOW),
+  };
+  const legacyKey = `automonique.mobile.workspace-v2-receipts.v2.${oldDigest}`;
+  const familyKey = `automonique.mobile.workspace-v2-receipts.v3.${familyDigest}`;
+  await AsyncStorage.setItem(legacyKey, JSON.stringify([handle]));
+
+  const rotatedIssued = issued(2n, 'd', NOW + 900_000);
+  const rotated = connection(rotatedIssued);
+  const rotatedAuthorization =
+    withWorkspaceAuthorization(rotated).workspaceAuthorization!;
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  saveIssued.mockResolvedValue(rotated);
+  const refresh = jest.fn(async () => {
+    // This is the irreversible remote rotation boundary. The only legacy copy
+    // must already be committed to its exact stable family before it runs.
+    expect(await AsyncStorage.getItem(legacyKey)).toBeNull();
+    expect(await AsyncStorage.getItem(familyKey)).not.toBeNull();
+    return rotatedIssued;
+  });
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: jest.fn(async () => workspaceAuthorizationResponse(rotated)),
+    discover: jest.fn(async () => ({
+      discovery: DISCOVERY,
+      refresh,
+      revoke: jest.fn(),
+    })),
+  });
+  await lifecycle.hydrate();
+  await lifecycle.refresh();
+  expect(refresh).toHaveBeenCalledTimes(1);
+
+  // Recreate the store as an app reload would, using only the rotated grant.
+  const reloaded = createWorkspaceV2ReceiptStore(
+    () => mobileV2CredentialFamilyDigest(rotatedAuthorization),
+    () => mobileV2AuthorizationDigest(rotatedAuthorization),
+  );
+  await expect(reloaded.list()).resolves.toEqual([handle]);
 });
 
 test('a consumed remote refresh plus failed secure commit requires re-pairing', async () => {
@@ -600,6 +673,9 @@ test('an old Platform v2 gateway cannot read a rotated credential', async () => 
   const oldGateway = lifecycle.createWorkspaceGateway()!;
   clock = NOW + 1;
   await expect(oldGateway.negotiate()).rejects.toThrow();
+  // The old request observes generation replacement immediately; wait for the
+  // shared rotation task before asserting its committed successor.
+  await lifecycle.accessToken();
   expect(
     platformFetch.mock.calls.some(
       ([input]) => String(input) === 'https://ops.example.test/api/platform/v2',

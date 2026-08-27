@@ -142,6 +142,64 @@ async function writeIndex(key: string, index: ReceiptIndex): Promise<void> {
   await AsyncStorage.setItem(key, encoded);
 }
 
+async function loadIndex(key: string): Promise<ReceiptIndex> {
+  const encoded = await AsyncStorage.getItem(key);
+  return encoded === null ? indexFor([]) : admitIndex(parseEncoded(encoded));
+}
+
+async function migrateLegacyIndex(
+  key: string,
+  legacyAuthorizationDigest: string,
+  index: ReceiptIndex,
+): Promise<ReceiptIndex> {
+  const legacyKey = `${LEGACY_RECEIPT_STORAGE_PREFIX}.${legacyAuthorizationDigest}`;
+  const legacyEncoded = await AsyncStorage.getItem(legacyKey);
+  if (legacyEncoded === null) return index;
+  const legacy = admitHandles(parseEncoded(legacyEncoded));
+  if (
+    legacy.some(
+      (handle) => handle.authorization_digest !== legacyAuthorizationDigest,
+    )
+  ) {
+    throw new Error('workspace_v2_receipt_store_invalid');
+  }
+  const merged = [...index.handles];
+  for (const handle of legacy) {
+    const existing = merged.find(
+      (candidate) => candidate.idempotency_key === handle.idempotency_key,
+    );
+    if (existing === undefined) merged.push(handle);
+    else if (JSON.stringify(existing) !== JSON.stringify(handle)) {
+      throw new Error('workspace_v2_receipt_handle_collision');
+    }
+  }
+  const migrated = indexFor(merged);
+  // Commit the stable-family copy before removing the only legacy copy. Both
+  // writes are idempotent, so a crash between them is safely replayable.
+  await writeIndex(key, migrated);
+  await AsyncStorage.removeItem(legacyKey);
+  return migrated;
+}
+
+/**
+ * Move one exactly identified legacy authorization generation into its stable
+ * credential-family namespace. Callers must derive both digests from the same
+ * admitted secure grant; this deliberately never scans unrelated app keys.
+ */
+export async function migrateLegacyWorkspaceV2Receipts(
+  credentialFamilyDigest: () => Promise<string>,
+  legacyAuthorizationDigest: () => Promise<string>,
+): Promise<void> {
+  const [family, legacyDigest] = await Promise.all([
+    credentialFamilyDigest().then(admitDigest),
+    legacyAuthorizationDigest().then(admitDigest),
+  ]);
+  const key = `${RECEIPT_STORAGE_PREFIX}.${family}`;
+  await withStorageLock(key, async () => {
+    await migrateLegacyIndex(key, legacyDigest, await loadIndex(key));
+  });
+}
+
 export function createWorkspaceV2ReceiptStore(
   credentialFamilyDigest: () => Promise<string>,
   authorizationDigest: () => Promise<string>,
@@ -161,32 +219,7 @@ export function createWorkspaceV2ReceiptStore(
     key: string,
     currentDigest: string,
   ): Promise<ReceiptIndex> {
-    const encoded = await AsyncStorage.getItem(key);
-    let index =
-      encoded === null ? indexFor([]) : admitIndex(parseEncoded(encoded));
-    const legacyKey = `${LEGACY_RECEIPT_STORAGE_PREFIX}.${currentDigest}`;
-    const legacyEncoded = await AsyncStorage.getItem(legacyKey);
-    if (legacyEncoded === null) return index;
-    const legacy = admitHandles(parseEncoded(legacyEncoded));
-    if (
-      legacy.some((handle) => handle.authorization_digest !== currentDigest)
-    ) {
-      throw new Error('workspace_v2_receipt_store_invalid');
-    }
-    const merged = [...index.handles];
-    for (const handle of legacy) {
-      const existing = merged.find(
-        (candidate) => candidate.idempotency_key === handle.idempotency_key,
-      );
-      if (existing === undefined) merged.push(handle);
-      else if (JSON.stringify(existing) !== JSON.stringify(handle)) {
-        throw new Error('workspace_v2_receipt_handle_collision');
-      }
-    }
-    index = indexFor(merged);
-    await writeIndex(key, index);
-    await AsyncStorage.removeItem(legacyKey);
-    return index;
+    return migrateLegacyIndex(key, currentDigest, await loadIndex(key));
   }
 
   async function coordinates(): Promise<{

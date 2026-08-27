@@ -78,10 +78,14 @@ export async function verifyProductionBoundary({
         );
       }
     }
-    for (const match of source.matchAll(
-      /(?:from\s+|import\s*\()(['"])([^'"]+)\1/g,
-    )) {
-      const specifier = match[2];
+    const specifiers = new Set();
+    for (const pattern of [
+      /(?:from\s+|import\s*\(\s*|\brequire\s*\(\s*)(['"])([^'"]+)\1/g,
+      /\bimport\s+(['"])([^'"]+)\1/g,
+    ]) {
+      for (const match of source.matchAll(pattern)) specifiers.add(match[2]);
+    }
+    for (const specifier of specifiers) {
       if (!specifier.startsWith('.') && !specifier.startsWith('@/')) continue;
       const base = specifier.startsWith('@/')
         ? join(root, 'src', specifier.slice(2))
