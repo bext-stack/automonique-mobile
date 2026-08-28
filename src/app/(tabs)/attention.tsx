@@ -35,8 +35,11 @@ export default function AttentionScreen() {
   } = useWorkspaces();
   const rows = details.flatMap((detail) => {
     const workspace = workspaceForDetail(catalog, detail);
-    if (workspace === null || detail.review === null) return [];
-    const nodes = projectAttentionNodes(detail.review.snapshot, detail.lineage);
+    if (workspace === null) return [];
+    const nodes = projectAttentionNodes(
+      detail.review?.snapshot ?? null,
+      detail.lineage,
+    );
     return nodes.map((node) => {
       let href: ReturnType<typeof admitAttentionDeepLink> | null = null;
       try {
@@ -179,8 +182,8 @@ export default function AttentionScreen() {
             </Text>
             <Text style={[styles.meta, { color: palette.textMuted }]}>
               {workspace.title} · {node.semanticKey} · source revision{' '}
-              {node.revision ?? 'not applicable'} · review{' '}
-              {detail.review!.revision}
+              {node.revision ?? 'not applicable'} · review revision{' '}
+              {detail.review?.revision ?? 'unavailable'}
             </Text>
           </Pressable>
         );

@@ -334,6 +334,7 @@ test('attention links review anchors and typed lineage sessions without inferrin
     sessionBindings: [
       {
         workSessionId: 'work-session-34',
+        attemptWorkspaceId: 'attempt-34-a',
         retainedSessionId: 'session-34',
       },
     ],
@@ -380,8 +381,52 @@ test('attention links review anchors and typed lineage sessions without inferrin
       session: 'session-34',
       relation_revision: '9',
       session_revision: '14',
+      principal_generation: '3',
+      authorization_revision: '8',
     },
   });
+  expect(() =>
+    admitAttentionDeepLink({
+      catalog: { ...catalog, selectedServerIdentity: null },
+      details: [currentDetail],
+      detail: currentDetail,
+      node: workerNode!,
+      retainedSessions,
+    }),
+  ).toThrow('attention_navigation_not_authorized');
+  expect(() =>
+    admitAttentionDeepLink({
+      catalog,
+      details: [currentDetail],
+      detail: {
+        ...currentDetail,
+        sessionBindings: currentDetail.sessionBindings.map((binding) => ({
+          ...binding,
+          attemptWorkspaceId: 'attempt-34-b',
+        })),
+      },
+      node: workerNode!,
+      retainedSessions,
+    }),
+  ).toThrow('attention_navigation_not_authorized');
+  expect(() =>
+    admitAttentionDeepLink({
+      catalog,
+      details: [currentDetail],
+      detail: {
+        ...currentDetail,
+        lineage: {
+          ...lineage,
+          orchestration: lineage.orchestration.map((record) => ({
+            ...record,
+            origin: { ...record.origin, attempt: null },
+          })),
+        } as LineageProjection,
+      },
+      node: workerNode!,
+      retainedSessions,
+    }),
+  ).toThrow('attention_navigation_not_authorized');
   expect(() =>
     admitAttentionDeepLink({
       catalog,
@@ -391,6 +436,75 @@ test('attention links review anchors and typed lineage sessions without inferrin
       retainedSessions: [],
     }),
   ).toThrow('attention_navigation_not_authorized');
+});
+
+test('projects and admits lineage-only attention without inventing review state', () => {
+  const lineage = {
+    workspace: 'workspace-34',
+    external_work_items: [],
+    orchestration: [
+      {
+        identity: { kind: 'question', id: 'question-lineage-only' },
+        parent: null,
+        origin: {
+          workspace: 'workspace-34',
+          attempt: 'attempt-34-a',
+          session: 'work-session-34',
+          pane: null,
+        },
+        status: { kind: 'waiting', reason: 'Inspect retained context' },
+        revision: 8n,
+        latest_useful_message: { text: 'Inspect retained context' },
+      },
+    ],
+  } as unknown as LineageProjection;
+  const lineageOnlyDetail: WorkspaceCatalogDetail = {
+    ...detail(),
+    lineageAvailable: true,
+    lineage,
+    sessionBindings: [
+      {
+        workSessionId: 'work-session-34',
+        attemptWorkspaceId: 'attempt-34-a',
+        retainedSessionId: 'session-34',
+      },
+    ],
+    review: null,
+  };
+  const [node] = projectAttentionNodes(null, lineage);
+  expect(node).toMatchObject({
+    key: 'question\u0000question-lineage-only',
+    state: 'needs_you',
+    revision: '8',
+  });
+  expect(
+    admitAttentionDeepLink({
+      catalog: workspaceCompanionFixture,
+      details: [lineageOnlyDetail],
+      detail: lineageOnlyDetail,
+      node: node!,
+      retainedSessions: [
+        {
+          target: {
+            coordinate: {
+              authority: 'automonique',
+              kind: 'session',
+              id: 'session-34',
+            },
+            revision: '15',
+          },
+        },
+      ] as never,
+    }),
+  ).toMatchObject({
+    pathname: '/workspace/[server]/[workspace]/session/[session]',
+    params: {
+      session: 'session-34',
+      session_revision: '15',
+      principal_generation: '3',
+      authorization_revision: '8',
+    },
+  });
 });
 
 test('preserves canonical idle attention without inventing a snapshot revision', () => {

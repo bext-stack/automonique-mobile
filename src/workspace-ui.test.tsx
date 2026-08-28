@@ -666,6 +666,7 @@ test('attention exposes structured parents and admits only exact review and reta
     sessionBindings: [
       {
         workSessionId: 'work-session-34',
+        attemptWorkspaceId: 'attempt-34-a',
         retainedSessionId: 'session-34',
       },
     ],
@@ -715,10 +716,41 @@ test('attention exposes structured parents and admits only exact review and reta
           session: 'session-34',
           relation_revision: '9',
           session_revision: '9',
+          principal_generation: '3',
+          authorization_revision: '8',
         }),
       }),
     ]),
   );
+  const retainedSessionHref = mockLinkHrefs.find(
+    (candidate) =>
+      typeof candidate === 'object' &&
+      candidate !== null &&
+      'pathname' in candidate &&
+      candidate.pathname ===
+        '/workspace/[server]/[workspace]/session/[session]',
+  ) as { readonly params: Record<string, string> } | undefined;
+  expect(retainedSessionHref).toBeDefined();
+
+  mockRouteParams = retainedSessionHref!.params;
+  await render(<ExactWorkspaceSessionLink />);
+  expect(mockRedirect).toHaveBeenCalledWith({
+    pathname: '/session/[id]',
+    params: expect.objectContaining({
+      id: 'session-34',
+      scope_principal_generation: '3',
+      scope_authorization_revision: '8',
+    }),
+  });
+
+  mockRedirect.mockClear();
+  mockRouteParams = {
+    ...retainedSessionHref!.params,
+    principal_generation: '2',
+  };
+  const refused = await render(<ExactWorkspaceSessionLink />);
+  expect(mockRedirect).not.toHaveBeenCalled();
+  expect(refused.getByText('Retained session unavailable')).toBeTruthy();
   expect(
     view.getByLabelText('Enable local review notifications'),
   ).toBeDisabled();
@@ -755,6 +787,7 @@ test('attention disables a nested session when the selected live scope is foreig
         sessionBindings: [
           {
             workSessionId: 'work-session-34',
+            attemptWorkspaceId: 'attempt-34-a',
             retainedSessionId: 'session-34',
           },
         ],
@@ -781,6 +814,66 @@ test('attention disables a nested session when the selected live scope is foreig
     'accessibilityHint',
     'No exact current navigation coordinate is available.',
   );
+});
+
+test('attention renders and links authoritative lineage when review is unavailable', async () => {
+  const base = workspaceValue();
+  const lineage = {
+    workspace: detail.workspaceId,
+    external_work_items: [],
+    orchestration: [
+      {
+        identity: { kind: 'question', id: 'question-lineage-only' },
+        parent: null,
+        origin: {
+          workspace: detail.workspaceId,
+          attempt: 'attempt-34-a',
+          session: 'work-session-34',
+          pane: null,
+        },
+        status: { kind: 'waiting', reason: 'Inspect retained context' },
+        revision: 8n,
+        latest_useful_message: { text: 'Inspect retained context' },
+      },
+    ],
+  };
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    details: [
+      {
+        ...detail,
+        lineageAvailable: true,
+        lineage,
+        sessionBindings: [
+          {
+            workSessionId: 'work-session-34',
+            attemptWorkspaceId: 'attempt-34-a',
+            retainedSessionId: 'session-34',
+          },
+        ],
+        review: null,
+      },
+    ],
+    notificationPermission: 'denied',
+    requestReviewNotificationPermission: jest.fn(),
+  });
+
+  const view = await render(<AttentionScreen />);
+
+  expect(
+    view.getByLabelText(
+      'Needs You. Inspect retained context. Top-level orchestration. 0 unread. Read-mostly workspace companion.',
+    ),
+  ).not.toBeDisabled();
+  expect(view.getByText(/review revision unavailable/)).toBeTruthy();
+  expect(mockLinkHrefs).toContainEqual({
+    pathname: '/workspace/[server]/[workspace]/session/[session]',
+    params: expect.objectContaining({
+      session: 'session-34',
+      principal_generation: '3',
+      authorization_revision: '8',
+    }),
+  });
 });
 
 test('attention renders idle as idle with no invented source revision', async () => {
