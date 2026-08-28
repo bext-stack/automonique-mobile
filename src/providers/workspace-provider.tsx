@@ -35,7 +35,12 @@ import {
   buildWorkspaceServerCatalog,
   type WorkspaceCatalogDetail,
 } from '@/core/workspace-v2-catalog';
-import type { WorkspaceV2Gateway } from '@/core/workspace-v2-gateway';
+import type {
+  ReviewActionReconciliation,
+  ReviewActionSubmission,
+  WorkspaceV2Gateway,
+} from '@/core/workspace-v2-gateway';
+import type { ReviewV2ReceiptHandle } from '@/core/review-v2-receipts';
 import {
   admitReviewDeepLink,
   reviewAttentionAnchor,
@@ -73,7 +78,8 @@ interface WorkspaceContextValue {
   readonly status: WorkspaceCatalogStatus;
   readonly details: readonly WorkspaceCatalogDetail[];
   readonly reviewBusy: boolean;
-  readonly reviewReceipts: readonly ReviewActionReceipt[];
+  readonly reviewReceipts: readonly ReviewReceiptProjection[];
+  readonly pendingReviewReceipts: readonly ReviewV2ReceiptHandle[];
   readonly notificationPermission: NotificationPermission;
   readonly requestReviewNotificationPermission: () => Promise<void>;
   readonly refresh: () => Promise<void>;
@@ -98,7 +104,17 @@ interface WorkspaceContextValue {
       { readonly kind: 'add_comment' | 'approve_review' }
     >;
     readonly idempotencyKey: string;
-  }) => Promise<ReviewActionReceipt | null>;
+  }) => Promise<ReviewActionSubmission>;
+  readonly reconcileReviewAction: (
+    idempotencyKey: string,
+  ) => Promise<ReviewActionReconciliation>;
+}
+
+export interface ReviewReceiptProjection {
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly actionKind: 'add_comment' | 'approve_review';
+  readonly receipt: ReviewActionReceipt;
 }
 
 interface WorkspaceProviderProps extends PropsWithChildren {
@@ -156,7 +172,10 @@ export function WorkspaceProvider({
   const [status, setStatus] = useState<WorkspaceCatalogStatus>(INITIAL_STATUS);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewReceipts, setReviewReceipts] = useState<
-    readonly ReviewActionReceipt[]
+    readonly ReviewReceiptProjection[]
+  >([]);
+  const [pendingReviewReceipts, setPendingReviewReceipts] = useState<
+    readonly ReviewV2ReceiptHandle[]
   >([]);
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermission>(() =>
@@ -172,6 +191,8 @@ export function WorkspaceProvider({
   const notificationPermissionRef =
     useRef<NotificationPermission>('undetermined');
   const notifiedReviews = useRef(new Set<string>());
+  const appStateRef = useRef(AppState.currentState);
+  const pendingNotificationResponse = useRef<unknown | null>(null);
 
   useEffect(() => {
     catalogRef.current = catalog;
@@ -193,38 +214,38 @@ export function WorkspaceProvider({
     routerRef.current = router;
   }, [router]);
 
-  useEffect(() => {
-    void reviewNotificationRuntime.configure().catch(() => undefined);
-    void reviewNotificationRuntime
-      .permission()
-      .then(setNotificationPermission)
-      .catch(() => setNotificationPermission('denied'));
+  const admitNotificationResponse = useCallback((data: unknown): boolean => {
+    if (statusRef.current.phase !== 'live') return false;
+    try {
+      const request = decodeReviewNotificationData(data);
+      const route = admitReviewDeepLink(
+        catalogRef.current,
+        detailsRef.current,
+        request,
+      );
+      routerRef.current.push({
+        pathname: route.pathname,
+        params: route.params,
+      });
+      return true;
+    } catch {
+      // Notification data is inert until current live state re-admits it.
+      return false;
+    }
+  }, []);
 
-    const removeResponse = reviewNotificationRuntime.onResponse((data) => {
-      try {
-        const request = decodeReviewNotificationData(data);
-        const route = admitReviewDeepLink(
-          catalogRef.current,
-          detailsRef.current,
-          request,
-        );
-        routerRef.current.push({
-          pathname: route.pathname,
-          params: route.params,
-        });
-      } catch {
-        // Notification data is never navigation authority on its own.
-      }
-    });
-    const appStateSubscription = AppState.addEventListener('change', (next) => {
+  const scheduleLiveReviewNotifications = useCallback(
+    async (
+      liveCatalog: WorkspaceCompanionCatalog,
+      liveDetails: readonly WorkspaceCatalogDetail[],
+    ): Promise<void> => {
       if (
-        next !== 'background' ||
-        notificationPermissionRef.current !== 'granted' ||
-        statusRef.current.phase !== 'live'
+        appStateRef.current !== 'background' ||
+        notificationPermissionRef.current !== 'granted'
       ) {
         return;
       }
-      for (const detail of detailsRef.current) {
+      for (const detail of liveDetails) {
         if (
           detail.review === null ||
           detail.review.snapshot.attention.state !== 'needs_you' ||
@@ -232,8 +253,8 @@ export function WorkspaceProvider({
         ) {
           continue;
         }
-        const workspace = workspaceForDetail(catalogRef.current, detail);
-        const server = catalogRef.current.servers.find(
+        const workspace = workspaceForDetail(liveCatalog, detail);
+        const server = liveCatalog.servers.find(
           (candidate) => candidate.serverIdentity === detail.serverIdentity,
         );
         if (
@@ -250,12 +271,9 @@ export function WorkspaceProvider({
           reviewRevision: detail.review.revision,
           ...reviewAttentionAnchor(detail.review.snapshot),
         };
+        let notificationKey: string | null = null;
         try {
-          const route = admitReviewDeepLink(
-            catalogRef.current,
-            detailsRef.current,
-            request,
-          );
+          const route = admitReviewDeepLink(liveCatalog, liveDetails, request);
           const candidate = admitReviewNotification({
             permission: 'granted',
             appState: 'background',
@@ -265,20 +283,74 @@ export function WorkspaceProvider({
             unread: detail.review.unread,
             route,
           });
-          const key = `${detail.serverIdentity}:${workspace.id}:${detail.review.revision}`;
-          if (candidate === null || notifiedReviews.current.has(key)) {
+          notificationKey = `${detail.serverIdentity}:${workspace.id}:${detail.review.revision}`;
+          if (
+            candidate === null ||
+            notifiedReviews.current.has(notificationKey)
+          )
             continue;
-          }
-          notifiedReviews.current.add(key);
-          void reviewNotificationRuntime
-            .schedule({
-              title: candidate.title,
-              body: candidate.body,
-              data: encodeReviewNotificationData(request),
-            })
-            .catch(() => notifiedReviews.current.delete(key));
+          notifiedReviews.current.add(notificationKey);
+          await reviewNotificationRuntime.schedule({
+            title: candidate.title,
+            body: candidate.body,
+            data: encodeReviewNotificationData(request),
+          });
         } catch {
-          // Stale or incomplete coordinates are never scheduled.
+          // Stale/incomplete coordinates and scheduling failures stay retriable.
+          if (notificationKey !== null)
+            notifiedReviews.current.delete(notificationKey);
+        }
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    void reviewNotificationRuntime.configure().catch(() => undefined);
+    void reviewNotificationRuntime
+      .permission()
+      .then(setNotificationPermission)
+      .catch(() => setNotificationPermission('denied'));
+    void reviewNotificationRuntime
+      .lastResponse()
+      .then((data) => {
+        if (data === null) return;
+        if (admitNotificationResponse(data)) {
+          void reviewNotificationRuntime
+            .clearLastResponse()
+            .catch(() => undefined);
+        } else {
+          pendingNotificationResponse.current = data;
+        }
+      })
+      .catch(() => undefined);
+
+    const removeResponse = reviewNotificationRuntime.onResponse((data) => {
+      if (admitNotificationResponse(data)) {
+        void reviewNotificationRuntime
+          .clearLastResponse()
+          .catch(() => undefined);
+      } else {
+        pendingNotificationResponse.current = data;
+      }
+    });
+    const appStateSubscription = AppState.addEventListener('change', (next) => {
+      appStateRef.current = next;
+      if (next === 'background' && statusRef.current.phase === 'live') {
+        void scheduleLiveReviewNotifications(
+          catalogRef.current,
+          detailsRef.current,
+        );
+      } else if (
+        next === 'active' &&
+        pendingNotificationResponse.current !== null
+      ) {
+        const data = pendingNotificationResponse.current;
+        if (admitNotificationResponse(data)) {
+          pendingNotificationResponse.current = null;
+          void reviewNotificationRuntime
+            .clearLastResponse()
+            .catch(() => undefined);
         }
       }
     });
@@ -286,7 +358,7 @@ export function WorkspaceProvider({
       removeResponse();
       appStateSubscription.remove();
     };
-  }, []);
+  }, [admitNotificationResponse, scheduleLiveReviewNotifications]);
 
   const requestReviewNotificationPermission = useCallback(async () => {
     if (!reviewNotificationRuntime.supported) {
@@ -329,6 +401,29 @@ export function WorkspaceProvider({
       message: 'Refreshing typed workspace relations',
     }));
     try {
+      const recovered: ReviewReceiptProjection[] = [];
+      let pending: readonly ReviewV2ReceiptHandle[] = [];
+      if (
+        gateway.reviewEffectKinds.length > 0 &&
+        gateway.authorizationScope.actions.includes('get_review_receipt')
+      ) {
+        pending = await gateway.pendingReviewReceipts();
+        for (const handle of pending) {
+          if (controller.signal.aborted) return;
+          const result = await gateway.reconcileReviewAction(
+            handle.idempotency_key,
+            controller.signal,
+          );
+          recovered.push({
+            projectId: handle.project,
+            workspaceId: handle.workspace_id,
+            actionKind: handle.action_kind,
+            receipt: result.receipt,
+          });
+        }
+        pending = await gateway.pendingReviewReceipts();
+      }
+      if (controller.signal.aborted) return;
       const built = await buildWorkspaceServerCatalog({
         gateway,
         origin: profile.origin,
@@ -336,21 +431,6 @@ export function WorkspaceProvider({
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
-      const recovered: ReviewActionReceipt[] = [];
-      if (
-        gateway.reviewEffectKinds.length > 0 &&
-        gateway.authorizationScope.actions.includes('get_review_receipt')
-      ) {
-        const pending = await gateway.pendingReviewReceipts();
-        for (const handle of pending) {
-          if (controller.signal.aborted) return;
-          const result = await gateway.reconcileReviewAction(
-            handle.idempotency_key,
-            controller.signal,
-          );
-          recovered.push(result.receipt);
-        }
-      }
       const next = mergeWorkspaceCatalogServer(
         catalogRef.current,
         built.profile,
@@ -373,17 +453,19 @@ export function WorkspaceProvider({
       setCatalog(next);
       setDetails(built.details);
       detailsRef.current = built.details;
+      setPendingReviewReceipts(pending);
       setReviewReceipts((current) => [
         ...recovered,
         ...current.filter(
-          (receipt) =>
+          (projection) =>
             !recovered.some(
               (candidate) =>
-                candidate.idempotency_key === receipt.idempotency_key,
+                candidate.receipt.idempotency_key ===
+                projection.receipt.idempotency_key,
             ),
         ),
       ]);
-      setStatus({
+      const nextStatus: WorkspaceCatalogStatus = {
         phase: 'live',
         coverage: built.coverage,
         message:
@@ -397,7 +479,17 @@ export function WorkspaceProvider({
         omittedSessionCount: built.omittedSessionCount,
         failedProjectCount: built.failedProjectCount,
         failedDetailCount: built.failedDetailCount,
-      });
+      };
+      statusRef.current = nextStatus;
+      setStatus(nextStatus);
+      const response = pendingNotificationResponse.current;
+      if (response !== null && admitNotificationResponse(response)) {
+        pendingNotificationResponse.current = null;
+        void reviewNotificationRuntime
+          .clearLastResponse()
+          .catch(() => undefined);
+      }
+      await scheduleLiveReviewNotifications(next, built.details);
     } catch (error) {
       if (controller.signal.aborted) return;
       const cached = cacheWorkspaceCatalog(catalogRef.current);
@@ -416,7 +508,12 @@ export function WorkspaceProvider({
     } finally {
       unregister();
     }
-  }, [gateway, profile]);
+  }, [
+    admitNotificationResponse,
+    gateway,
+    profile,
+    scheduleLiveReviewNotifications,
+  ]);
 
   const executeReviewAction = useCallback(
     async (options: {
@@ -430,7 +527,7 @@ export function WorkspaceProvider({
         { readonly kind: 'add_comment' | 'approve_review' }
       >;
       readonly idempotencyKey: string;
-    }): Promise<ReviewActionReceipt | null> => {
+    }): Promise<ReviewActionSubmission> => {
       if (gateway === null || profile === null || reviewOperation.current) {
         throw new Error('review_mutation_unavailable');
       }
@@ -468,22 +565,65 @@ export function WorkspaceProvider({
           options.idempotencyKey,
         );
         if (result.receipt !== null) {
+          const receipt = result.receipt;
           setReviewReceipts((current) => [
-            result.receipt!,
+            {
+              projectId: options.projectId,
+              workspaceId: options.workspaceId,
+              actionKind: options.action.kind,
+              receipt,
+            },
             ...current.filter(
-              (receipt) =>
-                receipt.idempotency_key !== result.receipt!.idempotency_key,
+              (projection) =>
+                projection.receipt.idempotency_key !== receipt.idempotency_key,
             ),
           ]);
         }
         await refresh();
-        return result.receipt;
+        return result;
       } finally {
         reviewOperation.current = false;
         setReviewBusy(false);
       }
     },
     [gateway, profile, refresh],
+  );
+
+  const reconcileReviewAction = useCallback(
+    async (idempotencyKey: string): Promise<ReviewActionReconciliation> => {
+      if (gateway === null || profile === null || reviewOperation.current) {
+        throw new Error('review_reconciliation_unavailable');
+      }
+      const handle = pendingReviewReceipts.find(
+        (candidate) => candidate.idempotency_key === idempotencyKey,
+      );
+      if (handle === undefined) {
+        throw new Error('review_receipt_handle_missing');
+      }
+      reviewOperation.current = true;
+      setReviewBusy(true);
+      try {
+        const result = await gateway.reconcileReviewAction(idempotencyKey);
+        setReviewReceipts((current) => [
+          {
+            projectId: result.handle.project,
+            workspaceId: result.handle.workspace_id,
+            actionKind: result.handle.action_kind,
+            receipt: result.receipt,
+          },
+          ...current.filter(
+            (projection) =>
+              projection.receipt.idempotency_key !== idempotencyKey,
+          ),
+        ]);
+        await refresh();
+        return result;
+      } finally {
+        reviewOperation.current = false;
+        setReviewBusy(false);
+      }
+    },
+    [gateway, pendingReviewReceipts, profile, refresh],
   );
 
   useEffect(() => {
@@ -533,6 +673,7 @@ export function WorkspaceProvider({
         details,
         reviewBusy,
         reviewReceipts,
+        pendingReviewReceipts,
         notificationPermission,
         refresh,
         selectServer,
@@ -552,6 +693,7 @@ export function WorkspaceProvider({
               detail.workspaceId === workspaceId,
           ) ?? null,
         executeReviewAction,
+        reconcileReviewAction,
         requestReviewNotificationPermission,
       }}
     >

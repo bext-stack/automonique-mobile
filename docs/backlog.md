@@ -125,12 +125,15 @@ Remaining tracked work is grouped in the
   - [x] Require an explicit confirmation preview for revision-bound add-comment
         and approve-review effects, persist an idempotency handle before sending,
         and reconcile ambiguous responses without replaying the mutation.
-  - [x] Add opt-in, content-free local background notifications whose inert
-        coordinates are re-admitted against the current live catalog before
-        navigation. Web/SSR never loads the native notification runtime.
-  - [x] Cover permission prompting, stale/revoked deep links, background
-        eligibility, draft isolation, confirmation, receipt recovery, and
-        accessibility contracts in automated tests and all-platform exports.
+  - [ ] Add opt-in, content-free background delivery whose inert coordinates
+        are re-admitted against the current live catalog before navigation.
+        Local scheduling, cold-start response admission, and web/SSR isolation
+        are implemented; an authorized OS background/push source is still
+        required for attention arriving after suspension.
+  - [x] Cover permission prompting, stale/revoked deep links, local background
+        eligibility, draft-persistence failure, one-key confirmation and
+        receipt recovery, and accessibility contracts in automated tests and
+        all-platform exports.
   - [ ] Add separately delegated server adapters for batch-send-to-agent,
         check rerun, pull-request update, and merge; they remain explicitly
         unavailable and there is no generic execute or shell fallback.

@@ -98,12 +98,15 @@ migration record. The expired grant is not returned as authority and cannot
 construct a gateway, while the primary refresh token remains available. A
 malformed optional grant or migration record is discarded without erasing an
 otherwise valid primary credential.
-Canonical receipts
-must match the exact project-bound
-handle, preview, digests, idempotency key, approval, and resulting revision.
-Accepted or transport-lost submissions remain explicitly reconcilable across
-reload without replay, and settled receipts require an authoritative
-projection refresh.
+Canonical receipts must match their exact project-bound handle, intent/action
+digest, idempotency key, actor, authority, target revision, and resulting
+revision. Review receipt handles also retain the exact workspace and action
+kind, so the UI can disable and render only the matching effect. Accepted,
+unknown, or transport-lost submissions remain explicitly reconcilable across
+reload without replay. Only a completed review receipt clears its local draft;
+refused and conflict outcomes remain visible with the draft intact. Receipt
+reconciliation precedes the next authoritative projection refresh so a stale
+pre-reconciliation snapshot is never published as current.
 
 The synthetic and SDK gateways implement the same interface. Synthetic data
 must pass through gateway bootstrap, attachment, cursor reduction, mutation,

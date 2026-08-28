@@ -188,8 +188,13 @@ The review surface additionally supports exact line-comment and approval
 effects only when the current delegated grant exposes both review execution
 and receipt lookup. Each effect has a separate confirmation preview and a
 durable idempotency handle; cached, stale, revoked, or ambiguous state disables
-new mutations. Opt-in local notifications contain no review content and their
-coordinates are re-admitted against the current live projection before routing.
+the matching mutation. Opt-in local notifications contain no review content,
+use the configured Android channel, and their coordinates—including a
+cold-start response—are re-admitted against the current live projection before
+routing. A live refresh that discovers new attention while the process is in
+the background schedules the notification; an OS background-delivery source
+and authorized device evidence remain release gates rather than being inferred
+from foreground tests.
 Check rerun, pull-request update/merge, batch send, generic execute, and shell
 fallback remain unavailable.
 Exact chat jumps additionally require the workspace revision, typed retained

@@ -13,6 +13,10 @@ export const reviewNotificationRuntime: ReviewNotificationRuntime = {
   async requestPermission() {
     return 'denied';
   },
+  async lastResponse() {
+    return null;
+  },
+  async clearLastResponse() {},
   onResponse() {
     return () => undefined;
   },

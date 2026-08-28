@@ -22,6 +22,8 @@ import {
 const mockNotificationGetPermissions = jest.fn();
 const mockNotificationRequestPermissions = jest.fn();
 const mockNotificationSchedule = jest.fn();
+const mockNotificationGetLastResponse = jest.fn();
+const mockNotificationClearLastResponse = jest.fn();
 const mockNotificationRouterPush = jest.fn();
 const mockBuildWorkspaceServerCatalog = jest.fn();
 let mockNotificationResponse:
@@ -53,6 +55,10 @@ jest.mock('expo-notifications', () => ({
   ),
   getPermissionsAsync: (...args: readonly unknown[]) =>
     mockNotificationGetPermissions(...args),
+  getLastNotificationResponseAsync: (...args: readonly unknown[]) =>
+    mockNotificationGetLastResponse(...args),
+  clearLastNotificationResponseAsync: (...args: readonly unknown[]) =>
+    mockNotificationClearLastResponse(...args),
   requestPermissionsAsync: (...args: readonly unknown[]) =>
     mockNotificationRequestPermissions(...args),
   scheduleNotificationAsync: (...args: readonly unknown[]) =>
@@ -75,6 +81,7 @@ function Probe() {
     catalog,
     notificationPermission,
     requestReviewNotificationPermission,
+    refresh,
     status,
   } = useWorkspaces();
   return (
@@ -87,6 +94,10 @@ function Probe() {
       <Pressable
         accessibilityLabel="Request review notifications"
         onPress={() => void requestReviewNotificationPermission()}
+      />
+      <Pressable
+        accessibilityLabel="Refresh workspace catalog"
+        onPress={() => void refresh()}
       />
     </>
   );
@@ -111,6 +122,8 @@ beforeEach(() => {
     canAskAgain: false,
   });
   mockNotificationSchedule.mockResolvedValue('notification-1');
+  mockNotificationGetLastResponse.mockResolvedValue(null);
+  mockNotificationClearLastResponse.mockResolvedValue(undefined);
   mockBuildWorkspaceServerCatalog.mockReset();
   jest
     .spyOn(AppState, 'addEventListener')
@@ -230,7 +243,7 @@ test('revoked or unavailable state rejects notification delivery and navigation'
   expect(mockNotificationSchedule).not.toHaveBeenCalled();
 });
 
-test('current background Needs You state schedules one content-free exact notification', async () => {
+test('cold-start and already-background refreshes admit and schedule exact notifications', async () => {
   jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
   mockNotificationGetPermissions.mockResolvedValue({
     status: 'granted',
@@ -297,7 +310,7 @@ test('current background Needs You state schedules one content-free exact notifi
       state: 'not_delivered',
     },
   };
-  mockBuildWorkspaceServerCatalog.mockResolvedValue({
+  const built = {
     profile: { ...liveServer, workspaces: [workspace] },
     details: [
       {
@@ -337,13 +350,54 @@ test('current background Needs You state schedules one content-free exact notifi
     failedDetailCount: 0,
     successfulProjectIds: [workspace.projectId],
     failedProjectIds: [],
+  };
+  mockBuildWorkspaceServerCatalog.mockResolvedValue(built);
+  const notificationData = {
+    kind: 'automonique_review_attention',
+    server_identity: liveServer.serverIdentity,
+    workspace_id: workspace.id,
+    workspace_revision: workspace.revision,
+    review_revision: '7',
+    file_id: null,
+    hunk_id: null,
+  };
+  mockNotificationGetLastResponse.mockResolvedValue({
+    notification: { request: { content: { data: notificationData } } },
+  });
+  const pendingHandle = {
+    project: workspace.projectId,
+    workspace_id: workspace.id,
+    action_kind: 'approve_review',
+    idempotency_key: 'mobile-review-pending',
+  };
+  const pendingReviewReceipts = jest
+    .fn()
+    .mockResolvedValueOnce([pendingHandle])
+    .mockResolvedValue([]);
+  const reconcileReviewAction = jest.fn().mockResolvedValue({
+    handle: pendingHandle,
+    receipt: {
+      schema: 'automonique.platform/review/v1',
+      platform_version: 2n,
+      receipt_id: 'receipt-pending',
+      action_id: 'action-pending',
+      actor: 'mobile-actor',
+      idempotency_key: pendingHandle.idempotency_key,
+      outcome: 'accepted',
+      reconciliation: 'poll_receipt',
+      revision: null,
+      current_revision: null,
+    },
+    projectionRefreshRequired: false,
   });
   const gateway = {
     authorizationScope: {
       serverIdentity: liveServer.serverIdentity,
-      actions: ['get_review'],
+      actions: ['get_review', 'get_review_receipt'],
     },
-    reviewEffectKinds: [],
+    reviewEffectKinds: ['approve_review'],
+    pendingReviewReceipts,
+    reconcileReviewAction,
   };
 
   const view = await render(
@@ -356,6 +410,27 @@ test('current background Needs You state schedules one content-free exact notifi
     </WorkspaceProvider>,
   );
   await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
+  expect(pendingReviewReceipts).toHaveBeenCalledTimes(2);
+  expect(reconcileReviewAction).toHaveBeenCalledWith(
+    pendingHandle.idempotency_key,
+    expect.any(AbortSignal),
+  );
+  expect(reconcileReviewAction.mock.invocationCallOrder[0]).toBeLessThan(
+    mockBuildWorkspaceServerCatalog.mock.invocationCallOrder[0]!,
+  );
+  await waitFor(() =>
+    expect(mockNotificationRouterPush).toHaveBeenCalledWith({
+      pathname: '/workspace/[server]/[workspace]',
+      params: {
+        server: liveServer.serverIdentity,
+        workspace: workspace.id,
+        revision: workspace.revision,
+        destination: 'review',
+        review_revision: '7',
+      },
+    }),
+  );
+  expect(mockNotificationClearLastResponse).toHaveBeenCalledTimes(1);
   expect(mockAppStateChange).not.toBeNull();
 
   mockAppStateChange!('background');
@@ -367,15 +442,7 @@ test('current background Needs You state schedules one content-free exact notifi
     content: {
       title: 'Automonique needs you',
       body: 'Open the current review to inspect the bounded request.',
-      data: {
-        kind: 'automonique_review_attention',
-        server_identity: liveServer.serverIdentity,
-        workspace_id: workspace.id,
-        workspace_revision: workspace.revision,
-        review_revision: '7',
-        file_id: null,
-        hunk_id: null,
-      },
+      data: notificationData,
     },
     trigger: null,
   });
@@ -383,10 +450,36 @@ test('current background Needs You state schedules one content-free exact notifi
   mockAppStateChange!('background');
   expect(mockNotificationSchedule).toHaveBeenCalledTimes(1);
 
-  const notificationData =
-    mockNotificationSchedule.mock.calls[0]![0].content.data;
+  mockBuildWorkspaceServerCatalog.mockResolvedValue({
+    ...built,
+    details: built.details.map((detail) => ({
+      ...detail,
+      review: detail.review && {
+        ...detail.review,
+        revision: '8',
+        snapshot: { ...detail.review.snapshot, revision: 8n },
+      },
+    })),
+  });
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Refresh workspace catalog'));
+    await Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(mockNotificationSchedule).toHaveBeenCalledTimes(2),
+  );
+  expect(
+    mockNotificationSchedule.mock.calls[1]![0].content.data.review_revision,
+  ).toBe('8');
+
   mockNotificationResponse!({
-    notification: { request: { content: { data: notificationData } } },
+    notification: {
+      request: {
+        content: {
+          data: { ...notificationData, review_revision: '8' },
+        },
+      },
+    },
   });
   expect(mockNotificationRouterPush).toHaveBeenCalledWith({
     pathname: '/workspace/[server]/[workspace]',
@@ -395,7 +488,7 @@ test('current background Needs You state schedules one content-free exact notifi
       workspace: workspace.id,
       revision: workspace.revision,
       destination: 'review',
-      review_revision: '7',
+      review_revision: '8',
     },
   });
 
@@ -406,5 +499,5 @@ test('current background Needs You state schedules one content-free exact notifi
       },
     },
   });
-  expect(mockNotificationRouterPush).toHaveBeenCalledTimes(1);
+  expect(mockNotificationRouterPush).toHaveBeenCalledTimes(2);
 });

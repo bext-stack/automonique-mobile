@@ -2,7 +2,7 @@
 
 import { Link, useLocalSearchParams } from 'expo-router';
 import * as Crypto from 'expo-crypto';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { Screen } from '@/components/screen';
@@ -63,11 +63,55 @@ function AnchoredDraftEditor({
   const palette = usePalette();
   const [text, setText] = useState(initial);
   const [busy, setBusy] = useState(false);
+  const [saveState, setSaveState] = useState<'persisted' | 'saving' | 'failed'>(
+    'persisted',
+  );
+  const stableScope = useMemo(
+    (): ReviewDraftScope => ({
+      serverIdentity: scope.serverIdentity,
+      authorizationRevision: scope.authorizationRevision,
+      principalGeneration: scope.principalGeneration,
+      projectId: scope.projectId,
+      workspaceId: scope.workspaceId,
+      workspaceRevision: scope.workspaceRevision,
+      reviewRevision: scope.reviewRevision,
+      fileId: scope.fileId,
+      hunkId: scope.hunkId,
+      side: scope.side,
+      line: scope.line,
+    }),
+    [
+      scope.authorizationRevision,
+      scope.fileId,
+      scope.hunkId,
+      scope.line,
+      scope.principalGeneration,
+      scope.projectId,
+      scope.reviewRevision,
+      scope.serverIdentity,
+      scope.side,
+      scope.workspaceId,
+      scope.workspaceRevision,
+    ],
+  );
   useEffect(() => {
-    if (new TextEncoder().encode(text).byteLength <= MAX_REVIEW_DRAFT_BYTES) {
-      void persistReviewDraft(scope, text).catch(() => undefined);
+    if (new TextEncoder().encode(text).byteLength > MAX_REVIEW_DRAFT_BYTES) {
+      return;
     }
-  }, [scope, text]);
+    let current = true;
+    void persistReviewDraft(stableScope, text)
+      .then(() => {
+        if (current) setSaveState('persisted');
+      })
+      .catch(() => {
+        if (current) setSaveState('failed');
+      });
+    return () => {
+      current = false;
+    };
+  }, [stableScope, text]);
+  const ready =
+    enabled && !busy && text.length > 0 && saveState === 'persisted';
   return (
     <View style={styles.commentDraft}>
       <TextInput
@@ -77,6 +121,7 @@ function AnchoredDraftEditor({
           if (
             new TextEncoder().encode(value).byteLength <= MAX_REVIEW_DRAFT_BYTES
           ) {
+            setSaveState('saving');
             setText(value);
           }
         }}
@@ -94,24 +139,29 @@ function AnchoredDraftEditor({
       />
       <View style={styles.draftFooter}>
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          Drafted locally · not sent ·{' '}
-          {new TextEncoder().encode(text).byteLength}/{MAX_REVIEW_DRAFT_BYTES}{' '}
+          {saveState === 'persisted'
+            ? 'Drafted locally · not sent'
+            : saveState === 'saving'
+              ? 'Saving local draft · not ready to send'
+              : 'Local draft persistence failed · not ready to send'}{' '}
+          · {new TextEncoder().encode(text).byteLength}/{MAX_REVIEW_DRAFT_BYTES}{' '}
           bytes
         </Text>
         <Pressable
           accessibilityRole="button"
           accessibilityState={{
-            disabled: !enabled || busy || text.length === 0,
+            disabled: !ready,
           }}
           accessibilityLabel={`Add persisted comment${enabled ? '' : `, unavailable: ${unavailableReason.replaceAll('_', ' ')}`}`}
-          disabled={!enabled || busy || text.length === 0}
+          disabled={!ready}
           onPress={() => {
             setBusy(true);
             prepare(
               text,
               async () => {
-                setText('');
                 await persistReviewDraft(scope, '');
+                setText('');
+                setSaveState('persisted');
                 setBusy(false);
               },
               () => setBusy(false),
@@ -121,7 +171,7 @@ function AnchoredDraftEditor({
             styles.reviewAction,
             {
               borderColor: palette.accent,
-              opacity: enabled && !busy && text.length > 0 ? 1 : 0.48,
+              opacity: ready ? 1 : 0.48,
             },
           ]}
         >
@@ -150,7 +200,14 @@ function ReviewControlSurface({
   readonly selectedHunk: string | undefined;
 }) {
   const palette = usePalette();
-  const { status, executeReviewAction, reviewBusy } = useWorkspaces();
+  const {
+    status,
+    executeReviewAction,
+    reconcileReviewAction,
+    reviewBusy,
+    reviewReceipts,
+    pendingReviewReceipts,
+  } = useWorkspaces();
   const { workspaceGateway } = useMobileLifecycle();
   const review = detail.review!;
   const [drafts, setDrafts] = useState<
@@ -166,10 +223,23 @@ function ReviewControlSurface({
     readonly summary: string;
     readonly completed: () => Promise<void>;
     readonly cancelled: () => void;
+    readonly idempotencyKey: string;
+    readonly phase: 'confirm' | 'reconcile' | 'terminal';
+    readonly outcome: string | null;
   } | null>(null);
   const [confirmationBusy, setConfirmationBusy] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const snapshot = review.snapshot;
+  const scopedReceiptHandles = pendingReviewReceipts.filter(
+    (handle) =>
+      handle.project === workspace.projectId &&
+      handle.workspace_id === workspace.id,
+  );
+  const scopedReceipts = reviewReceipts.filter(
+    (projection) =>
+      projection.projectId === workspace.projectId &&
+      projection.workspaceId === workspace.id,
+  );
   const draftBase = {
     serverIdentity: server.serverIdentity,
     authorizationRevision: server.authorizationRevision,
@@ -231,14 +301,15 @@ function ReviewControlSurface({
       snapshot,
     });
   const submit = async (action: LocalReviewAction) => {
-    await executeReviewAction({
+    if (pending === null) throw new Error('review_confirmation_missing');
+    return executeReviewAction({
       projectId: workspace.projectId,
       workspaceId: workspace.id,
       workspaceRevision: workspace.revision,
       reviewRevision: review.revision,
       authority: snapshot.review.authority,
       action,
-      idempotencyKey: `mobile-review-${Crypto.randomUUID()}`,
+      idempotencyKey: pending.idempotencyKey,
     });
   };
   const prepare = (
@@ -252,27 +323,105 @@ function ReviewControlSurface({
       return;
     }
     setReviewError(null);
-    setPending({ action, summary, completed, cancelled });
+    setPending({
+      action,
+      summary,
+      completed,
+      cancelled,
+      idempotencyKey: `mobile-review-${Crypto.randomUUID()}`,
+      phase: 'confirm',
+      outcome: null,
+    });
   };
   const cancelPending = () => {
+    if (pending?.phase === 'reconcile') return;
     pending?.cancelled();
     setPending(null);
     setReviewError(null);
   };
   const confirmPending = async () => {
-    if (pending === null || confirmationBusy) return;
+    if (pending === null || pending.phase !== 'confirm' || confirmationBusy)
+      return;
     const current = pending;
     setConfirmationBusy(true);
     setReviewError(null);
     try {
-      await submit(current.action);
-      await current.completed();
-      setPending(null);
+      const result = await submit(current.action);
+      const receipt = result.receipt;
+      if (receipt?.outcome === 'completed') {
+        await current.completed();
+        setPending(null);
+      } else if (
+        receipt?.outcome === 'conflict' ||
+        receipt?.outcome === 'refused'
+      ) {
+        setPending({
+          ...current,
+          phase: 'terminal',
+          outcome: receipt.outcome,
+        });
+      } else {
+        setPending({
+          ...current,
+          phase: 'reconcile',
+          outcome: receipt?.outcome ?? 'ambiguous',
+        });
+      }
     } catch (error) {
-      current.cancelled();
       setReviewError(
         error instanceof Error ? error.message : 'review_action_refused',
       );
+    } finally {
+      setConfirmationBusy(false);
+    }
+  };
+  const reconcilePending = async () => {
+    if (pending === null || pending.phase !== 'reconcile' || confirmationBusy)
+      return;
+    const current = pending;
+    setConfirmationBusy(true);
+    setReviewError(null);
+    try {
+      const result = await reconcileReviewAction(current.idempotencyKey);
+      if (result.receipt.outcome === 'completed') {
+        await current.completed();
+        setPending(null);
+      } else if (
+        result.receipt.outcome === 'conflict' ||
+        result.receipt.outcome === 'refused'
+      ) {
+        setPending({
+          ...current,
+          phase: 'terminal',
+          outcome: result.receipt.outcome,
+        });
+      } else {
+        setPending({ ...current, outcome: result.receipt.outcome });
+      }
+    } catch (error) {
+      const recovered = scopedReceipts.find(
+        (projection) =>
+          projection.receipt.idempotency_key === current.idempotencyKey,
+      )?.receipt;
+      if (recovered?.outcome === 'completed') {
+        await current.completed();
+        setPending(null);
+      } else if (
+        recovered?.outcome === 'conflict' ||
+        recovered?.outcome === 'refused'
+      ) {
+        setPending({
+          ...current,
+          phase: 'terminal',
+          outcome: recovered.outcome,
+        });
+      } else {
+        setReviewError(
+          error instanceof Error
+            ? error.message
+            : 'review_reconciliation_unavailable',
+        );
+      }
     } finally {
       setConfirmationBusy(false);
     }
@@ -284,6 +433,12 @@ function ReviewControlSurface({
     },
   };
   const approve = availability(approveAction);
+  const addCommentPending = scopedReceiptHandles.some(
+    (handle) => handle.action_kind === 'add_comment',
+  );
+  const approvePending = scopedReceiptHandles.some(
+    (handle) => handle.action_kind === 'approve_review',
+  );
   return (
     <View style={styles.reviewSurface}>
       <View style={styles.reviewSummary}>
@@ -386,7 +541,11 @@ function ReviewControlSurface({
                       side,
                       line,
                     ].join(':')}
-                    enabled={commentAvailability.enabled && !reviewBusy}
+                    enabled={
+                      commentAvailability.enabled &&
+                      !reviewBusy &&
+                      !addCommentPending
+                    }
                     initial={
                       drafts.find(
                         (draft) =>
@@ -420,9 +579,11 @@ function ReviewControlSurface({
       <View style={styles.reviewActions}>
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: !approve.enabled || reviewBusy }}
+          accessibilityState={{
+            disabled: !approve.enabled || reviewBusy || approvePending,
+          }}
           accessibilityLabel={`Approve review${approve.enabled ? '' : `, unavailable: ${approve.reason.replaceAll('_', ' ')}`}`}
-          disabled={!approve.enabled || reviewBusy}
+          disabled={!approve.enabled || reviewBusy || approvePending}
           onPress={() =>
             prepare(
               approveAction,
@@ -433,7 +594,8 @@ function ReviewControlSurface({
             styles.reviewAction,
             {
               borderColor: palette.accent,
-              opacity: approve.enabled && !reviewBusy ? 1 : 0.48,
+              opacity:
+                approve.enabled && !reviewBusy && !approvePending ? 1 : 0.48,
             },
           ]}
         >
@@ -472,29 +634,55 @@ function ReviewControlSurface({
             review revision {review.revision} · action{' '}
             {pending.action.kind.replaceAll('_', ' ')}
           </Text>
+          <Text style={[styles.meta, { color: palette.textMuted }]}>
+            Receipt key {pending.idempotencyKey} · state {pending.phase}
+            {pending.outcome === null ? '' : ` · outcome ${pending.outcome}`}
+          </Text>
           <View style={styles.reviewActions}>
+            {pending.phase === 'confirm' && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Confirm exact review action"
+                accessibilityState={{ disabled: confirmationBusy }}
+                disabled={confirmationBusy}
+                onPress={() => void confirmPending()}
+                style={[styles.reviewAction, { borderColor: palette.warning }]}
+              >
+                <Text style={{ color: palette.warning, fontWeight: '900' }}>
+                  {confirmationBusy ? 'Submitting…' : 'Confirm'}
+                </Text>
+              </Pressable>
+            )}
+            {pending.phase === 'reconcile' && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Reconcile exact review receipt"
+                accessibilityState={{ disabled: confirmationBusy }}
+                disabled={confirmationBusy}
+                onPress={() => void reconcilePending()}
+                style={[styles.reviewAction, { borderColor: palette.warning }]}
+              >
+                <Text style={{ color: palette.warning, fontWeight: '900' }}>
+                  {confirmationBusy ? 'Reconciling…' : 'Reconcile receipt'}
+                </Text>
+              </Pressable>
+            )}
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Confirm exact review action"
-              accessibilityState={{ disabled: confirmationBusy }}
-              disabled={confirmationBusy}
-              onPress={() => void confirmPending()}
-              style={[styles.reviewAction, { borderColor: palette.warning }]}
-            >
-              <Text style={{ color: palette.warning, fontWeight: '900' }}>
-                {confirmationBusy ? 'Submitting…' : 'Confirm'}
-              </Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Cancel review action"
-              accessibilityState={{ disabled: confirmationBusy }}
-              disabled={confirmationBusy}
+              accessibilityLabel={
+                pending.phase === 'terminal'
+                  ? 'Dismiss terminal review receipt'
+                  : 'Cancel review action'
+              }
+              accessibilityState={{
+                disabled: confirmationBusy || pending.phase === 'reconcile',
+              }}
+              disabled={confirmationBusy || pending.phase === 'reconcile'}
               onPress={cancelPending}
               style={[styles.reviewAction, { borderColor: palette.border }]}
             >
               <Text style={{ color: palette.textMuted, fontWeight: '800' }}>
-                Cancel
+                {pending.phase === 'terminal' ? 'Dismiss result' : 'Cancel'}
               </Text>
             </Pressable>
           </View>
@@ -507,6 +695,35 @@ function ReviewControlSurface({
         >
           Review action refused: {reviewError.replaceAll('_', ' ')}
         </Text>
+      )}
+      {(scopedReceiptHandles.length > 0 || scopedReceipts.length > 0) && (
+        <View
+          accessibilityLabel="Durable review receipts"
+          style={[styles.confirmation, { borderColor: palette.border }]}
+        >
+          <Text style={{ color: palette.text, fontWeight: '900' }}>
+            Durable review receipts
+          </Text>
+          {scopedReceiptHandles.map((handle) => (
+            <Text
+              key={handle.idempotency_key}
+              style={[styles.meta, { color: palette.warning }]}
+            >
+              {handle.action_kind.replaceAll('_', ' ')} · pending exact receipt
+              · {handle.idempotency_key}
+            </Text>
+          ))}
+          {scopedReceipts.map(({ actionKind, receipt }) => (
+            <Text
+              key={receipt.idempotency_key}
+              style={[styles.meta, { color: palette.textMuted }]}
+            >
+              {actionKind.replaceAll('_', ' ')} · {receipt.outcome} · actor{' '}
+              {receipt.actor} · {receipt.reconciliation} ·{' '}
+              {receipt.idempotency_key}
+            </Text>
+          ))}
+        </View>
       )}
       <Text style={[styles.subtitle, { color: palette.textMuted }]}>
         Draft state is explicit: local drafts are not sent to an agent. Git

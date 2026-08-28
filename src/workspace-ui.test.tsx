@@ -200,6 +200,9 @@ function workspaceValue() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  jest.mocked(AsyncStorage.setItem).mockResolvedValue(undefined);
+  jest.mocked(AsyncStorage.removeItem).mockResolvedValue(undefined);
   mockUseMobile.mockReturnValue({
     snapshot: {
       connection: {
@@ -236,6 +239,9 @@ beforeEach(() => {
 });
 
 test('review route shows bounded sanitized hunks and keeps unsupported mutations explicitly disabled', async () => {
+  jest
+    .mocked(AsyncStorage.setItem)
+    .mockRejectedValue(new Error('storage unavailable'));
   const base = workspaceValue();
   const server = base.catalog.servers[0]!;
   const workspace = server.workspaces[0]!;
@@ -260,7 +266,9 @@ test('review route shows bounded sanitized hunks and keeps unsupported mutations
     catalog,
     reviewBusy: false,
     reviewReceipts: [],
+    pendingReviewReceipts: [],
     executeReviewAction: jest.fn(),
+    reconcileReviewAction: jest.fn(),
     findWorkspace: () => withReview,
   });
   mockUseMobileLifecycle.mockReturnValue({
@@ -289,6 +297,11 @@ test('review route shows bounded sanitized hunks and keeps unsupported mutations
   expect(view.getByText('-old\n+new')).toBeTruthy();
   expect(view.getByLabelText(/Approve review, unavailable/)).toBeDisabled();
   expect(view.getByLabelText(/Batch send comments/)).toBeDisabled();
+  await waitFor(() =>
+    expect(
+      view.getByText(/Local draft persistence failed · not ready to send/),
+    ).toBeTruthy(),
+  );
   expect(view.getByText(/local drafts are not sent to an agent/)).toBeTruthy();
 });
 
@@ -303,15 +316,32 @@ test('review approval requires an exact preview before one revision-bound mutati
       { destination: 'review', revision: workspace.revision },
     ],
   };
-  const executeReviewAction = jest.fn().mockResolvedValue({
-    schema: 'automonique.platform/review-action-receipt/v2',
-    idempotency_key: 'mobile-review-test',
-    actor: 'mobile-actor',
-    outcome: 'completed',
-    reconciliation: 'final',
-    revision: 8n,
-    current_revision: null,
-  });
+  const executeReviewAction = jest.fn().mockImplementation((options) =>
+    Promise.resolve({
+      kind: 'ambiguous',
+      idempotencyKey: options.idempotencyKey,
+      receipt: null,
+      projectionRefreshRequired: true,
+    }),
+  );
+  const reconcileReviewAction = jest.fn().mockImplementation((key) =>
+    Promise.resolve({
+      handle: { idempotency_key: key },
+      receipt: {
+        schema: 'automonique.platform/review/v1',
+        platform_version: 2n,
+        receipt_id: 'receipt-mobile-review-test',
+        action_id: 'action-mobile-review-test',
+        idempotency_key: key,
+        actor: 'mobile-actor',
+        outcome: 'completed',
+        reconciliation: 'final',
+        revision: 8n,
+        current_revision: null,
+      },
+      projectionRefreshRequired: true,
+    }),
+  );
   mockUseWorkspaces.mockReturnValue({
     ...base,
     catalog: {
@@ -325,7 +355,9 @@ test('review approval requires an exact preview before one revision-bound mutati
     },
     reviewBusy: false,
     reviewReceipts: [],
+    pendingReviewReceipts: [],
     executeReviewAction,
+    reconcileReviewAction,
     findWorkspace: () => withReview,
   });
   mockUseMobileLifecycle.mockReturnValue({
@@ -385,6 +417,22 @@ test('review approval requires an exact preview before one revision-bound mutati
       },
       idempotencyKey: expect.stringMatching(/^mobile-review-/u),
     }),
+  );
+  const exactKey = executeReviewAction.mock.calls[0]![0].idempotencyKey;
+  await waitFor(() =>
+    expect(view.getByLabelText('Reconcile exact review receipt')).toBeTruthy(),
+  );
+  expect(view.queryByLabelText('Confirm exact review action')).toBeNull();
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Reconcile exact review receipt'));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(reconcileReviewAction).toHaveBeenCalledWith(exactKey);
+  await waitFor(() =>
+    expect(
+      view.queryByLabelText('Exact review action confirmation'),
+    ).toBeNull(),
   );
 });
 

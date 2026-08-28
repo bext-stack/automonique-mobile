@@ -10,6 +10,8 @@ export interface ReviewNotificationRuntime {
   configure(): Promise<void>;
   permission(): Promise<NotificationPermission>;
   requestPermission(): Promise<NotificationPermission>;
+  lastResponse(): Promise<unknown | null>;
+  clearLastResponse(): Promise<void>;
   onResponse(listener: (data: unknown) => void): () => void;
   schedule(content: {
     readonly title: string;
@@ -28,6 +30,10 @@ export const reviewNotificationRuntime: ReviewNotificationRuntime = {
   async requestPermission() {
     return 'denied';
   },
+  async lastResponse() {
+    return null;
+  },
+  async clearLastResponse() {},
   onResponse() {
     return () => undefined;
   },

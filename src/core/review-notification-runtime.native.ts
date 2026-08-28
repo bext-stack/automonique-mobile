@@ -48,6 +48,13 @@ export const reviewNotificationRuntime: ReviewNotificationRuntime = {
         : await Notifications.requestPermissionsAsync(),
     );
   },
+  async lastResponse() {
+    const response = await Notifications.getLastNotificationResponseAsync();
+    return response?.notification.request.content.data ?? null;
+  },
+  async clearLastResponse() {
+    await Notifications.clearLastNotificationResponseAsync();
+  },
   onResponse(listener) {
     const subscription = Notifications.addNotificationResponseReceivedListener(
       (response) => listener(response.notification.request.content.data),
@@ -55,6 +62,10 @@ export const reviewNotificationRuntime: ReviewNotificationRuntime = {
     return () => subscription.remove();
   },
   async schedule(content) {
-    await Notifications.scheduleNotificationAsync({ content, trigger: null });
+    await Notifications.scheduleNotificationAsync({
+      content,
+      trigger:
+        Platform.OS === 'android' ? { channelId: 'review-attention' } : null,
+    });
   },
 };
