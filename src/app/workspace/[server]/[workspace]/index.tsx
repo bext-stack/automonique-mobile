@@ -4,6 +4,7 @@ import { Link, useLocalSearchParams } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import type { ReviewAction } from '@automonique/sdk';
 
 import { Screen } from '@/components/screen';
 import { WorkspaceMutationConfirmation } from '@/components/workspace-mutation-confirmation';
@@ -34,6 +35,10 @@ import type {
   PreparedWorkspaceMutation,
   WorkspaceMutationReconciliation,
 } from '@/core/workspace-v2-gateway';
+import {
+  MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES,
+  type MobileSupportedReviewAction,
+} from '@/core/mobile-review-effects';
 import { useMobile } from '@/providers/mobile-provider';
 import { useMobileLifecycle } from '@/providers/production-mobile-provider';
 import { useWorkspaces } from '@/providers/workspace-provider';
@@ -188,6 +193,41 @@ function AnchoredDraftEditor({
   );
 }
 
+type UnavailableReviewEffectKind = Exclude<
+  ReviewAction['kind'],
+  MobileSupportedReviewAction['kind']
+>;
+
+function UnavailableReviewEffect({
+  kind,
+  label,
+}: {
+  readonly kind: UnavailableReviewEffectKind;
+  readonly label: string;
+}) {
+  const palette = usePalette();
+  const category = MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES[kind];
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled: true }}
+      accessibilityLabel={`${label}, unavailable: ${category}`}
+      disabled
+      style={[
+        styles.reviewAction,
+        { borderColor: palette.border, opacity: 0.48 },
+      ]}
+    >
+      <Text style={{ color: palette.textMuted, fontWeight: '800' }}>
+        {label} · unavailable
+      </Text>
+      <Text style={[styles.meta, { color: palette.textMuted }]}>
+        {category}
+      </Text>
+    </Pressable>
+  );
+}
+
 function ReviewControlSurface({
   detail,
   server,
@@ -218,10 +258,7 @@ function ReviewControlSurface({
     Awaited<ReturnType<typeof loadReviewDrafts>>
   >([]);
   const [draftsLoaded, setDraftsLoaded] = useState(false);
-  type LocalReviewAction = Extract<
-    Parameters<typeof reviewActionAvailability>[0]['action'],
-    { readonly kind: 'add_comment' | 'approve_review' }
-  >;
+  type LocalReviewAction = MobileSupportedReviewAction;
   const [pending, setPending] = useState<{
     readonly action: LocalReviewAction;
     readonly summary: string;
@@ -632,20 +669,10 @@ function ReviewControlSurface({
             Approve review
           </Text>
         </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: true }}
-          accessibilityLabel="Batch send comments to agent, unavailable: server effect adapter unavailable"
-          disabled
-          style={[
-            styles.reviewAction,
-            { borderColor: palette.border, opacity: 0.48 },
-          ]}
-        >
-          <Text style={{ color: palette.textMuted, fontWeight: '800' }}>
-            Batch send · unavailable
-          </Text>
-        </Pressable>
+        <UnavailableReviewEffect
+          kind="batch_send_comments_to_agent"
+          label="Batch send comments to agent"
+        />
       </View>
       {pending !== null && (
         <View
@@ -789,9 +816,9 @@ function ReviewControlSurface({
       )}
       <Text style={[styles.subtitle, { color: palette.textMuted }]}>
         Draft state is explicit: local drafts are not sent to an agent. Git
-        stage, unstage, commit, CI rerun, pull-request update, and merge remain
-        unavailable until matching server effect adapters and delegated actions
-        are present.
+        stage, unstage, and commit remain unavailable. External agent, CI, and
+        pull-request effect families are shown below with the server adapter
+        category that keeps each control inert.
       </Text>
       {snapshot.comments.map((comment) => (
         <View key={comment.id} style={styles.commentRow}>
@@ -800,20 +827,42 @@ function ReviewControlSurface({
             {comment.actor} · revision {comment.revision.toString()} ·{' '}
             {comment.agent_state.replaceAll('_', ' ')}
           </Text>
+          <UnavailableReviewEffect
+            kind="send_comment_to_agent"
+            label={`Send comment ${comment.id} to agent`}
+          />
         </View>
       ))}
       {snapshot.checks.map((check) => (
-        <Text key={check.id} style={{ color: palette.textMuted }}>
-          Check {check.id}: {check.state} ·{' '}
-          {check.required ? 'required' : 'optional'}
-          {' · rerun unavailable'}
-        </Text>
+        <View key={check.id} style={styles.commentRow}>
+          <Text style={{ color: palette.textMuted }}>
+            Check {check.id}: {check.state} ·{' '}
+            {check.required ? 'required' : 'optional'}
+          </Text>
+          <UnavailableReviewEffect
+            kind="rerun_check"
+            label={`Rerun check ${check.id}`}
+          />
+        </View>
       ))}
       <Text style={{ color: palette.textMuted }}>
         Pull request: {snapshot.pull_request.id ?? 'not reported'} ·{' '}
-        {snapshot.pull_request.state} · {snapshot.pull_request.readiness} ·
-        controls unavailable
+        {snapshot.pull_request.state} · {snapshot.pull_request.readiness}
       </Text>
+      <View style={styles.reviewActions}>
+        <UnavailableReviewEffect
+          kind="open_pull_request"
+          label="Open pull request"
+        />
+        <UnavailableReviewEffect
+          kind="update_pull_request"
+          label="Update pull request"
+        />
+        <UnavailableReviewEffect
+          kind="merge_pull_request"
+          label="Merge pull request"
+        />
+      </View>
     </View>
   );
 }

@@ -62,6 +62,10 @@ import {
   type ReviewV2ReceiptHandle,
   type ReviewV2ReceiptStore,
 } from './review-v2-receipts';
+import {
+  MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES,
+  unavailableReviewEffectCategory,
+} from './mobile-review-effects';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -463,6 +467,8 @@ test('executes and durably reconciles only an authority-bound local review actio
     reviewStore,
   );
   await negotiate(gateway);
+  expect(gateway.reviewEffectKinds).toEqual(['add_comment', 'approve_review']);
+  expect(Object.isFrozen(gateway.reviewEffectKinds)).toBe(true);
   await gateway.loadProject(project);
   await gateway.loadReview(project, userWorkspaceIdentity);
 
@@ -575,6 +581,100 @@ test('refuses stale review revisions, mismatched authorities, and undelegated ef
   ).rejects.toMatchObject({ category: 'mobile_v2_action_unauthorized' });
 });
 
+test('every unsupported review family refuses before a request or durable handle', async () => {
+  const snapshot = reviewSnapshot();
+  const reviewStore = memoryReviewReceiptStore();
+  const authorized = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review',
+          request: { project, workspace: userWorkspaceIdentity },
+        },
+        result: { kind: 'review_result', review: snapshot },
+      },
+    ],
+    1_500,
+    memoryReceiptStore(),
+    reviewAuthorization(),
+    undefined,
+    authorizationDigest,
+    reviewStore,
+  );
+  await negotiate(authorized.gateway);
+  await authorized.gateway.loadProject(project);
+  await authorized.gateway.loadReview(project, userWorkspaceIdentity);
+  const actions = [
+    {
+      kind: 'send_comment_to_agent',
+      payload: { comment_id: 'comment-1', expected_comment_revision: 1n },
+    },
+    {
+      kind: 'batch_send_comments_to_agent',
+      payload: {
+        comments: [{ comment_id: 'comment-1', expected_comment_revision: 1n }],
+      },
+    },
+    { kind: 'stage', payload: { proposal_id: 'proposal-1' } },
+    { kind: 'unstage', payload: { proposal_id: 'proposal-1' } },
+    { kind: 'commit', payload: { proposal_id: 'proposal-1' } },
+    {
+      kind: 'resolve_conflict',
+      payload: {
+        file_id: 'file-1',
+        proposal_id: 'proposal-1',
+        resolution: 'keep_current',
+      },
+    },
+    {
+      kind: 'rerun_check',
+      payload: { check_id: 'check-1', expected_check_revision: 1n },
+    },
+    {
+      kind: 'open_pull_request',
+      payload: { expected_pull_request_revision: 1n, title: 'Exact title' },
+    },
+    {
+      kind: 'update_pull_request',
+      payload: {
+        expected_pull_request_revision: 1n,
+        pull_request_id: 'pr-1',
+        title: 'Exact title',
+      },
+    },
+    {
+      kind: 'merge_pull_request',
+      payload: {
+        expected_head_revision: 'head-1',
+        expected_pull_request_revision: 1n,
+        pull_request_id: 'pr-1',
+      },
+    },
+  ] as const;
+  for (const [index, action] of actions.entries()) {
+    await expect(
+      authorized.gateway.executeReviewAction(
+        project,
+        userWorkspaceIdentity,
+        7n,
+        snapshot.review.authority,
+        action as never,
+        `unsupported-review-${index}`,
+      ),
+    ).rejects.toMatchObject({
+      category: MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES[action.kind],
+    });
+    expect(unavailableReviewEffectCategory(action.kind)).toBe(
+      MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES[action.kind],
+    );
+  }
+  expect(reviewStore.handles).toEqual([]);
+  expect(authorized.adapter.pendingSteps).toBe(0);
+});
+
 test('exposes only immutable non-secret coordinates for catalog projection', () => {
   const { gateway } = gatewayFor([]);
   expect(gateway.authorizationScope).toMatchObject({
@@ -585,6 +685,8 @@ test('exposes only immutable non-secret coordinates for catalog projection', () 
   });
   expect(Object.isFrozen(gateway.authorizationScope)).toBe(true);
   expect(Object.isFrozen(gateway.authorizationScope.projectRoots)).toBe(true);
+  expect(gateway.reviewEffectKinds).toEqual([]);
+  expect(Object.isFrozen(gateway.reviewEffectKinds)).toBe(true);
   expect(gateway.authorizationScope).not.toHaveProperty('token');
   expect(gateway.authorizationScope).not.toHaveProperty('actorId');
 });

@@ -251,6 +251,13 @@ mobile actions in the first slice.
 | Reconciliation handle                    | Async Storage         | 20 handles; 16 KiB encoded set                                   | Action, exact target and key only; never an executable command     |
 | Review reconciliation handle             | Async Storage         | 32 handles; 32 KiB encoded set                                   | Exact actor/authority/action digest/revision/key; no comment body  |
 
+The vendored review union also defines agent-send, CI, Git, and pull-request
+actions. Production currently completes only `add_comment` and
+`approve_review`; its external families return explicit adapter-unavailable
+categories. Mobile therefore exposes those external families only as inert,
+disabled typed rows. It does not probe support by sending an action, persist a
+speculative handle, or infer per-family authority from the coarse review grant.
+
 Provider credentials, raw provider/tool output, routing policy, and an offline
 mutation queue never cross or live inside the mobile boundary.
 

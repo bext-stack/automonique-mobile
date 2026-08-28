@@ -5,6 +5,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import type { ReactNode } from 'react';
 
 import WorkspacesScreen from './app/(tabs)/workspaces';
+import AttentionScreen from './app/(tabs)/attention';
 import WorkspaceDetailScreen from './app/workspace/[server]/[workspace]';
 import ExactWorkspaceSessionLink from './app/workspace/[server]/[workspace]/session/[session]';
 import {
@@ -376,6 +377,140 @@ test('review route shows bounded sanitized hunks and keeps unsupported mutations
     ).toBeTruthy(),
   );
   expect(view.getByText(/local drafts are not sent to an agent/)).toBeTruthy();
+});
+
+test('unsupported typed review families stay inert with exact adapter categories', async () => {
+  const base = workspaceValue();
+  const server = base.catalog.servers[0]!;
+  const workspace = server.workspaces[0]!;
+  const withReview = {
+    ...workspace,
+    navigation: [
+      ...workspace.navigation,
+      { destination: 'review', revision: workspace.revision },
+    ],
+  };
+  const unsupportedSnapshot = {
+    ...detail.review.snapshot,
+    comments: [
+      {
+        actor: 'operator-mobile',
+        agent_state: 'not_sent',
+        anchor: { file_id: 'file-1', hunk_id: 'hunk-1', line: 1n, side: 'new' },
+        body: 'Exact persisted comment',
+        id: 'comment-1',
+        revision: 4n,
+        unread: false,
+      },
+    ],
+    checks: [
+      {
+        authority: { kind: 'ci', id: 'ci-local' },
+        freshness: {
+          observed_at_ms: 1n,
+          observed_revision: 5n,
+          state: 'fresh',
+        },
+        id: 'check-1',
+        required: true,
+        state: 'failed',
+      },
+    ],
+  };
+  const unsupportedDetail = {
+    ...detail,
+    review: {
+      ...detail.review,
+      snapshot: unsupportedSnapshot,
+      comments: unsupportedSnapshot.comments,
+      checks: unsupportedSnapshot.checks,
+    },
+  };
+  const executeReviewAction = jest.fn();
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: {
+      ...base.catalog,
+      servers: [{ ...server, workspaces: [withReview] }],
+    },
+    details: [unsupportedDetail],
+    reviewBusy: false,
+    reviewReceipts: [],
+    pendingReviewReceipts: [],
+    executeReviewAction,
+    reconcileReviewAction: jest.fn(),
+    findWorkspace: () => withReview,
+    findDetail: () => unsupportedDetail,
+  });
+  mockUseMobileLifecycle.mockReturnValue({
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: WORKSPACE_FIXTURE_IDENTITY },
+    },
+    workspaceGateway: {
+      authorizationScope: {
+        serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+        actions: ['get_review', 'execute_review_action', 'get_review_receipt'],
+      },
+      reviewEffectKinds: ['add_comment', 'approve_review'],
+    },
+  });
+  mockRouteParams = {
+    server: WORKSPACE_FIXTURE_IDENTITY,
+    workspace: workspace.id,
+    revision: workspace.revision,
+    destination: 'review',
+    review_revision: detail.review.revision,
+  };
+  const view = await render(<WorkspaceDetailScreen />);
+  const expectations = [
+    [
+      'Batch send comments to agent',
+      'platform_v2_review_agent_adapter_unavailable',
+    ],
+    [
+      'Send comment comment-1 to agent',
+      'platform_v2_review_agent_adapter_unavailable',
+    ],
+    ['Rerun check check-1', 'platform_v2_review_ci_adapter_unavailable'],
+    [
+      'Open pull request',
+      'platform_v2_review_pull_request_adapter_unavailable',
+    ],
+    [
+      'Update pull request',
+      'platform_v2_review_pull_request_adapter_unavailable',
+    ],
+    [
+      'Merge pull request',
+      'platform_v2_review_pull_request_adapter_unavailable',
+    ],
+  ] as const;
+  for (const [label, category] of expectations) {
+    const control = view.getByLabelText(`${label}, unavailable: ${category}`);
+    expect(control).toBeDisabled();
+    fireEvent.press(control);
+  }
+  expect(executeReviewAction).not.toHaveBeenCalled();
+  expect(view.queryByLabelText('Exact review action confirmation')).toBeNull();
+});
+
+test('attention truthfully separates local exact deep links from unavailable push admission', async () => {
+  const base = workspaceValue();
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    notificationPermission: 'granted',
+    requestReviewNotificationPermission: jest.fn(),
+  });
+  const view = await render(<AttentionScreen />);
+  expect(
+    view.getByText(
+      /OS background push, EAS delivery, and physical-device admission are unavailable/,
+    ),
+  ).toBeTruthy();
+  expect(
+    view.getByText(/exact, revalidated workspace coordinates/),
+  ).toBeTruthy();
 });
 
 test('workspace review refuses a full gateway selected for another server', async () => {

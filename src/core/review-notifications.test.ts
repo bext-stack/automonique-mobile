@@ -76,6 +76,20 @@ test('notification coordinates are exact, bounded, and inert until live re-admis
     hunkId: 'hunk-1',
   };
   const encoded = encodeReviewNotificationData(request);
+  expect(Object.keys(encoded).sort()).toEqual(
+    [
+      'file_id',
+      'hunk_id',
+      'kind',
+      'review_revision',
+      'server_identity',
+      'workspace_id',
+      'workspace_revision',
+    ].sort(),
+  );
+  expect(JSON.stringify(encoded)).not.toMatch(
+    /session|pathname|body|title|token/iu,
+  );
   expect(decodeReviewNotificationData(encoded)).toEqual(request);
   expect(() =>
     decodeReviewNotificationData({ ...encoded, pathname: '/settings' }),
