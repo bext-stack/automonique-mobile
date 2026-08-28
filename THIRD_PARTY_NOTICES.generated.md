@@ -4695,6 +4695,7 @@ Declared license: MPL-2.0
 Packages:
 
 - lightningcss-linux-x64-gnu@1.33.0 (node_modules/lightningcss-linux-x64-gnu)
+- lightningcss-linux-x64-musl@1.33.0 (node_modules/lightningcss-linux-x64-musl)
 - lightningcss@1.33.0 (node_modules/lightningcss)
 
 ```text
@@ -16362,7 +16363,6 @@ Packages:
 - lightningcss-linux-arm-gnueabihf@1.33.0 (node_modules/lightningcss-linux-arm-gnueabihf)
 - lightningcss-linux-arm64-gnu@1.33.0 (node_modules/lightningcss-linux-arm64-gnu)
 - lightningcss-linux-arm64-musl@1.33.0 (node_modules/lightningcss-linux-arm64-musl)
-- lightningcss-linux-x64-musl@1.33.0 (node_modules/lightningcss-linux-x64-musl)
 - lightningcss-win32-arm64-msvc@1.33.0 (node_modules/lightningcss-win32-arm64-msvc)
 - lightningcss-win32-x64-msvc@1.33.0 (node_modules/lightningcss-win32-x64-msvc)
 
