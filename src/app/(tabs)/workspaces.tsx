@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-import { Link } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -20,12 +20,14 @@ function freshnessLabel(state: 'fresh' | 'delayed' | 'unknown'): string {
 
 export default function WorkspacesScreen() {
   const palette = usePalette();
+  const router = useRouter();
   const { catalog, status, refresh, selectServer } = useWorkspaces();
   const [query, setQuery] = useState('');
   const cards = useMemo(
     () =>
       presentWorkspaceCatalog(catalog, query).filter(
         (card) =>
+          query.trim().length > 0 ||
           catalog.selectedServerIdentity === null ||
           card.serverIdentity === catalog.selectedServerIdentity,
       ),
@@ -105,7 +107,7 @@ export default function WorkspacesScreen() {
                 accessibilityState={{ selected }}
                 accessibilityLabel={`${server.label}, ${server.authorization} authorization`}
                 onPress={() =>
-                  selectServer(server.serverIdentity as ServerIdentity)
+                  void selectServer(server.serverIdentity as ServerIdentity)
                 }
                 style={[
                   styles.serverFilter,
@@ -196,70 +198,71 @@ export default function WorkspacesScreen() {
 
       <View style={styles.list}>
         {cards.map((card) => (
-          <Link
+          <Pressable
             key={card.key}
-            asChild
-            href={{
-              pathname: '/workspace/[server]/[workspace]',
-              params: {
-                server: card.serverIdentity,
-                workspace: card.workspaceId,
-                revision: card.workspaceRevision,
-              },
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${card.title} on ${card.hostLabel}`}
+            onPress={() => {
+              void (async () => {
+                await selectServer(card.serverIdentity as ServerIdentity);
+                router.push({
+                  pathname: '/workspace/[server]/[workspace]',
+                  params: {
+                    server: card.serverIdentity,
+                    workspace: card.workspaceId,
+                    revision: card.workspaceRevision,
+                  },
+                });
+              })();
+            }}
+            style={{
+              backgroundColor: palette.surface,
+              borderColor: palette.border,
+              borderRadius: 18,
+              borderWidth: 1,
+              gap: 10,
+              minHeight: 96,
+              padding: 16,
             }}
           >
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Open ${card.title} on ${card.hostLabel}`}
-              style={{
-                backgroundColor: palette.surface,
-                borderColor: palette.border,
-                borderRadius: 18,
-                borderWidth: 1,
-                gap: 10,
-                minHeight: 96,
-                padding: 16,
-              }}
-            >
-              <View style={styles.cardTop}>
-                <View style={styles.cardTitleGroup}>
-                  <Text style={[styles.cardTitle, { color: palette.text }]}>
-                    {card.title}
-                  </Text>
-                  <Text style={[styles.meta, { color: palette.textMuted }]}>
-                    {card.projectLabel} · {card.hostLabel}
+            <View style={styles.cardTop}>
+              <View style={styles.cardTitleGroup}>
+                <Text style={[styles.cardTitle, { color: palette.text }]}>
+                  {card.title}
+                </Text>
+                <Text style={[styles.meta, { color: palette.textMuted }]}>
+                  {card.projectLabel} · {card.hostLabel}
+                </Text>
+              </View>
+              {card.unreadAttention > 0 && (
+                <View
+                  accessibilityLabel={`${card.unreadAttention} unread`}
+                  style={[styles.badge, { backgroundColor: palette.accent }]}
+                >
+                  <Text
+                    style={{ color: palette.accentText, fontWeight: '900' }}
+                  >
+                    {card.unreadAttention}
                   </Text>
                 </View>
-                {card.unreadAttention > 0 && (
-                  <View
-                    accessibilityLabel={`${card.unreadAttention} unread`}
-                    style={[styles.badge, { backgroundColor: palette.accent }]}
-                  >
-                    <Text
-                      style={{ color: palette.accentText, fontWeight: '900' }}
-                    >
-                      {card.unreadAttention}
-                    </Text>
-                  </View>
-                )}
-              </View>
-              <View style={styles.states}>
-                <Text style={[styles.state, { color: palette.text }]}>
-                  Orchestration: {card.orchestrationStatus}
-                </Text>
-                <Text style={[styles.state, { color: palette.textMuted }]}>
-                  External:{' '}
-                  {card.externalWorkItem === null
-                    ? 'not reported'
-                    : `${card.externalWorkItem.label} · ${card.externalWorkItem.status}`}
-                </Text>
-              </View>
-              <Text style={[styles.meta, { color: palette.textMuted }]}>
-                {freshnessLabel(card.freshness.state)} · {card.sessionCount}{' '}
-                retained session{card.sessionCount === 1 ? '' : 's'} · read only
+              )}
+            </View>
+            <View style={styles.states}>
+              <Text style={[styles.state, { color: palette.text }]}>
+                Orchestration: {card.orchestrationStatus}
               </Text>
-            </Pressable>
-          </Link>
+              <Text style={[styles.state, { color: palette.textMuted }]}>
+                External:{' '}
+                {card.externalWorkItem === null
+                  ? 'not reported'
+                  : `${card.externalWorkItem.label} · ${card.externalWorkItem.status}`}
+              </Text>
+            </View>
+            <Text style={[styles.meta, { color: palette.textMuted }]}>
+              {freshnessLabel(card.freshness.state)} · {card.sessionCount}{' '}
+              retained session{card.sessionCount === 1 ? '' : 's'} · read only
+            </Text>
+          </Pressable>
         ))}
         {cards.length === 0 && (
           <View

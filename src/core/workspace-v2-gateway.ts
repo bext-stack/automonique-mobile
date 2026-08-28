@@ -216,6 +216,19 @@ export interface WorkspaceV2Gateway {
   ): Promise<WorkspaceIntentResult>;
 }
 
+/**
+ * Capability-minimal Platform v2 projection used for multi-server discovery.
+ * It deliberately cannot submit effects, manage receipts, or expose tokens.
+ */
+export type ReadOnlyWorkspaceV2Gateway = Pick<
+  WorkspaceV2Gateway,
+  | 'authorizationScope'
+  | 'negotiate'
+  | 'loadProject'
+  | 'loadLineage'
+  | 'loadReview'
+>;
+
 export class WorkspaceV2GatewayError extends Error {
   constructor(
     readonly category: string,

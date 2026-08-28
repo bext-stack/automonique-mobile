@@ -20,7 +20,7 @@ import {
   type ScopedServerProfile,
   type ServerIdentity,
 } from './workspace-companion';
-import type { WorkspaceV2Gateway } from './workspace-v2-gateway';
+import type { ReadOnlyWorkspaceV2Gateway } from './workspace-v2-gateway';
 
 export const MAX_WORKSPACE_DETAIL_READS = 32;
 export const MAX_WORKSPACE_DETAIL_CONCURRENCY = 2;
@@ -90,7 +90,7 @@ export interface WorkspaceCatalogBuildResult {
 }
 
 interface BuildOptions {
-  readonly gateway: WorkspaceV2Gateway;
+  readonly gateway: ReadOnlyWorkspaceV2Gateway;
   readonly origin: string;
   readonly serverLabel: string;
   readonly signal?: AbortSignal;
@@ -427,7 +427,7 @@ interface DetailRead {
 }
 
 async function readDetail(
-  gateway: WorkspaceV2Gateway,
+  gateway: ReadOnlyWorkspaceV2Gateway,
   project: string,
   workspace: WorkContextRecord,
   signal: AbortSignal | undefined,

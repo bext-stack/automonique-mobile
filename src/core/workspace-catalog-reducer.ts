@@ -117,6 +117,7 @@ export function mergeWorkspaceCatalogServer(
     failedProjectIds: [],
   },
   now = Date.now(),
+  preserveOtherAuthorization = false,
 ): WorkspaceCompanionCatalog {
   const previous = catalog.servers.find(
     (server) => server.serverIdentity === profile.serverIdentity,
@@ -185,8 +186,12 @@ export function mergeWorkspaceCatalogServer(
       .filter((server) => server.serverIdentity !== profile.serverIdentity)
       .map((server) => ({
         ...server,
-        authorization: 'cached' as const,
-        actions: ['workspace_read'] as const,
+        authorization: preserveOtherAuthorization
+          ? server.authorization
+          : ('cached' as const),
+        actions: preserveOtherAuthorization
+          ? server.actions
+          : (['workspace_read'] as const),
       })),
     combinedProfile,
   ];
@@ -220,6 +225,41 @@ export function mergeWorkspaceCatalogServer(
   if (reduced.resyncRequired)
     throw new Error('workspace_catalog_resync_required');
   return reduced.catalog;
+}
+
+/**
+ * Admit one coherent fan-out refresh. Every server starts cached/read-only and
+ * only an exact successful read is promoted to active for this generation.
+ */
+export function mergeWorkspaceCatalogServers(
+  catalog: WorkspaceCompanionCatalog,
+  servers: readonly {
+    readonly profile: ScopedServerProfile;
+    readonly successfulProjectIds: readonly string[];
+    readonly failedProjectIds: readonly string[];
+  }[],
+  now = Date.now(),
+): WorkspaceCompanionCatalog {
+  const selected = catalog.selectedServerIdentity;
+  let next = cacheWorkspaceCatalog(catalog, now);
+  for (const server of servers) {
+    next = mergeWorkspaceCatalogServer(
+      next,
+      server.profile,
+      {
+        successfulProjectIds: server.successfulProjectIds,
+        failedProjectIds: server.failedProjectIds,
+      },
+      now,
+      true,
+    );
+  }
+  const retainedSelection =
+    selected !== null &&
+    next.servers.some((server) => server.serverIdentity === selected)
+      ? selected
+      : next.selectedServerIdentity;
+  return { ...next, selectedServerIdentity: retainedSelection };
 }
 
 export function revokeWorkspaceCatalogServer(

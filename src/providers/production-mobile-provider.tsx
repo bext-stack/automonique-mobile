@@ -10,9 +10,11 @@ import {
 import { AppState } from 'react-native';
 
 import {
-  mobileLifecycle,
-  type MobileLifecycleState,
-} from '@/core/mobile-lifecycle';
+  mobileFleetLifecycle,
+  type MobileFleetServer,
+  type ReadOnlyWorkspaceServerGateway,
+} from '@/core/mobile-fleet-lifecycle';
+import { type MobileLifecycleState } from '@/core/mobile-lifecycle';
 import type { MobileAutomoniqueGateway } from '@/core/types';
 import type { WorkspaceV2Gateway } from '@/core/workspace-v2-gateway';
 import type { MobilePairingOffer } from '@automonique/sdk';
@@ -25,8 +27,13 @@ import {
 
 interface LifecycleContextValue {
   readonly state: MobileLifecycleState;
+  readonly servers: readonly MobileFleetServer[];
+  readonly selectedMutationSlotId: string | null;
   readonly refreshCredential: () => Promise<void>;
+  readonly refreshServer: (slotId: string) => Promise<void>;
   readonly revokeCredential: () => Promise<void>;
+  readonly revokeServer: (slotId: string) => Promise<void>;
+  readonly selectServer: (slotId: string) => Promise<void>;
   readonly pair: (offer: MobilePairingOffer) => Promise<void>;
   readonly workspaceGateway: WorkspaceV2Gateway | null;
 }
@@ -52,6 +59,7 @@ interface GatewayGeneration {
   readonly scope: string;
   readonly gateway: MobileAutomoniqueGateway;
   readonly workspaceGateway: WorkspaceV2Gateway | null;
+  readonly readOnlyWorkspaceServers: readonly ReadOnlyWorkspaceServerGateway[];
 }
 
 function storageScope(
@@ -65,10 +73,24 @@ const INITIAL_GATEWAY: GatewayGeneration = {
   scope: 'unpaired',
   gateway: unavailableGateway('mobile_pairing_required'),
   workspaceGateway: null,
+  readOnlyWorkspaceServers: [],
 };
+
+function fleetGenerationKey(
+  fleet: ReturnType<typeof mobileFleetLifecycle.snapshot>,
+): string {
+  return fleet.servers
+    .map(({ slotId, state }) =>
+      state.profile === null
+        ? `${slotId}:${state.phase}`
+        : `${slotId}:${state.phase}:${state.profile.serverIdentity}:a${state.profile.authorizationRevision}:c${state.profile.credentialRevision}`,
+    )
+    .join('|');
+}
 
 async function revokeCredentialGeneration(
   state: MobileLifecycleState,
+  revoke: () => Promise<void>,
 ): Promise<void> {
   const identity = state.profile?.serverIdentity;
   const authorizationRevision = state.profile?.authorizationRevision;
@@ -96,7 +118,7 @@ async function revokeCredentialGeneration(
     // Workspace storage failure must never suppress remote-first revocation.
     // The lifecycle publishes `revoking` synchronously and replaces all live
     // gateways before its first remote await.
-    await mobileLifecycle.revoke();
+    await revoke();
   } catch (error) {
     lifecycleError = error;
   }
@@ -114,25 +136,32 @@ async function revokeCredentialGeneration(
 /** Production composition root. Mock gateways must be passed explicitly in tests. */
 export function ProductionMobileProvider({ children }: PropsWithChildren) {
   const [state, setState] = useState<MobileLifecycleState>(() =>
-    mobileLifecycle.snapshot(),
+    mobileFleetLifecycle.selectedState(),
   );
+  const [fleet, setFleet] = useState(() => mobileFleetLifecycle.snapshot());
   const [generation, setGeneration] =
     useState<GatewayGeneration>(INITIAL_GATEWAY);
 
   useEffect(() => {
-    const unsubscribe = mobileLifecycle.subscribe((next) => {
+    const unsubscribe = mobileFleetLifecycle.subscribe((nextFleet) => {
+      setFleet(nextFleet);
+      const next = mobileFleetLifecycle.selectedState();
       setState(next);
+      const readOnlyWorkspaceServers =
+        mobileFleetLifecycle.readOnlyWorkspaceGateways();
+      const fleetKey = fleetGenerationKey(nextFleet);
       if (next.phase === 'ready' && next.profile !== null) {
         const scope = storageScope(next.profile);
-        const key = `ready:${scope}:c${next.profile.credentialRevision}`;
+        const key = `ready:${scope}:c${next.profile.credentialRevision}:f${nextFleet.authorityGeneration}:${fleetKey}`;
         setGeneration((current) =>
           current.key === key
             ? current
             : {
                 key,
                 scope,
-                gateway: mobileLifecycle.createGateway(),
-                workspaceGateway: mobileLifecycle.createWorkspaceGateway(),
+                gateway: mobileFleetLifecycle.createGateway(),
+                workspaceGateway: mobileFleetLifecycle.createWorkspaceGateway(),
+                readOnlyWorkspaceServers,
               },
         );
       } else if (
@@ -150,6 +179,7 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
           scope,
           gateway: unavailableGateway(reason),
           workspaceGateway: null,
+          readOnlyWorkspaceServers,
         });
       } else if (
         next.phase === 'loading' ||
@@ -165,16 +195,19 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
           scope,
           gateway: unavailableGateway(`mobile_credential_${next.phase}`),
           workspaceGateway: null,
+          readOnlyWorkspaceServers,
         });
       }
     });
-    void mobileLifecycle.hydrate();
+    void mobileFleetLifecycle.hydrate();
     const appState = AppState.addEventListener('change', (next) => {
-      if (next === 'active') mobileLifecycle.validateCurrentAuthorization();
+      if (next === 'active')
+        mobileFleetLifecycle.validateCurrentAuthorizations();
     });
     return () => {
       appState.remove();
       unsubscribe();
+      mobileFleetLifecycle.invalidateAllGateways();
     };
   }, []);
 
@@ -182,14 +215,32 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
     <LifecycleContext.Provider
       value={{
         state,
+        servers: fleet.servers,
+        selectedMutationSlotId: fleet.selectedMutationSlotId,
         refreshCredential: async () => {
-          await mobileLifecycle.refresh();
+          await mobileFleetLifecycle.refresh();
+        },
+        refreshServer: async (slotId) => {
+          await mobileFleetLifecycle.refresh(slotId);
         },
         revokeCredential: async () => {
-          await revokeCredentialGeneration(state);
+          await revokeCredentialGeneration(state, () =>
+            mobileFleetLifecycle.revoke(),
+          );
+        },
+        revokeServer: async (slotId) => {
+          const server = fleet.servers.find((entry) => entry.slotId === slotId);
+          if (server === undefined)
+            throw new Error('credential_registry_slot_missing');
+          await revokeCredentialGeneration(server.state, () =>
+            mobileFleetLifecycle.revoke(slotId),
+          );
+        },
+        selectServer: async (slotId) => {
+          await mobileFleetLifecycle.selectMutationSlot(slotId);
         },
         pair: async (offer) => {
-          await mobileLifecycle.pair(offer);
+          await mobileFleetLifecycle.pair(offer);
         },
         workspaceGateway: generation.workspaceGateway,
       }}
@@ -204,6 +255,11 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
           gateway={generation.workspaceGateway}
           generationKey={generation.key}
           profile={state.profile}
+          readOnlyServers={generation.readOnlyWorkspaceServers}
+          selectMutationServer={async (slotId) => {
+            if (fleet.selectedMutationSlotId === slotId) return;
+            await mobileFleetLifecycle.selectMutationSlot(slotId);
+          }}
         >
           {children}
         </WorkspaceProvider>

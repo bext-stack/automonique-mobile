@@ -2,6 +2,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { useState } from 'react';
 import { AppState, Pressable, Text } from 'react-native';
 
 import {
@@ -79,9 +80,12 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 function Probe() {
   const {
     catalog,
+    details,
     notificationPermission,
     requestReviewNotificationPermission,
     refresh,
+    selectServer,
+    serverStatuses,
     status,
   } = useWorkspaces();
   return (
@@ -91,6 +95,20 @@ function Probe() {
         {catalog.servers[0]?.authorization ?? 'none'}
       </Text>
       <Text testID="notification-permission">{notificationPermission}</Text>
+      <Text testID="fanout-probe">
+        {
+          Object.values(serverStatuses).filter(({ phase }) => phase === 'live')
+            .length
+        }
+        :{details.length}
+      </Text>
+      <Text testID="selected-server">{catalog.selectedServerIdentity}</Text>
+      {catalog.servers[1] !== undefined && (
+        <Pressable
+          accessibilityLabel="Select second workspace server"
+          onPress={() => void selectServer(catalog.servers[1]!.serverIdentity)}
+        />
+      )}
       <Pressable
         accessibilityLabel="Request review notifications"
         onPress={() => void requestReviewNotificationPermission()}
@@ -98,6 +116,89 @@ function Probe() {
       <Pressable
         accessibilityLabel="Refresh workspace catalog"
         onPress={() => void refresh()}
+      />
+    </>
+  );
+}
+
+function MutationProbe() {
+  const {
+    pendingWorkspaceMutationReceipts,
+    prepareWorkspaceMutation,
+    workspaceMutationBusy,
+  } = useWorkspaces();
+  const request = {
+    projectId: 'project-mobile',
+    workspaceId: 'workspace-34',
+    workspaceRevision: '12',
+    externalWorkItem: {
+      provider: 'GitHub',
+      key: '#34',
+      title: 'Add a read-mostly workspace companion',
+    },
+  } as const;
+  return (
+    <>
+      <Probe />
+      <Text testID="mutation-state">
+        {workspaceMutationBusy ? 'busy' : 'idle'}:
+        {pendingWorkspaceMutationReceipts.length}
+      </Text>
+      <Pressable
+        accessibilityLabel="Prepare exact create attempt"
+        onPress={() =>
+          void prepareWorkspaceMutation({
+            ...request,
+            kind: 'create_attempt',
+            idempotencyKey: 'mobile-create-34',
+          }).catch(() => undefined)
+        }
+      />
+      <Pressable
+        accessibilityLabel="Prepare exact resume attempt"
+        onPress={() =>
+          void prepareWorkspaceMutation({
+            ...request,
+            kind: 'resume_attempt',
+            targetId: 'attempt-34-a',
+            idempotencyKey: 'mobile-resume-34',
+          }).catch(() => undefined)
+        }
+      />
+    </>
+  );
+}
+
+function MutationResultProbe() {
+  const { confirmWorkspaceMutation, reconcileWorkspaceMutation } =
+    useWorkspaces();
+  const [result, setResult] = useState('none');
+  return (
+    <>
+      <Probe />
+      <Text testID="authoritative-mutation-result">{result}</Text>
+      <Pressable
+        accessibilityLabel="Confirm prepared workspace mutation"
+        onPress={() =>
+          void confirmWorkspaceMutation(
+            { project: 'project-mobile' } as never,
+            'grant',
+          ).then((value) =>
+            setResult(
+              value.kind === 'submitted'
+                ? `${value.kind}:${value.receipt.outcome}`
+                : value.kind,
+            ),
+          )
+        }
+      />
+      <Pressable
+        accessibilityLabel="Reconcile durable workspace mutation"
+        onPress={() =>
+          void reconcileWorkspaceMutation('mobile-pending-34').then((value) =>
+            setResult(`${value.kind}:${value.receipt.outcome}`),
+          )
+        }
       />
     </>
   );
@@ -140,19 +241,511 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-test('cold cache remains visible but read-only when no current delegated gateway exists', async () => {
+test.each(['expired', 'recovery-required'])(
+  '%s credentials preserve cold cache navigation without a gateway',
+  async (generationKey) => {
+    const view = await render(
+      <WorkspaceProvider
+        gateway={null}
+        generationKey={generationKey}
+        profile={null}
+        readOnlyServers={[]}
+      >
+        <Probe />
+      </WorkspaceProvider>,
+    );
+    await waitFor(() =>
+      expect(view.getByText('unavailable:1:cached')).toBeTruthy(),
+    );
+  },
+);
+
+function catalogBuild(
+  server: (typeof workspaceCompanionFixture.servers)[number],
+) {
+  return {
+    profile: { ...server, authorization: 'active' as const },
+    details: server.workspaces.map((workspace) => ({
+      serverIdentity: server.serverIdentity,
+      workspaceId: workspace.id,
+      workspaceRevision: workspace.revision,
+      lineageAvailable: false,
+      lineage: null,
+      review: null,
+    })),
+    coverage: 'complete' as const,
+    omittedDetailCount: 0,
+    omittedProjectCount: 0,
+    omittedHostCount: 0,
+    omittedWorkspaceCount: 0,
+    omittedSessionCount: 0,
+    failedProjectCount: 0,
+    failedDetailCount: 0,
+    successfulProjectIds: server.projects.map((project) => project.id),
+    failedProjectIds: [],
+  };
+}
+
+test('two ready Platform v2 slots fan out independently and select the exact slot', async () => {
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  const first = workspaceCompanionFixture.servers[0]!;
+  const secondIdentity =
+    `sha256:${'b'.repeat(64)}` as typeof first.serverIdentity;
+  const second = {
+    ...first,
+    serverIdentity: secondIdentity,
+    origin: 'https://second.example.test',
+    tenantId: 'tenant-second',
+    label: 'Second server',
+    authorizationRevision: '9' as typeof first.authorizationRevision,
+    workspaces: first.workspaces.map((workspace) => ({
+      ...workspace,
+      id: `${workspace.id}-second`,
+      title: `${workspace.title} second`,
+    })),
+  };
+  mockBuildWorkspaceServerCatalog.mockImplementation(
+    ({ origin }: { readonly origin: string }) =>
+      Promise.resolve(catalogBuild(origin === second.origin ? second : first)),
+  );
+  const selectMutationServer = jest.fn().mockResolvedValue(undefined);
+  const readOnlyServers = [
+    {
+      slotId: 'slot-first',
+      profile: { origin: first.origin },
+      gateway: {
+        authorizationScope: { serverIdentity: first.serverIdentity },
+      },
+    },
+    {
+      slotId: 'slot-second',
+      profile: { origin: second.origin },
+      gateway: {
+        authorizationScope: { serverIdentity: second.serverIdentity },
+      },
+    },
+  ] as never;
+  const selectedGateway = {
+    authorizationScope: {
+      serverIdentity: second.serverIdentity,
+      actions: [],
+    },
+    reviewEffectKinds: [],
+  } as never;
+
+  const view = await render(
+    <WorkspaceProvider
+      gateway={selectedGateway}
+      generationKey="two-ready-slots"
+      profile={{ origin: second.origin } as never}
+      readOnlyServers={readOnlyServers}
+      selectMutationServer={selectMutationServer}
+    >
+      <Probe />
+    </WorkspaceProvider>,
+  );
+
+  await waitFor(() => expect(view.getByText('live:2:active')).toBeTruthy());
+  expect(view.getByTestId('fanout-probe')).toHaveTextContent('2:2');
+  expect(view.getByTestId('selected-server')).toHaveTextContent(secondIdentity);
+  expect(mockBuildWorkspaceServerCatalog).toHaveBeenCalledTimes(2);
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Select second workspace server'));
+    await Promise.resolve();
+  });
+  expect(selectMutationServer).toHaveBeenCalledWith('slot-second');
+  const persisted = jest.mocked(AsyncStorage.setItem).mock.calls.at(-1)?.[1];
+  expect(persisted).toEqual(expect.any(String));
+  const decoded = decodeWorkspaceCompanionCache(persisted!);
+  expect(decoded.catalog.servers).toHaveLength(2);
+  expect(
+    decoded.catalog.servers.map(({ authorization }) => authorization),
+  ).toEqual(['cached', 'cached']);
+});
+
+test('a slot generation switch aborts an in-flight fan-out before publishing it', async () => {
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  const server = workspaceCompanionFixture.servers[0]!;
+  let oldAborted = false;
+  mockBuildWorkspaceServerCatalog.mockImplementationOnce(
+    ({ signal }: { readonly signal: AbortSignal }) =>
+      new Promise((_, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            oldAborted = signal.aborted;
+            reject(new Error('old_slot_aborted'));
+          },
+          { once: true },
+        );
+      }),
+  );
+  const firstRead = [
+    {
+      slotId: 'slot-old',
+      profile: { origin: server.origin },
+      gateway: {
+        authorizationScope: { serverIdentity: server.serverIdentity },
+      },
+    },
+  ] as never;
   const view = await render(
     <WorkspaceProvider
       gateway={null}
-      generationKey="refresh-required"
+      generationKey="slot-old"
       profile={null}
+      readOnlyServers={firstRead}
     >
       <Probe />
     </WorkspaceProvider>,
   );
   await waitFor(() =>
-    expect(view.getByText('unavailable:1:cached')).toBeTruthy(),
+    expect(mockBuildWorkspaceServerCatalog).toHaveBeenCalledTimes(1),
   );
+  mockBuildWorkspaceServerCatalog.mockResolvedValueOnce(catalogBuild(server));
+  const nextRead = [
+    {
+      slotId: 'slot-new',
+      profile: { origin: server.origin },
+      gateway: {
+        authorizationScope: { serverIdentity: server.serverIdentity },
+      },
+    },
+  ] as never;
+  await act(async () => {
+    view.rerender(
+      <WorkspaceProvider
+        gateway={null}
+        generationKey="slot-new"
+        profile={null}
+        readOnlyServers={nextRead}
+      >
+        <Probe />
+      </WorkspaceProvider>,
+    );
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(oldAborted).toBe(true));
+  await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
+});
+
+test('selected full gateway prepares exact create and resume intents while pending receipts stay lookup-only', async () => {
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  const server = workspaceCompanionFixture.servers[0]!;
+  mockBuildWorkspaceServerCatalog.mockResolvedValue(catalogBuild(server));
+  const prepareMutation = jest
+    .fn()
+    .mockResolvedValue({ project: 'project-mobile' });
+  const pendingHandle = {
+    project: 'project-mobile',
+    idempotency_key: 'mobile-pending-34',
+  };
+  const pendingMutationReceipts = jest.fn().mockResolvedValue([pendingHandle]);
+  const reconcileMutation = jest.fn();
+  const selectedGateway = {
+    authorizationScope: {
+      serverIdentity: server.serverIdentity,
+      tenantId: server.tenantId,
+      authorizationRevision: 8n,
+      principalGeneration: 3n,
+      delegationId: 'delegation-mobile',
+      expiresAtMs: BigInt(Date.now() + 60_000),
+      projectRoots: ['project-mobile'],
+      actions: ['prepare_mutation', 'get_mutation_receipt'],
+    },
+    reviewEffectKinds: [],
+    negotiate: jest.fn(),
+    loadProject: jest.fn(),
+    loadLineage: jest.fn(),
+    loadReview: jest.fn(),
+    prepareMutation,
+    pendingMutationReceipts,
+    reconcileMutation,
+  };
+  const view = await render(
+    <WorkspaceProvider
+      gateway={selectedGateway as never}
+      generationKey="mutation-selected"
+      profile={
+        {
+          origin: server.origin,
+          serverIdentity: server.serverIdentity,
+        } as never
+      }
+    >
+      <MutationProbe />
+    </WorkspaceProvider>,
+  );
+  await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
+  expect(view.getByTestId('mutation-state')).toHaveTextContent('idle:1');
+  expect(reconcileMutation).not.toHaveBeenCalled();
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Prepare exact create attempt'));
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(prepareMutation).toHaveBeenCalledTimes(1));
+  expect(prepareMutation).toHaveBeenLastCalledWith(
+    'project-mobile',
+    expect.objectContaining({
+      kind: 'create_attempt_workspace',
+      label: 'GitHub #34',
+      requested_authority: {
+        credentials: [],
+        filesystem: [],
+        models: [],
+        network: [],
+        providers: [],
+        tools: [],
+      },
+      user_workspace: {
+        identity: { kind: 'user_workspace', id: 'workspace-34' },
+        revision: 12n,
+      },
+    }),
+    'mobile-create-34',
+    expect.any(AbortSignal),
+  );
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Prepare exact resume attempt'));
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(prepareMutation).toHaveBeenCalledTimes(2));
+  expect(prepareMutation).toHaveBeenLastCalledWith(
+    'project-mobile',
+    {
+      kind: 'resume_attempt_workspace',
+      requested_authority: {
+        credentials: [],
+        filesystem: [],
+        models: [],
+        network: [],
+        providers: [],
+        tools: [],
+      },
+      target: {
+        identity: { kind: 'attempt_workspace', id: 'attempt-34-a' },
+        revision: 4n,
+      },
+    },
+    'mobile-resume-34',
+    expect.any(AbortSignal),
+  );
+  expect(reconcileMutation).not.toHaveBeenCalled();
+});
+
+test('a selected slot generation switch aborts an in-flight workspace mutation', async () => {
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  const server = workspaceCompanionFixture.servers[0]!;
+  mockBuildWorkspaceServerCatalog.mockResolvedValue(catalogBuild(server));
+  let mutationSignal: AbortSignal | null = null;
+  const oldGateway = {
+    authorizationScope: {
+      serverIdentity: server.serverIdentity,
+      tenantId: server.tenantId,
+      authorizationRevision: 8n,
+      principalGeneration: 3n,
+      delegationId: 'delegation-old',
+      expiresAtMs: BigInt(Date.now() + 60_000),
+      projectRoots: ['project-mobile'],
+      actions: ['prepare_mutation'],
+    },
+    reviewEffectKinds: [],
+    negotiate: jest.fn(),
+    loadProject: jest.fn(),
+    loadLineage: jest.fn(),
+    loadReview: jest.fn(),
+    prepareMutation: jest.fn(
+      (_project, _intent, _key, signal: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          mutationSignal = signal;
+          signal.addEventListener(
+            'abort',
+            () => reject(new Error('old_mutation_aborted')),
+            { once: true },
+          );
+        }),
+    ),
+  };
+  const profile = {
+    origin: server.origin,
+    serverIdentity: server.serverIdentity,
+  } as never;
+  const view = await render(
+    <WorkspaceProvider
+      gateway={oldGateway as never}
+      generationKey="mutation-old"
+      profile={profile}
+    >
+      <MutationProbe />
+    </WorkspaceProvider>,
+  );
+  await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
+  fireEvent.press(view.getByLabelText('Prepare exact create attempt'));
+  await waitFor(() => expect(mutationSignal).not.toBeNull());
+  await act(async () => {
+    view.rerender(
+      <WorkspaceProvider
+        gateway={null}
+        generationKey="mutation-new"
+        profile={null}
+        readOnlyServers={[]}
+      >
+        <MutationProbe />
+      </WorkspaceProvider>,
+    );
+    await Promise.resolve();
+  });
+  expect(mutationSignal!.aborted).toBe(true);
+  await waitFor(() =>
+    expect(view.getByTestId('mutation-state')).toHaveTextContent('idle:0'),
+  );
+});
+
+test.each([
+  [
+    'submitted',
+    {
+      kind: 'submitted',
+      idempotencyKey: 'mobile-submit-34',
+      receipt: { outcome: 'conflict' },
+      projectionRefreshRequired: true,
+    },
+    'submitted:conflict',
+  ],
+  [
+    'ambiguous',
+    {
+      kind: 'ambiguous',
+      idempotencyKey: 'mobile-submit-34',
+      projectionRefreshRequired: true,
+    },
+    'ambiguous',
+  ],
+] as const)(
+  'failed projection refresh cannot replace an authoritative %s result',
+  async (_kind, authoritativeResult, renderedResult) => {
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    const server = workspaceCompanionFixture.servers[0]!;
+    mockBuildWorkspaceServerCatalog.mockResolvedValue(catalogBuild(server));
+    const confirmMutation = jest.fn().mockResolvedValue(authoritativeResult);
+    const gateway = {
+      authorizationScope: {
+        serverIdentity: server.serverIdentity,
+        tenantId: server.tenantId,
+        authorizationRevision: 8n,
+        principalGeneration: 3n,
+        delegationId: 'delegation-submit',
+        expiresAtMs: BigInt(Date.now() + 60_000),
+        projectRoots: ['project-mobile'],
+        actions: [],
+      },
+      reviewEffectKinds: [],
+      negotiate: jest.fn(),
+      loadProject: jest.fn(),
+      loadLineage: jest.fn(),
+      loadReview: jest.fn(),
+      confirmMutation,
+    };
+    const view = await render(
+      <WorkspaceProvider
+        gateway={gateway as never}
+        generationKey="authoritative-submit"
+        profile={
+          {
+            origin: server.origin,
+            serverIdentity: server.serverIdentity,
+          } as never
+        }
+      >
+        <MutationResultProbe />
+      </WorkspaceProvider>,
+    );
+    await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
+    mockBuildWorkspaceServerCatalog.mockRejectedValue(
+      new Error('projection_refresh_failed'),
+    );
+    await act(async () => {
+      fireEvent.press(
+        view.getByLabelText('Confirm prepared workspace mutation'),
+      );
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(
+        view.getByTestId('authoritative-mutation-result'),
+      ).toHaveTextContent(renderedResult),
+    );
+    expect(confirmMutation).toHaveBeenCalledTimes(1);
+  },
+);
+
+test('failed projection refresh cannot replace an authoritative settled receipt', async () => {
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  const server = workspaceCompanionFixture.servers[0]!;
+  mockBuildWorkspaceServerCatalog.mockResolvedValue(catalogBuild(server));
+  const handle = {
+    project: 'project-mobile',
+    idempotency_key: 'mobile-pending-34',
+  };
+  const pendingMutationReceipts = jest
+    .fn()
+    .mockResolvedValueOnce([handle])
+    .mockResolvedValue([]);
+  const reconcileMutation = jest.fn().mockResolvedValue({
+    kind: 'settled',
+    handle,
+    receipt: { outcome: 'completed' },
+    projectionRefreshRequired: true,
+  });
+  const gateway = {
+    authorizationScope: {
+      serverIdentity: server.serverIdentity,
+      tenantId: server.tenantId,
+      authorizationRevision: 8n,
+      principalGeneration: 3n,
+      delegationId: 'delegation-reconcile',
+      expiresAtMs: BigInt(Date.now() + 60_000),
+      projectRoots: ['project-mobile'],
+      actions: ['get_mutation_receipt'],
+    },
+    reviewEffectKinds: [],
+    negotiate: jest.fn(),
+    loadProject: jest.fn(),
+    loadLineage: jest.fn(),
+    loadReview: jest.fn(),
+    pendingMutationReceipts,
+    reconcileMutation,
+  };
+  const view = await render(
+    <WorkspaceProvider
+      gateway={gateway as never}
+      generationKey="authoritative-reconcile"
+      profile={
+        {
+          origin: server.origin,
+          serverIdentity: server.serverIdentity,
+        } as never
+      }
+    >
+      <MutationResultProbe />
+    </WorkspaceProvider>,
+  );
+  await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
+  mockBuildWorkspaceServerCatalog.mockRejectedValue(
+    new Error('projection_refresh_failed'),
+  );
+  await act(async () => {
+    fireEvent.press(
+      view.getByLabelText('Reconcile durable workspace mutation'),
+    );
+    await Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(view.getByTestId('authoritative-mutation-result')).toHaveTextContent(
+      'settled:completed',
+    ),
+  );
+  expect(reconcileMutation).toHaveBeenCalledTimes(1);
 });
 
 test('credential revocation durably removes only the exact server scope', async () => {

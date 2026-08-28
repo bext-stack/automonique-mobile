@@ -660,6 +660,78 @@ test('an old gateway cannot combine its descriptor with a rotated token', async 
   });
 });
 
+test('fleet selection invalidation aborts an old v1 gateway without deleting its slot', async () => {
+  const active = connection(issued(1n, 'c', NOW + 900_000));
+  const platformFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+  const credentialStore = {
+    load: jest.fn(async () => ({
+      kind: 'active' as const,
+      connection: active,
+    })),
+    saveIssued: jest.fn(),
+    saveWorkspaceAuthorization: jest.fn(),
+    revoke: jest.fn(),
+  };
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+    credentialStore,
+  });
+  await lifecycle.hydrate();
+  platformFetch.mockClear();
+  const oldGateway = lifecycle.createGateway();
+
+  expect(lifecycle.invalidateGateways()).toMatchObject({ phase: 'ready' });
+  await expect(oldGateway.bootstrap()).rejects.toThrow(
+    'gateway_generation_replaced',
+  );
+  expect(platformFetch).not.toHaveBeenCalled();
+  expect(credentialStore.revoke).not.toHaveBeenCalled();
+  expect(loadStored).not.toHaveBeenCalled();
+});
+
+test('fleet selection aborts an already-started v1 read before late admission', async () => {
+  const active = connection(issued(1n, 'c', NOW + 900_000));
+  let fetchStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    fetchStarted = resolve;
+  });
+  const platformFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+  const credentialStore = {
+    load: jest.fn(async () => ({
+      kind: 'active' as const,
+      connection: active,
+    })),
+    saveIssued: jest.fn(),
+    saveWorkspaceAuthorization: jest.fn(),
+    revoke: jest.fn(),
+  };
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    fetcher: platformFetch,
+    credentialStore,
+  });
+  await lifecycle.hydrate();
+  platformFetch.mockImplementation(
+    async (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        fetchStarted();
+        init?.signal?.addEventListener(
+          'abort',
+          () => reject(new Error('fetch_aborted')),
+          { once: true },
+        );
+      }),
+  );
+  const oldGateway = lifecycle.createGateway();
+  const pending = oldGateway.bootstrap();
+  await started;
+
+  lifecycle.invalidateGateways();
+  await expect(pending).rejects.toThrow('gateway_generation_replaced');
+  expect(credentialStore.revoke).not.toHaveBeenCalled();
+});
+
 test('replacement intent blocks new token readers until queued hydration settles', async () => {
   const expired = connection(issued(1n, 'c', NOW));
   const rotatedIssued = issued(2n, 'd', NOW + 900_000);

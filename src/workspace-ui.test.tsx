@@ -17,6 +17,7 @@ const mockUseWorkspaces = jest.fn();
 const mockUseMobile = jest.fn();
 const mockUseMobileLifecycle = jest.fn();
 const mockRedirect = jest.fn();
+const mockRouterPush = jest.fn();
 
 jest.mock('expo-router', () => ({
   Link: ({ children }: { readonly children: ReactNode }) => children,
@@ -25,6 +26,7 @@ jest.mock('expo-router', () => ({
     return null;
   },
   useLocalSearchParams: () => mockRouteParams,
+  useRouter: () => ({ push: mockRouterPush }),
 }));
 jest.mock('@/providers/workspace-provider', () => ({
   useWorkspaces: () => mockUseWorkspaces(),
@@ -182,7 +184,26 @@ function workspaceValue() {
       failedProjectCount: 0,
       failedDetailCount: 1,
     },
+    serverStatuses: {
+      [server.serverIdentity]: {
+        phase: 'live',
+        coverage: 'partial',
+        message: 'Current inventory with bounded detail reads',
+        omittedDetailCount: 1,
+        omittedProjectCount: 0,
+        omittedHostCount: 0,
+        omittedWorkspaceCount: 0,
+        omittedSessionCount: 0,
+        failedProjectCount: 0,
+        failedDetailCount: 1,
+      },
+    },
     details: [detail],
+    workspaceMutationBusy: false,
+    pendingWorkspaceMutationReceipts: [],
+    prepareWorkspaceMutation: jest.fn(),
+    confirmWorkspaceMutation: jest.fn(),
+    reconcileWorkspaceMutation: jest.fn(),
     refresh: jest.fn(),
     selectServer: jest.fn(),
     findServer: (identity: string) =>
@@ -195,6 +216,55 @@ function workspaceValue() {
       identity === WORKSPACE_FIXTURE_IDENTITY && id === workspace.id
         ? detail
         : null,
+  };
+}
+
+function mutationLifecycle() {
+  const server = workspaceCompanionFixture.servers[0]!;
+  return {
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: server.serverIdentity },
+    },
+    workspaceGateway: {
+      authorizationScope: {
+        serverIdentity: server.serverIdentity,
+        tenantId: server.tenantId,
+        authorizationRevision: 8n,
+        principalGeneration: 3n,
+        delegationId: 'delegation-mobile',
+        expiresAtMs: BigInt(Date.now() + 60_000),
+        projectRoots: ['project-mobile'],
+        actions: ['prepare_mutation', 'get_mutation_receipt'],
+      },
+      reviewEffectKinds: [],
+    },
+  };
+}
+
+function preparedMutation() {
+  const emptyAuthority = {
+    credentials: [],
+    filesystem: [],
+    models: [],
+    network: [],
+    providers: [],
+    tools: [],
+  };
+  return {
+    project: 'project-mobile',
+    previewDigest: `sha256:${'1'.repeat(64)}`,
+    preview: {
+      proposal: {
+        intent: { kind: 'create_attempt_workspace' },
+      },
+      inherited_authority: emptyAuthority,
+      effective_authority: emptyAuthority,
+      resulting: { label: 'GitHub #34', lifecycle: 'planned' },
+      preview: { revision: 13n },
+      approval: 'required',
+      expires_at_ms: BigInt(Date.now() + 60_000),
+    },
   };
 }
 
@@ -277,7 +347,10 @@ test('review route shows bounded sanitized hunks and keeps unsupported mutations
       profile: { serverIdentity: WORKSPACE_FIXTURE_IDENTITY },
     },
     workspaceGateway: {
-      authorizationScope: { actions: ['get_review'] },
+      authorizationScope: {
+        serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+        actions: ['get_review'],
+      },
       reviewEffectKinds: [],
     },
   });
@@ -303,6 +376,59 @@ test('review route shows bounded sanitized hunks and keeps unsupported mutations
     ).toBeTruthy(),
   );
   expect(view.getByText(/local drafts are not sent to an agent/)).toBeTruthy();
+});
+
+test('workspace review refuses a full gateway selected for another server', async () => {
+  const base = workspaceValue();
+  const server = base.catalog.servers[0]!;
+  const workspace = server.workspaces[0]!;
+  const withReview = {
+    ...workspace,
+    navigation: [
+      ...workspace.navigation,
+      { destination: 'review', revision: workspace.revision },
+    ],
+  };
+  const executeReviewAction = jest.fn();
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: {
+      ...base.catalog,
+      servers: [{ ...server, workspaces: [withReview] }],
+    },
+    executeReviewAction,
+    findWorkspace: () => withReview,
+    selectServer: jest.fn().mockResolvedValue(undefined),
+  });
+  mockUseMobileLifecycle.mockReturnValue({
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: `sha256:${'f'.repeat(64)}` },
+    },
+    workspaceGateway: {
+      authorizationScope: {
+        serverIdentity: `sha256:${'f'.repeat(64)}`,
+        actions: ['get_review', 'execute_review_action'],
+      },
+      reviewEffectKinds: ['add_comment', 'approve_review'],
+    },
+  });
+  mockRouteParams = {
+    server: server.serverIdentity,
+    workspace: workspace.id,
+    revision: workspace.revision,
+    destination: 'review',
+    review_revision: detail.review.revision,
+  };
+
+  const view = await render(<WorkspaceDetailScreen />);
+  expect(
+    view.getByText(
+      'This destination is unavailable for the exact current workspace grant and revision.',
+    ),
+  ).toBeTruthy();
+  expect(view.queryByLabelText('Approve review')).toBeNull();
+  expect(executeReviewAction).not.toHaveBeenCalled();
 });
 
 test('review approval requires an exact preview before one revision-bound mutation', async () => {
@@ -367,6 +493,7 @@ test('review approval requires an exact preview before one revision-bound mutati
     },
     workspaceGateway: {
       authorizationScope: {
+        serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
         actions: ['get_review', 'execute_review_action'],
       },
       reviewEffectKinds: ['add_comment', 'approve_review'],
@@ -482,6 +609,7 @@ test('a completed comment with failed local cleanup can only retry local cleanup
     },
     workspaceGateway: {
       authorizationScope: {
+        serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
         actions: ['get_review', 'execute_review_action'],
       },
       reviewEffectKinds: ['add_comment', 'approve_review'],
@@ -563,7 +691,6 @@ test('a completed comment with failed local cleanup can only retry local cleanup
   expect(executeReviewAction).toHaveBeenCalledTimes(1);
   expect(reconcileReviewAction).not.toHaveBeenCalled();
 });
-
 test('discovery keeps external and orchestration status separate and labels partial coverage', async () => {
   const view = await render(<WorkspacesScreen />);
   expect(view.getByText('Orchestration: review')).toBeTruthy();
@@ -574,6 +701,86 @@ test('discovery keeps external and orchestration status separate and labels part
       'Open Read-mostly workspace companion on Paris builder',
     ),
   ).toBeTruthy();
+});
+
+test('search spans servers and waits for exact slot selection before navigation', async () => {
+  const base = workspaceValue();
+  const first = base.catalog.servers[0]!;
+  const secondIdentity =
+    `sha256:${'c'.repeat(64)}` as typeof first.serverIdentity;
+  const secondWorkspace = {
+    ...first.workspaces[0]!,
+    id: 'workspace-second',
+    title: 'Needle on second server',
+  };
+  const second = {
+    ...first,
+    serverIdentity: secondIdentity,
+    origin: 'https://second.example.test',
+    tenantId: 'tenant-second',
+    label: 'Second server',
+    workspaces: [secondWorkspace],
+  };
+  const selectServer = jest.fn().mockResolvedValue(undefined);
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: { ...base.catalog, servers: [first, second] },
+    selectServer,
+  });
+  const view = await render(<WorkspacesScreen />);
+  expect(view.queryByText(secondWorkspace.title)).toBeNull();
+  fireEvent.changeText(
+    view.getByLabelText(
+      'Search projects, hosts, workspaces, and external tasks',
+    ),
+    'Needle',
+  );
+  const result = await view.findByLabelText(
+    `Open ${secondWorkspace.title} on ${first.hosts[0]!.label}`,
+  );
+  await act(async () => {
+    fireEvent.press(result);
+    await Promise.resolve();
+  });
+  expect(selectServer).toHaveBeenCalledWith(secondIdentity);
+  await waitFor(() =>
+    expect(mockRouterPush).toHaveBeenCalledWith({
+      pathname: '/workspace/[server]/[workspace]',
+      params: {
+        server: secondIdentity,
+        workspace: secondWorkspace.id,
+        revision: secondWorkspace.revision,
+      },
+    }),
+  );
+  expect(selectServer.mock.invocationCallOrder[0]).toBeLessThan(
+    mockRouterPush.mock.invocationCallOrder[0]!,
+  );
+});
+
+test('an exact live workspace deep link hands retained-session authority to its slot', async () => {
+  const base = workspaceValue();
+  const server = base.catalog.servers[0]!;
+  const workspace = server.workspaces[0]!;
+  const selectServer = jest.fn().mockResolvedValue(undefined);
+  mockUseWorkspaces.mockReturnValue({ ...base, selectServer });
+  mockUseMobileLifecycle.mockReturnValue({
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: `sha256:${'d'.repeat(64)}` },
+    },
+    workspaceGateway: null,
+  });
+  mockRouteParams = {
+    server: server.serverIdentity,
+    workspace: workspace.id,
+    revision: workspace.revision,
+  };
+
+  await render(<WorkspaceDetailScreen />);
+  await waitFor(() =>
+    expect(selectServer).toHaveBeenCalledWith(server.serverIdentity),
+  );
 });
 
 test('workspace detail exposes exact retained chat while mutations and terminal stay disabled', async () => {
@@ -591,6 +798,153 @@ test('workspace detail exposes exact retained chat while mutations and terminal 
   expect(view.getByLabelText(/Terminal, unavailable/)).toBeDisabled();
   expect(view.getByLabelText(/Create from task, unavailable/)).toBeDisabled();
   expect(view.getByText(/No offline mutation is queued/)).toBeTruthy();
+});
+
+test('create from task shows exact selected authority before one explicit confirmation', async () => {
+  const base = workspaceValue();
+  const prepareWorkspaceMutation = jest
+    .fn()
+    .mockResolvedValue(preparedMutation());
+  const confirmWorkspaceMutation = jest.fn().mockImplementation((prepared) =>
+    Promise.resolve({
+      kind: 'ambiguous',
+      idempotencyKey: 'mobile-create-34',
+      projectionRefreshRequired: true,
+      prepared,
+    }),
+  );
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    prepareWorkspaceMutation,
+    confirmWorkspaceMutation,
+  });
+  mockUseMobileLifecycle.mockReturnValue(mutationLifecycle());
+  mockRouteParams = {
+    server: WORKSPACE_FIXTURE_IDENTITY,
+    workspace: 'workspace-34',
+    revision: '12',
+  };
+  const view = await render(<WorkspaceDetailScreen />);
+  await waitFor(() =>
+    expect(
+      view.getByDisplayValue(
+        'GitHub #34: Add a read-mostly workspace companion',
+      ),
+    ).toBeTruthy(),
+  );
+  await act(async () => {
+    fireEvent.press(
+      view.getByLabelText('Create attempt from exact external task'),
+    );
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(prepareWorkspaceMutation).toHaveBeenCalled());
+  expect(prepareWorkspaceMutation).toHaveBeenCalledWith({
+    kind: 'create_attempt',
+    projectId: 'project-mobile',
+    workspaceId: 'workspace-34',
+    workspaceRevision: '12',
+    externalWorkItem: {
+      provider: 'GitHub',
+      key: '#34',
+      title: 'Add a read-mostly workspace companion',
+    },
+    idempotencyKey: expect.stringMatching(/^mobile-workspace-/u),
+  });
+  expect(confirmWorkspaceMutation).not.toHaveBeenCalled();
+  expect(view.getByText(`Server · ${WORKSPACE_FIXTURE_IDENTITY}`)).toBeTruthy();
+  expect(view.getByText('Project · project-mobile')).toBeTruthy();
+  expect(view.getByText('Workspace · workspace-34 revision 12')).toBeTruthy();
+  expect(
+    view.getByText(
+      'External task · GitHub / #34 · Add a read-mostly workspace companion',
+    ),
+  ).toBeTruthy();
+  expect(view.getByText('Preview revision · 13')).toBeTruthy();
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Confirm exact workspace change'));
+    await Promise.resolve();
+  });
+  expect(confirmWorkspaceMutation).toHaveBeenCalledTimes(1);
+  await waitFor(() =>
+    expect(view.getByText(/Only receipt lookup is available/)).toBeTruthy(),
+  );
+  expect(view.queryByLabelText('Confirm exact workspace change')).toBeNull();
+});
+
+test('a stale selected server disables every workspace submission without queuing', async () => {
+  const base = workspaceValue();
+  const prepareWorkspaceMutation = jest.fn();
+  const confirmWorkspaceMutation = jest.fn();
+  const reconcileWorkspaceMutation = jest.fn();
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    serverStatuses: {
+      [WORKSPACE_FIXTURE_IDENTITY]: {
+        ...base.serverStatuses[WORKSPACE_FIXTURE_IDENTITY],
+        phase: 'stale',
+      },
+    },
+    prepareWorkspaceMutation,
+    confirmWorkspaceMutation,
+    reconcileWorkspaceMutation,
+  });
+  mockUseMobileLifecycle.mockReturnValue(mutationLifecycle());
+  mockRouteParams = {
+    server: WORKSPACE_FIXTURE_IDENTITY,
+    workspace: 'workspace-34',
+    revision: '12',
+  };
+  const view = await render(<WorkspaceDetailScreen />);
+  expect(view.getByLabelText(/Create from task, unavailable/)).toBeDisabled();
+  expect(view.getByLabelText(/Resume workspace, unavailable/)).toBeDisabled();
+  expect(view.getByText(/No offline mutation is queued/)).toBeTruthy();
+  expect(prepareWorkspaceMutation).not.toHaveBeenCalled();
+  expect(confirmWorkspaceMutation).not.toHaveBeenCalled();
+  expect(reconcileWorkspaceMutation).not.toHaveBeenCalled();
+});
+
+test('reload exposes durable ambiguity as receipt lookup only and renders typed conflict', async () => {
+  const base = workspaceValue();
+  const prepareWorkspaceMutation = jest.fn();
+  const confirmWorkspaceMutation = jest.fn();
+  const reconcileWorkspaceMutation = jest.fn().mockResolvedValue({
+    kind: 'settled',
+    handle: { project: 'project-mobile', idempotency_key: 'mobile-pending-34' },
+    receipt: { outcome: 'conflict', resulting_revision: null },
+    projectionRefreshRequired: true,
+  });
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    pendingWorkspaceMutationReceipts: [
+      { project: 'project-mobile', idempotency_key: 'mobile-pending-34' },
+    ],
+    prepareWorkspaceMutation,
+    confirmWorkspaceMutation,
+    reconcileWorkspaceMutation,
+  });
+  mockUseMobileLifecycle.mockReturnValue(mutationLifecycle());
+  mockRouteParams = {
+    server: WORKSPACE_FIXTURE_IDENTITY,
+    workspace: 'workspace-34',
+    revision: '12',
+  };
+  const view = await render(<WorkspaceDetailScreen />);
+  const lookup = view.getByLabelText(
+    'Look up workspace change receipt mobile-pending-34',
+  );
+  expect(prepareWorkspaceMutation).not.toHaveBeenCalled();
+  expect(confirmWorkspaceMutation).not.toHaveBeenCalled();
+  await act(async () => {
+    fireEvent.press(lookup);
+    await Promise.resolve();
+  });
+  expect(reconcileWorkspaceMutation).toHaveBeenCalledWith('mobile-pending-34');
+  expect(prepareWorkspaceMutation).not.toHaveBeenCalled();
+  expect(confirmWorkspaceMutation).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(view.getByText('Workspace change conflict.')).toBeTruthy(),
+  );
 });
 
 test('draft loading is keyed so route changes cannot copy text across workspaces', async () => {

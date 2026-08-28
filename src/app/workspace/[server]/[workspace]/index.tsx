@@ -6,9 +6,9 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { Screen } from '@/components/screen';
+import { WorkspaceMutationConfirmation } from '@/components/workspace-mutation-confirmation';
 import {
   admitWorkspaceDeepLink,
-  workspaceMutationAvailability,
   type CompanionWorkspace,
   type ScopedServerProfile,
   type ServerIdentity,
@@ -30,6 +30,10 @@ import {
   type ReviewDraftScope,
 } from '@/core/workspace-storage';
 import type { WorkspaceCatalogDetail } from '@/core/workspace-v2-catalog';
+import type {
+  PreparedWorkspaceMutation,
+  WorkspaceMutationReconciliation,
+} from '@/core/workspace-v2-gateway';
 import { useMobile } from '@/providers/mobile-provider';
 import { useMobileLifecycle } from '@/providers/production-mobile-provider';
 import { useWorkspaces } from '@/providers/workspace-provider';
@@ -287,7 +291,8 @@ function ReviewControlSurface({
   const live =
     status.phase === 'live' &&
     server.authorization === 'active' &&
-    workspaceGateway !== null;
+    workspaceGateway?.authorizationScope.serverIdentity ===
+      server.serverIdentity;
   const availability = (
     action: Parameters<typeof reviewActionAvailability>[0]['action'],
   ) =>
@@ -892,15 +897,47 @@ function Section({
 function WorkspaceDraftEditor({
   server,
   workspace,
-  unavailableReason,
 }: {
   readonly server: ScopedServerProfile;
   readonly workspace: CompanionWorkspace;
-  readonly unavailableReason: string;
 }) {
   const palette = usePalette();
+  const {
+    catalog,
+    serverStatuses,
+    workspaceMutationBusy,
+    pendingWorkspaceMutationReceipts,
+    prepareWorkspaceMutation,
+    confirmWorkspaceMutation,
+    reconcileWorkspaceMutation,
+  } = useWorkspaces();
+  const { state: lifecycleState, workspaceGateway } = useMobileLifecycle();
   const [draft, setDraft] = useState('');
   const [loaded, setLoaded] = useState(false);
+  const [prepared, setPrepared] = useState<PreparedWorkspaceMutation | null>(
+    null,
+  );
+  const [preparedKind, setPreparedKind] = useState<
+    'create_attempt' | 'resume_attempt' | null
+  >(null);
+  const [reconcileKey, setReconcileKey] = useState<string | null>(null);
+  const [mutationMessage, setMutationMessage] = useState<string | null>(null);
+
+  const externalWorkItem = workspace.externalWorkItem;
+  const scope = workspaceGateway?.authorizationScope;
+  const live =
+    lifecycleState.phase === 'ready' &&
+    lifecycleState.profile.serverIdentity === server.serverIdentity &&
+    catalog.selectedServerIdentity === server.serverIdentity &&
+    serverStatuses[server.serverIdentity]?.phase === 'live' &&
+    server.authorization === 'active' &&
+    externalWorkItem !== null &&
+    scope?.serverIdentity === server.serverIdentity &&
+    scope.authorizationRevision?.toString() === server.authorizationRevision &&
+    scope.principalGeneration?.toString() === server.principalGeneration &&
+    scope.projectRoots?.includes(workspace.projectId) === true &&
+    scope.actions.includes('prepare_mutation') &&
+    !server.staleProjectIds.includes(workspace.projectId);
 
   useEffect(() => {
     let active = true;
@@ -912,7 +949,11 @@ function WorkspaceDraftEditor({
     })
       .then((value) => {
         if (!active) return;
-        setDraft(value);
+        setDraft(
+          value.length > 0 || workspace.externalWorkItem === null
+            ? value
+            : `${workspace.externalWorkItem.provider} ${workspace.externalWorkItem.key}: ${workspace.externalWorkItem.title}`,
+        );
         setLoaded(true);
       })
       .catch(() => {
@@ -939,6 +980,97 @@ function WorkspaceDraftEditor({
       ).catch(() => undefined);
     }
   }, [draft, loaded, server, workspace]);
+
+  const prepare = async (
+    kind: 'create_attempt' | 'resume_attempt',
+  ): Promise<void> => {
+    if (!live || externalWorkItem === null) return;
+    setMutationMessage(null);
+    setReconcileKey(null);
+    try {
+      const next = await prepareWorkspaceMutation({
+        kind,
+        projectId: workspace.projectId,
+        workspaceId: workspace.id,
+        workspaceRevision: workspace.revision,
+        externalWorkItem: {
+          provider: externalWorkItem.provider,
+          key: externalWorkItem.key,
+          title: externalWorkItem.title,
+        },
+        ...(kind === 'resume_attempt' && workspace.attempt !== null
+          ? { targetId: workspace.attempt.id }
+          : {}),
+        idempotencyKey: `mobile-workspace-${Crypto.randomUUID()}`,
+      });
+      setPreparedKind(kind);
+      setPrepared(next);
+    } catch (error) {
+      setMutationMessage(
+        error instanceof Error
+          ? error.message.replaceAll('_', ' ')
+          : 'Workspace preview unavailable',
+      );
+    }
+  };
+
+  const confirm = async (decision: 'grant' | 'deny'): Promise<void> => {
+    if (prepared === null) return;
+    const exactPrepared = prepared;
+    setPrepared(null);
+    setPreparedKind(null);
+    try {
+      const result = await confirmWorkspaceMutation(exactPrepared, decision);
+      if (result.kind === 'ambiguous') {
+        setReconcileKey(result.idempotencyKey);
+        setMutationMessage(
+          'Delivery is ambiguous. Only receipt lookup is available; this change will not be replayed.',
+        );
+      } else if (result.kind === 'submitted') {
+        setMutationMessage(`Workspace change ${result.receipt.outcome}.`);
+        if (result.receipt.outcome === 'accepted') {
+          setReconcileKey(result.idempotencyKey);
+        }
+      } else {
+        setMutationMessage(
+          result.kind === 'denied'
+            ? 'Workspace change denied.'
+            : 'Workspace change cancelled locally.',
+        );
+      }
+    } catch (error) {
+      setMutationMessage(
+        `${error instanceof Error ? error.message.replaceAll('_', ' ') : 'Workspace confirmation unavailable'}. Prepare a new preview or reconcile its durable receipt; the prior confirmation will not be replayed.`,
+      );
+    }
+  };
+
+  const reconcile = async (idempotencyKey: string): Promise<void> => {
+    try {
+      const result: WorkspaceMutationReconciliation =
+        await reconcileWorkspaceMutation(idempotencyKey);
+      setMutationMessage(
+        result.kind === 'accepted'
+          ? 'Workspace change accepted; receipt lookup remains available.'
+          : `Workspace change ${result.receipt.outcome}.${
+              result.receipt.resulting_revision === null
+                ? ''
+                : ` Resulting revision ${result.receipt.resulting_revision.toString()}.`
+            }`,
+      );
+      setReconcileKey(result.kind === 'accepted' ? idempotencyKey : null);
+    } catch (error) {
+      setMutationMessage(
+        error instanceof Error
+          ? error.message.replaceAll('_', ' ')
+          : 'Receipt lookup unavailable',
+      );
+    }
+  };
+
+  const reloadHandles = pendingWorkspaceMutationReceipts.filter(
+    (handle) => handle.project === workspace.projectId,
+  );
 
   return (
     <Section title="Task context draft">
@@ -970,31 +1102,111 @@ function WorkspaceDraftEditor({
         authorization and workspace revision
       </Text>
       <View style={styles.mutations}>
-        {['Create from task', 'Resume workspace'].map((label) => (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            live
+              ? 'Create attempt from exact external task'
+              : 'Create from task, unavailable: selected server is not live'
+          }
+          disabled={!live || workspaceMutationBusy}
+          onPress={() => void prepare('create_attempt')}
+          style={[
+            styles.disabledMutation,
+            {
+              backgroundColor: palette.surfaceMuted,
+              borderColor: palette.border,
+            },
+            (!live || workspaceMutationBusy) && styles.disabled,
+          ]}
+        >
+          <Text style={{ color: palette.text, fontWeight: '800' }}>
+            Create from task
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            live && workspace.attempt !== null
+              ? 'Resume exact workspace attempt'
+              : 'Resume workspace, unavailable: no exact live attempt'
+          }
+          disabled={
+            !live || workspace.attempt === null || workspaceMutationBusy
+          }
+          onPress={() => void prepare('resume_attempt')}
+          style={[
+            styles.disabledMutation,
+            {
+              backgroundColor: palette.surfaceMuted,
+              borderColor: palette.border,
+            },
+            (!live || workspace.attempt === null || workspaceMutationBusy) &&
+              styles.disabled,
+          ]}
+        >
+          <Text style={{ color: palette.text, fontWeight: '800' }}>
+            Resume workspace
+          </Text>
+        </Pressable>
+      </View>
+      {!live && (
+        <Text style={[styles.subtitle, { color: palette.textMuted }]}>
+          Unavailable until this exact selected server and workspace revision
+          are live. No offline mutation is queued.
+        </Text>
+      )}
+      {prepared !== null &&
+        preparedKind !== null &&
+        externalWorkItem !== null && (
+          <WorkspaceMutationConfirmation
+            authorityPreview={{
+              serverIdentity: server.serverIdentity,
+              projectId: workspace.projectId,
+              workspaceId: workspace.id,
+              workspaceRevision: workspace.revision,
+              externalWorkItem,
+            }}
+            busy={workspaceMutationBusy}
+            onConfirm={() => void confirm('grant')}
+            onDeny={() => void confirm('deny')}
+            prepared={prepared}
+          />
+        )}
+      {mutationMessage !== null && (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[styles.subtitle, { color: palette.text }]}
+        >
+          {mutationMessage}
+        </Text>
+      )}
+      {[...reloadHandles.map((handle) => handle.idempotency_key), reconcileKey]
+        .filter(
+          (key, index, values): key is string =>
+            key !== null && values.indexOf(key) === index,
+        )
+        .map((key) => (
           <Pressable
-            key={label}
+            key={key}
             accessibilityRole="button"
-            accessibilityState={{ disabled: true }}
-            accessibilityLabel={`${label}, unavailable: ${unavailableReason.replaceAll('_', ' ')}`}
-            disabled
+            accessibilityLabel={`Look up workspace change receipt ${key}`}
+            disabled={!live || workspaceMutationBusy}
+            onPress={() => void reconcile(key)}
             style={[
               styles.disabledMutation,
               {
                 backgroundColor: palette.surfaceMuted,
                 borderColor: palette.border,
               },
+              (!live || workspaceMutationBusy) && styles.disabled,
             ]}
           >
-            <Text style={{ color: palette.textMuted, fontWeight: '800' }}>
-              {label}
+            <Text style={{ color: palette.text, fontWeight: '800' }}>
+              Reconcile pending workspace change
             </Text>
           </Pressable>
         ))}
-      </View>
-      <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-        Unavailable: the production UI has no authority-bound create/resume
-        adapter. No offline mutation is queued.
-      </Text>
     </Section>
   );
 }
@@ -1010,15 +1222,29 @@ export default function WorkspaceDetailScreen() {
     hunk?: string;
   }>();
   const palette = usePalette();
-  const { catalog, findServer, findWorkspace, findDetail, status } =
-    useWorkspaces();
+  const {
+    catalog,
+    findServer,
+    findWorkspace,
+    findDetail,
+    selectServer,
+    status,
+  } = useWorkspaces();
   const { snapshot } = useMobile();
-  const { state: lifecycleState } = useMobileLifecycle();
+  const { state: lifecycleState, workspaceGateway } = useMobileLifecycle();
   const server = findServer(params.server);
   const workspace = findWorkspace(params.server, params.workspace);
   const detail = findDetail(params.server, params.workspace);
-  const mutation = workspaceMutationAvailability();
   const exactRevision = workspace?.revision === params.revision;
+
+  useEffect(() => {
+    if (
+      server?.authorization === 'active' &&
+      lifecycleState.profile?.serverIdentity !== server.serverIdentity
+    ) {
+      void selectServer(server.serverIdentity).catch(() => undefined);
+    }
+  }, [lifecycleState.profile?.serverIdentity, selectServer, server]);
 
   if (server === null || workspace === null || !exactRevision) {
     return (
@@ -1063,6 +1289,8 @@ export default function WorkspaceDetailScreen() {
   const liveDetail =
     status.phase === 'live' &&
     server.authorization === 'active' &&
+    workspaceGateway?.authorizationScope.serverIdentity ===
+      server.serverIdentity &&
     detail !== null;
   const routeParams = (value: WorkspaceDestination) => ({
     server: params.server,
@@ -1345,7 +1573,6 @@ export default function WorkspaceDetailScreen() {
       <WorkspaceDraftEditor
         key={`${server.serverIdentity}:${server.authorizationRevision}:${workspace.id}:${workspace.revision}`}
         server={server}
-        unavailableReason={mutation.reason}
         workspace={workspace}
       />
     </Screen>
@@ -1389,6 +1616,7 @@ const styles = StyleSheet.create({
     opacity: 0.7,
     paddingHorizontal: 14,
   },
+  disabled: { opacity: 0.45 },
   reviewSurface: { gap: 14 },
   reviewSummary: { gap: 4 },
   reviewFile: { borderRadius: 14, borderWidth: 1, gap: 8, padding: 12 },

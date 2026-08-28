@@ -2232,6 +2232,18 @@ test('confirmation UX exposes the exact preview and separate grant or deny actio
   const onDeny = jest.fn();
   const view = await render(
     createElement(WorkspaceMutationConfirmation, {
+      authorityPreview: {
+        serverIdentity:
+          'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        projectId: project,
+        workspaceId: 'workspace-mobile',
+        workspaceRevision: '9',
+        externalWorkItem: {
+          provider: 'github',
+          key: '#34',
+          title: 'Mobile workspace companion',
+        },
+      },
       prepared: {
         project,
         preview: value,
@@ -2243,6 +2255,12 @@ test('confirmation UX exposes the exact preview and separate grant or deny actio
   );
   expect(view.getByText('Action · create user workspace')).toBeTruthy();
   expect(view.getByText('Preview revision · 1')).toBeTruthy();
+  expect(
+    view.getByText('Workspace · workspace-mobile revision 9'),
+  ).toBeTruthy();
+  expect(
+    view.getByText('External task · github / #34 · Mobile workspace companion'),
+  ).toBeTruthy();
   expect(view.getByText('No authority grants requested.')).toBeTruthy();
   await fireEvent.press(view.getByLabelText('Confirm exact workspace change'));
   await fireEvent.press(view.getByLabelText('Deny workspace change'));
