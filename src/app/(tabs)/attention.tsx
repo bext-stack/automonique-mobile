@@ -87,6 +87,11 @@ export default function AttentionScreen() {
                 ? 'Unavailable. Change notification permission in device settings if desired.'
                 : 'Permission is requested only from this explicit button.'}
           </Text>
+          <Text style={[styles.detail, { color: palette.textMuted }]}>
+            OS background push, EAS delivery, and physical-device admission are
+            unavailable. Local scheduling cannot receive new attention after the
+            app is suspended.
+          </Text>
         </View>
         <Pressable
           accessibilityRole="button"

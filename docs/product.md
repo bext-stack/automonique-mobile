@@ -194,9 +194,19 @@ cold-start response—are re-admitted against the current live projection before
 routing. A live refresh that discovers new attention while the process is in
 the background schedules the notification; an OS background-delivery source
 and authorized device evidence remain release gates rather than being inferred
-from foreground tests.
+from foreground tests. The typed notification source provides exact
+server/workspace/review and optional file/hunk anchors only; mobile does not
+infer a retained-session coordinate or include paths, review content, or actor
+data in notification payloads.
+
 Check rerun, pull-request update/merge, batch send, generic execute, and shell
 fallback remain unavailable.
+The mobile UI renders agent-send, batch-send, CI-rerun, and pull-request
+open/update/merge as disabled typed controls with the production server's
+explicit unavailable adapter category. The coarse `execute_review_action`
+grant is never treated as proof that an external adapter exists, and selecting
+one of these rows cannot create a receipt handle or network request.
+
 Exact chat jumps additionally require the workspace revision, typed retained
 session relation, session revision, and an exact session in the bounded v1
 mobile projection. Cached data and revision-scoped drafts survive offline, but

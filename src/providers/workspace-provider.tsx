@@ -20,7 +20,6 @@ import {
   WorkContextLabel,
   WorkContextRevision,
   WorkSessionId,
-  type ReviewAction,
   type ReviewActionReceipt,
   type ReviewAuthority,
   type WorkContextAuthority,
@@ -52,6 +51,7 @@ import type {
   WorkspaceV2Gateway,
 } from '@/core/workspace-v2-gateway';
 import type { WorkspaceV2ReceiptHandle } from '@/core/workspace-v2-receipts';
+import type { MobileSupportedReviewAction } from '@/core/mobile-review-effects';
 import type { ReviewV2ReceiptHandle } from '@/core/review-v2-receipts';
 import {
   admitReviewDeepLink,
@@ -114,10 +114,7 @@ interface WorkspaceContextValue {
     readonly workspaceRevision: string;
     readonly reviewRevision: string;
     readonly authority: ReviewAuthority;
-    readonly action: Extract<
-      ReviewAction,
-      { readonly kind: 'add_comment' | 'approve_review' }
-    >;
+    readonly action: MobileSupportedReviewAction;
     readonly idempotencyKey: string;
   }) => Promise<ReviewActionSubmission>;
   readonly reconcileReviewAction: (
@@ -138,7 +135,7 @@ interface WorkspaceContextValue {
 export interface ReviewReceiptProjection {
   readonly projectId: string;
   readonly workspaceId: string;
-  readonly actionKind: 'add_comment' | 'approve_review';
+  readonly actionKind: MobileSupportedReviewAction['kind'];
   readonly receipt: ReviewActionReceipt;
 }
 
@@ -840,10 +837,7 @@ export function WorkspaceProvider({
       readonly workspaceRevision: string;
       readonly reviewRevision: string;
       readonly authority: ReviewAuthority;
-      readonly action: Extract<
-        ReviewAction,
-        { readonly kind: 'add_comment' | 'approve_review' }
-      >;
+      readonly action: MobileSupportedReviewAction;
       readonly idempotencyKey: string;
     }): Promise<ReviewActionSubmission> => {
       if (gateway === null || profile === null || reviewOperation.current) {

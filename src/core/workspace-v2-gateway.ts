@@ -55,6 +55,12 @@ import {
   type ReviewV2ReceiptHandle,
   type ReviewV2ReceiptStore,
 } from './review-v2-receipts';
+import {
+  MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS,
+  unavailableReviewEffectCategory,
+  type MobileSupportedReviewAction,
+  type MobileSupportedReviewEffectKind,
+} from './mobile-review-effects';
 
 const ALL_WORK_CONTEXT_KINDS = [
   'project',
@@ -68,6 +74,7 @@ const ALL_WORK_CONTEXT_KINDS = [
 const PROJECT_PAGE_LIMIT = 128n;
 const MAX_PROJECT_PAGES = 64;
 const MAX_PROJECT_RECORDS = 1_024;
+const NO_MOBILE_REVIEW_EFFECT_KINDS = Object.freeze([] as const);
 
 export type WorkspaceLifecycleIntent = Extract<
   WorkContextMutationIntent,
@@ -147,7 +154,7 @@ export interface ReviewActionReconciliation {
 
 export interface WorkspaceV2Gateway {
   readonly authorizationScope: WorkspaceV2AuthorizationScope;
-  readonly reviewEffectKinds: readonly ('add_comment' | 'approve_review')[];
+  readonly reviewEffectKinds: readonly MobileSupportedReviewEffectKind[];
   negotiate(signal?: AbortSignal): Promise<void>;
   loadProject(
     project: string,
@@ -168,10 +175,7 @@ export interface WorkspaceV2Gateway {
     workspace: ReviewWorkspaceIdentity,
     expectedRevision: bigint,
     authority: ReviewAuthority,
-    action: Extract<
-      ReviewAction,
-      { readonly kind: 'add_comment' | 'approve_review' }
-    >,
+    action: MobileSupportedReviewAction,
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<ReviewActionSubmission>;
@@ -795,8 +799,8 @@ export function createWorkspaceV2Gateway(
       (authorization.actions as readonly string[]).includes(
         'get_review_receipt',
       )
-        ? ['add_comment', 'approve_review']
-        : [],
+        ? MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS
+        : NO_MOBILE_REVIEW_EFFECT_KINDS,
     async negotiate(signal) {
       // Negotiation does not itself confer an operation grant.
       requireNegotiatedV2(
@@ -937,6 +941,10 @@ export function createWorkspaceV2Gateway(
       if (reviewReceiptStore === undefined) {
         throw new WorkspaceV2GatewayError('review_effect_unavailable');
       }
+      const unavailableCategory = unavailableReviewEffectCategory(action.kind);
+      if (unavailableCategory !== null) {
+        throw new WorkspaceV2GatewayError(unavailableCategory);
+      }
       const project = ProjectId(projectValue);
       requireProject(project);
       requireReviewWorkspaceInSnapshot(projectSnapshots, project, workspace);
@@ -947,7 +955,9 @@ export function createWorkspaceV2Gateway(
         snapshot === undefined ||
         snapshot.revision !== WorkContextRevision(expectedRevision) ||
         !sameReviewAuthority(snapshot.review.authority, authority) ||
-        !['add_comment', 'approve_review'].includes(action.kind)
+        !MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS.includes(
+          action.kind as MobileSupportedReviewEffectKind,
+        )
       ) {
         throw new WorkspaceV2GatewayError('review_target_revision_stale');
       }
