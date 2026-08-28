@@ -11,7 +11,8 @@ import { revokeWorkspaceCatalogServer } from './workspace-catalog-reducer';
 import type { ServerIdentity } from './workspace-companion';
 import { decimalRevision, type DecimalRevision } from './types';
 
-const WORKSPACE_CACHE_KEY = 'automonique.mobile.workspace-catalog.v1';
+const WORKSPACE_CACHE_KEY = 'automonique.mobile.workspace-catalog.v2';
+const LEGACY_WORKSPACE_CACHE_KEY = 'automonique.mobile.workspace-catalog.v1';
 const WORKSPACE_DRAFTS_KEY = 'automonique.mobile.workspace-drafts.v1';
 const REVIEW_DRAFTS_KEY = 'automonique.mobile.review-drafts.v1';
 export const MAX_WORKSPACE_DRAFT_BYTES = 4_096;
@@ -313,7 +314,14 @@ function abortWorkspaceOperations(serverIdentity: string): void {
 
 async function readCatalogUnsafe(): Promise<WorkspaceCompanionCache | null> {
   const encoded = await AsyncStorage.getItem(WORKSPACE_CACHE_KEY);
-  if (encoded === null) return null;
+  if (encoded === null) {
+    // v1 collapsed the Platform v2 work-session identity into its retained v1
+    // target. It cannot be reinterpreted safely, so discard rather than migrate.
+    if ((await AsyncStorage.getItem(LEGACY_WORKSPACE_CACHE_KEY)) !== null) {
+      await AsyncStorage.removeItem(LEGACY_WORKSPACE_CACHE_KEY);
+    }
+    return null;
+  }
   try {
     return decodeWorkspaceCompanionCache(encoded);
   } catch {

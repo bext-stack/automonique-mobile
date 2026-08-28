@@ -17,13 +17,13 @@ test('fixture-driven cards expose separate task and orchestration states', () =>
     },
     orchestrationStatus: 'review',
     attemptState: 'waiting',
-    retainedSessionId: 'session-34',
+    workSessionId: 'work-session-34',
     retainedSessionTarget: {
       authority: 'automonique',
       kind: 'session',
       id: 'session-34',
     },
-    retainedSessionRelationRevision: '9',
+    workSessionRelationRevision: '9',
     repositoryLabel: 'bext-stack/automonique-mobile',
     branchLabel: 'feat/workspace-companion-34',
     unreadAttention: 2,
@@ -79,13 +79,13 @@ test('selects an eligible retained session deterministically', () => {
   };
 
   expect(presentWorkspaceCatalog(catalog)[0]).toMatchObject({
-    retainedSessionId: 'active-current',
+    workSessionId: 'active-current',
     retainedSessionTarget: {
       authority: 'automonique',
       kind: 'session',
       id: 'active-current',
     },
-    retainedSessionRelationRevision: '10',
+    workSessionRelationRevision: '10',
   });
 });
 

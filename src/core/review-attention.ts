@@ -256,8 +256,13 @@ export function admitAttentionDeepLink(options: {
       candidate.workSessionId === record.origin.session &&
       candidate.attemptWorkspaceId === record.origin.attempt,
   );
+  if (binding === undefined) {
+    throw new Error('attention_navigation_not_authorized');
+  }
   const session = workspace.sessions.find(
-    (candidate) => candidate.id === binding?.retainedSessionId,
+    (candidate) =>
+      candidate.id === binding.workSessionId &&
+      candidate.target.id === binding.retainedSessionId,
   );
   const retained = retainedSessions.find(
     (candidate) =>
@@ -265,30 +270,22 @@ export function admitAttentionDeepLink(options: {
       candidate.target.coordinate.kind === session?.target.kind &&
       candidate.target.coordinate.id === session?.target.id,
   );
-  if (
-    binding === undefined ||
-    session === undefined ||
-    retained === undefined
-  ) {
+  if (session === undefined || retained === undefined) {
     throw new Error('attention_navigation_not_authorized');
   }
   const route = admitWorkspaceDeepLink(catalog, {
     serverIdentity: detail.serverIdentity,
+    tenantId: server.tenantId,
+    authorizationRevision: server.authorizationRevision,
+    principalGeneration: server.principalGeneration,
     workspaceId: workspace.id,
     workspaceRevision: workspace.revision,
     destination: 'chat',
-    sessionId: session.id,
+    workSessionId: session.id,
     sessionRelationRevision: session.revision,
     retainedTarget: retained.target,
   });
-  return {
-    ...route,
-    params: {
-      ...route.params,
-      principal_generation: server.principalGeneration,
-      authorization_revision: server.authorizationRevision,
-    },
-  };
+  return route;
 }
 
 /** Resolve only an anchor carried by the authoritative selected attention event. */

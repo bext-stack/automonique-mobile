@@ -17,9 +17,11 @@ import { usePalette } from '@/theme/palette';
 export default function ExactWorkspaceSessionLink() {
   const params = useLocalSearchParams<{
     server: string;
+    tenant: string;
     workspace: string;
     revision: string;
     session: string;
+    work_session: string;
     relation_revision: string;
     session_revision: string;
     session_authority: string;
@@ -40,6 +42,7 @@ export default function ExactWorkspaceSessionLink() {
       lifecycleState.profile?.serverIdentity !== params.server ||
       server === null ||
       workspace === null ||
+      server.tenantId !== params.tenant ||
       catalog.phase !== 'live' ||
       status.phase !== 'live' ||
       server.authorization !== 'active' ||
@@ -51,10 +54,13 @@ export default function ExactWorkspaceSessionLink() {
     }
     admitWorkspaceDeepLink(catalog, {
       serverIdentity: params.server as ServerIdentity,
+      tenantId: params.tenant,
+      authorizationRevision: decimalRevision(params.authorization_revision),
+      principalGeneration: decimalRevision(params.principal_generation),
       workspaceId: params.workspace,
       workspaceRevision: decimalRevision(params.revision),
       destination: 'chat',
-      sessionId: params.session,
+      workSessionId: params.work_session,
       sessionRelationRevision: decimalRevision(params.relation_revision),
       retainedTarget: {
         coordinate: {
@@ -83,8 +89,10 @@ export default function ExactWorkspaceSessionLink() {
           params: {
             id: params.session,
             scope_server: params.server,
+            scope_tenant: params.tenant,
             scope_workspace: params.workspace,
             scope_workspace_revision: params.revision,
+            scope_work_session: params.work_session,
             scope_relation_revision: params.relation_revision,
             scope_authority: params.session_authority,
             scope_kind: params.session_kind,

@@ -38,8 +38,10 @@ export default function SessionScreen() {
   const params = useLocalSearchParams<{
     id: string;
     scope_server?: string;
+    scope_tenant?: string;
     scope_workspace?: string;
     scope_workspace_revision?: string;
+    scope_work_session?: string;
     scope_relation_revision?: string;
     scope_authority?: string;
     scope_kind?: string;
@@ -77,13 +79,16 @@ export default function SessionScreen() {
       ? null
       : findWorkspace(params.scope_server, params.scope_workspace);
   const scopedRelation = scopedWorkspace?.sessions.find(
-    (relation) => relation.id === id,
+    (relation) =>
+      relation.id === params.scope_work_session && relation.target.id === id,
   );
   const scopeValid =
     !scopeRequested ||
     (params.scope_server !== undefined &&
+      params.scope_tenant !== undefined &&
       params.scope_workspace !== undefined &&
       params.scope_workspace_revision !== undefined &&
+      params.scope_work_session !== undefined &&
       params.scope_relation_revision !== undefined &&
       params.scope_authority !== undefined &&
       params.scope_kind !== undefined &&
@@ -95,6 +100,8 @@ export default function SessionScreen() {
       catalog.phase === 'live' &&
       workspaceStatus.phase === 'live' &&
       scopedServer?.authorization === 'active' &&
+      scopedServer.actions.includes('workspace_read') &&
+      scopedServer.tenantId === params.scope_tenant &&
       scopedServer.principalGeneration === params.scope_principal_generation &&
       scopedServer.authorizationRevision ===
         params.scope_authorization_revision &&

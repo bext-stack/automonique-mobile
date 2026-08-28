@@ -73,6 +73,21 @@ test('rejects hidden capabilities, host paths, malformed origins, and scope brea
   );
 });
 
+test('catalog admission rejects distinct work sessions that alias one retained route ID', () => {
+  for (const authority of ['automonique', 'github']) {
+    const collision = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+    const original = collision.servers[0].workspaces[0].sessions[0];
+    collision.servers[0].workspaces[0].sessions.push({
+      ...original,
+      id: 'work-session-collision',
+      target: { ...original.target, authority },
+    });
+    expect(() => admitWorkspaceCompanionCatalog(collision)).toThrow(
+      'workspace_companion_invalid',
+    );
+  }
+});
+
 test('server selection uses the exact identity and refuses revocation', () => {
   const unknown = `sha256:${'b'.repeat(64)}` as ServerIdentity;
   expect(() => selectScopedServer(workspaceCompanionFixture, unknown)).toThrow(
@@ -95,10 +110,13 @@ test('deep links bind server, workspace revision and retained session', () => {
   expect(
     admitWorkspaceDeepLink(workspaceCompanionFixture, {
       serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      tenantId: 'tenant-delivery',
+      authorizationRevision: decimalRevision('8'),
+      principalGeneration: decimalRevision('3'),
       workspaceId: 'workspace-34',
       workspaceRevision: decimalRevision('12'),
       destination: 'chat',
-      sessionId: 'session-34',
+      workSessionId: 'work-session-34',
       sessionRelationRevision: decimalRevision('9'),
       retainedTarget: {
         coordinate:
@@ -111,10 +129,14 @@ test('deep links bind server, workspace revision and retained session', () => {
     pathname: '/workspace/[server]/[workspace]/session/[session]',
     params: {
       server: WORKSPACE_FIXTURE_IDENTITY,
+      tenant: 'tenant-delivery',
+      authorization_revision: '8',
+      principal_generation: '3',
       workspace: 'workspace-34',
       revision: '12',
       destination: 'chat',
       session: 'session-34',
+      work_session: 'work-session-34',
       relation_revision: '9',
       session_revision: '14',
       session_authority: 'automonique',
@@ -126,10 +148,13 @@ test('deep links bind server, workspace revision and retained session', () => {
   expect(() =>
     admitWorkspaceDeepLink(workspaceCompanionFixture, {
       serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      tenantId: 'tenant-delivery',
+      authorizationRevision: decimalRevision('8'),
+      principalGeneration: decimalRevision('3'),
       workspaceId: 'workspace-34',
       workspaceRevision: decimalRevision('11'),
       destination: 'chat',
-      sessionId: 'session-34',
+      workSessionId: 'work-session-34',
       sessionRelationRevision: decimalRevision('9'),
       retainedTarget: {
         coordinate:
@@ -143,10 +168,13 @@ test('deep links bind server, workspace revision and retained session', () => {
   expect(() =>
     admitWorkspaceDeepLink(workspaceCompanionFixture, {
       serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      tenantId: 'tenant-delivery',
+      authorizationRevision: decimalRevision('8'),
+      principalGeneration: decimalRevision('3'),
       workspaceId: 'workspace-34',
       workspaceRevision: decimalRevision('12'),
       destination: 'chat',
-      sessionId: 'session-34',
+      workSessionId: 'work-session-34',
       sessionRelationRevision: decimalRevision('8'),
       retainedTarget: {
         coordinate:
@@ -156,6 +184,78 @@ test('deep links bind server, workspace revision and retained session', () => {
       },
     }),
   ).toThrow('workspace_navigation_not_authorized');
+});
+
+test('deep links keep the work-session relation distinct from its retained v1 target', () => {
+  const retainedTarget = {
+    coordinate: {
+      authority: 'automonique' as const,
+      kind: 'session' as const,
+      id: 'retained-session-34',
+    },
+    revision: decimalRevision('14'),
+  };
+  const catalog = admitWorkspaceCompanionCatalog({
+    ...workspaceCompanionFixture,
+    servers: workspaceCompanionFixture.servers.map((server) => ({
+      ...server,
+      workspaces: server.workspaces.map((workspace) => ({
+        ...workspace,
+        sessions: workspace.sessions.map((session) => ({
+          ...session,
+          id: 'work-session-34',
+          target: retainedTarget.coordinate,
+        })),
+      })),
+    })),
+  });
+
+  expect(
+    admitWorkspaceDeepLink(catalog, {
+      serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      tenantId: 'tenant-delivery',
+      authorizationRevision: decimalRevision('8'),
+      principalGeneration: decimalRevision('3'),
+      workspaceId: 'workspace-34',
+      workspaceRevision: decimalRevision('12'),
+      destination: 'chat',
+      workSessionId: 'work-session-34',
+      sessionRelationRevision: decimalRevision('9'),
+      retainedTarget,
+    }),
+  ).toMatchObject({
+    params: {
+      tenant: 'tenant-delivery',
+      authorization_revision: '8',
+      principal_generation: '3',
+      session: 'retained-session-34',
+      work_session: 'work-session-34',
+      session_revision: '14',
+    },
+  });
+
+  for (const request of [
+    { tenantId: 'tenant-foreign' },
+    { authorizationRevision: decimalRevision('7') },
+    { principalGeneration: decimalRevision('2') },
+    { workSessionId: 'retained-session-34' },
+  ]) {
+    expect(() =>
+      admitWorkspaceDeepLink(catalog, {
+        serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+        tenantId: 'tenant-delivery',
+        authorizationRevision: decimalRevision('8'),
+        principalGeneration: decimalRevision('3'),
+        workspaceId: 'workspace-34',
+        workspaceRevision: decimalRevision('12'),
+        destination: 'chat',
+        workSessionId: 'work-session-34',
+        sessionRelationRevision: decimalRevision('9'),
+        retainedTarget,
+        ...request,
+      }),
+    ).toThrow('workspace_navigation_not_authorized');
+  }
 });
 
 test('catalog admission refuses an invented retained-session authority', () => {
@@ -180,10 +280,13 @@ test('offline cache retains exact chat reads but drops review-backed destination
   expect(
     admitWorkspaceDeepLink(cached, {
       serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      tenantId: 'tenant-delivery',
+      authorizationRevision: decimalRevision('8'),
+      principalGeneration: decimalRevision('3'),
       workspaceId: 'workspace-34',
       workspaceRevision: decimalRevision('12'),
       destination: 'chat',
-      sessionId: 'session-34',
+      workSessionId: 'work-session-34',
       sessionRelationRevision: decimalRevision('9'),
       retainedTarget: {
         coordinate:
@@ -196,10 +299,13 @@ test('offline cache retains exact chat reads but drops review-backed destination
   expect(() =>
     admitWorkspaceDeepLink(cached, {
       serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      tenantId: 'tenant-delivery',
+      authorizationRevision: decimalRevision('8'),
+      principalGeneration: decimalRevision('3'),
       workspaceId: 'workspace-34',
       workspaceRevision: decimalRevision('12'),
       destination: 'files',
-      sessionId: null,
+      workSessionId: null,
       sessionRelationRevision: null,
       retainedTarget: null,
     }),
@@ -308,7 +414,7 @@ test('revocation retains newer nested high-water marks and rejects lower or equa
       }),
       expect.objectContaining({
         objectType: 'session',
-        objectId: 'session-34',
+        objectId: 'work-session-34',
         revision: '10',
       }),
     ]),
@@ -492,10 +598,13 @@ test('workspace visibility never infers terminal authority', () => {
   expect(() =>
     admitWorkspaceDeepLink(withTerminalNavigation, {
       serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      tenantId: 'tenant-delivery',
+      authorizationRevision: decimalRevision('8'),
+      principalGeneration: decimalRevision('3'),
       workspaceId: 'workspace-34',
       workspaceRevision: decimalRevision('12'),
       destination: 'terminal',
-      sessionId: null,
+      workSessionId: null,
       sessionRelationRevision: null,
       retainedTarget: null,
     }),
@@ -520,10 +629,13 @@ test('terminal navigation requires both an exact grant and separate live action'
   expect(
     admitWorkspaceDeepLink(authorized, {
       serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      tenantId: 'tenant-delivery',
+      authorizationRevision: decimalRevision('8'),
+      principalGeneration: decimalRevision('3'),
       workspaceId: 'workspace-34',
       workspaceRevision: decimalRevision('12'),
       destination: 'terminal',
-      sessionId: null,
+      workSessionId: null,
       sessionRelationRevision: null,
       retainedTarget: null,
     }),
@@ -534,10 +646,13 @@ test('terminal navigation requires both an exact grant and separate live action'
       { ...authorized, phase: 'stale' },
       {
         serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+        tenantId: 'tenant-delivery',
+        authorizationRevision: decimalRevision('8'),
+        principalGeneration: decimalRevision('3'),
         workspaceId: 'workspace-34',
         workspaceRevision: decimalRevision('12'),
         destination: 'terminal',
-        sessionId: null,
+        workSessionId: null,
         sessionRelationRevision: null,
         retainedTarget: null,
       },
@@ -602,7 +717,7 @@ test('intent previews bind exact live scope and expiry', () => {
     serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
     workspaceId: 'workspace-34',
     workspaceRevision: '12',
-    sessionId: 'session-34',
+    sessionId: 'work-session-34',
     sessionRevision: '9',
     idempotencyKey: 'resume-34',
   });
@@ -613,7 +728,7 @@ test('intent previews bind exact live scope and expiry', () => {
     requestIdempotencyKey: 'resume-34',
     request,
     authorityRevision: '8',
-    summary: ['May resume session-34'],
+    summary: ['May resume work-session-34'],
     expiresAt: '2026-08-27T10:05:00Z',
   });
   expect(

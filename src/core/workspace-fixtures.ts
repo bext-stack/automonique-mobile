@@ -68,7 +68,7 @@ export const workspaceCompanionFixture: WorkspaceCompanionCatalog = {
           },
           sessions: [
             {
-              id: 'session-34',
+              id: 'work-session-34',
               target: {
                 authority: 'automonique',
                 kind: 'session',

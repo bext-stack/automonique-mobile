@@ -762,7 +762,7 @@ export async function buildWorkspaceServerCatalog(
               state: attemptState(graph.attempt.lifecycle),
             },
       sessions: graph.sessions.map(({ record: session, target }) => ({
-        id: target.id,
+        id: recordId(session),
         target,
         revision: decimalRevision(session.revision.toString()),
         title: session.label,

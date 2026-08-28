@@ -482,7 +482,14 @@ test('projects typed relations, lineage status, review attention, and separately
     unreadAttention: 3,
     repository: { label: 'repo-coordinate', webUrl: null },
     branch: null,
-    sessions: [{ id: 'retained-0', state: 'active', unreadAttention: 3 }],
+    sessions: [
+      {
+        id: 'work-session-0',
+        target: { id: 'retained-0' },
+        state: 'active',
+        unreadAttention: 3,
+      },
+    ],
     navigation: [
       { destination: 'chat', revision: '2' },
       { destination: 'files', revision: '2' },
@@ -726,7 +733,9 @@ test('selects the latest attempt linearly and ignores malformed or duplicate ret
 
   expect(result.profile.workspaces[0]).toMatchObject({
     attempt: { id: 'attempt-a', revision: '9' },
-    sessions: [{ id: 'retained-once', title: 'first' }],
+    sessions: [
+      { id: 'first', target: { id: 'retained-once' }, title: 'first' },
+    ],
     navigation: [{ destination: 'chat' }],
   });
   expect(result.omittedSessionCount).toBe(0);

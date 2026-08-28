@@ -165,6 +165,17 @@ function MutationProbe() {
           }).catch(() => undefined)
         }
       />
+      <Pressable
+        accessibilityLabel="Prepare exact resume session"
+        onPress={() =>
+          void prepareWorkspaceMutation({
+            ...request,
+            kind: 'resume_session',
+            targetId: 'work-session-34',
+            idempotencyKey: 'mobile-resume-session-34',
+          }).catch(() => undefined)
+        }
+      />
     </>
   );
 }
@@ -205,7 +216,7 @@ function MutationResultProbe() {
 }
 
 const encoded = encodeWorkspaceCompanionCache({
-  schema: 'automonique.mobile-workspace-cache/v1',
+  schema: 'automonique.mobile-workspace-cache/v2',
   catalog: workspaceCompanionFixture,
   intentDrafts: [],
 });
@@ -529,6 +540,31 @@ test('selected full gateway prepares exact create and resume intents while pendi
       },
     },
     'mobile-resume-34',
+    expect.any(AbortSignal),
+  );
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Prepare exact resume session'));
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(prepareMutation).toHaveBeenCalledTimes(3));
+  expect(prepareMutation).toHaveBeenLastCalledWith(
+    'project-mobile',
+    {
+      kind: 'resume_session',
+      requested_authority: {
+        credentials: [],
+        filesystem: [],
+        models: [],
+        network: [],
+        providers: [],
+        tools: [],
+      },
+      target: {
+        identity: { kind: 'session', id: 'work-session-34' },
+        revision: 9n,
+      },
+    },
+    'mobile-resume-session-34',
     expect.any(AbortSignal),
   );
   expect(reconcileMutation).not.toHaveBeenCalled();

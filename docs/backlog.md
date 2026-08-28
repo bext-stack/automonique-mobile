@@ -106,6 +106,10 @@ Remaining tracked work is grouped in the
   - Project/host/workspace discovery, separate external/orchestration status,
     freshness, unread attention, exact retained-session links, and current
     review-backed files/preview/source-control destinations are present.
+  - Retained chat preserves the distinct work-session relation and v1 session
+    target, binding both to the exact tenant, authorization/principal
+    generation, workspace revision, relation revision, and target revision at
+    both route-admission stages.
   - Partial detail coverage is explicit; cached and offline state is read-only;
     revocation retains server/object tombstones; task notes are scoped to an
     exact workspace revision.

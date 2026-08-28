@@ -10,7 +10,7 @@ import {
 } from './types';
 
 export const WORKSPACE_COMPANION_SCHEMA =
-  'automonique.mobile-workspace-companion/v1' as const;
+  'automonique.mobile-workspace-companion/v2' as const;
 export const MAX_WORKSPACE_SERVERS = 8;
 export const MAX_WORKSPACE_SERVER_TOMBSTONES = 64;
 export const MAX_WORKSPACE_REVISION_TOMBSTONES = 1_024;
@@ -59,6 +59,7 @@ export interface LinkedExternalWorkItem {
 }
 
 export interface WorkspaceSessionReference {
+  /** Exact Platform v2 work-session relation ID. */
   readonly id: string;
   /** Exact v1 session coordinate issued by the typed Platform v2 relation. */
   readonly target: Coordinate;
@@ -198,10 +199,14 @@ export interface WorkspaceAuthorityPreview {
 
 export interface WorkspaceDeepLinkRequest {
   readonly serverIdentity: ServerIdentity;
+  readonly tenantId: string;
+  readonly authorizationRevision: DecimalRevision;
+  readonly principalGeneration: DecimalRevision;
   readonly workspaceId: string;
   readonly workspaceRevision: DecimalRevision;
   readonly destination: WorkspaceDestination;
-  readonly sessionId: string | null;
+  /** Platform v2 work-session relation ID, not the retained v1 target ID. */
+  readonly workSessionId: string | null;
   readonly sessionRelationRevision: DecimalRevision | null;
   readonly retainedTarget: VersionedTarget | null;
 }
@@ -452,7 +457,6 @@ function admitWorkspace(value: unknown): CompanionWorkspace {
       };
       const id = string(value.id, 256);
       if (
-        target.id !== id ||
         target.kind !== 'session' ||
         !ResourceAuthority_VALUES.includes(target.authority)
       )
@@ -468,6 +472,10 @@ function admitWorkspace(value: unknown): CompanionWorkspace {
     },
   );
   unique(sessions.map((session) => session.id));
+  // The generic retained-session route is keyed first by target ID, so two
+  // relations may not alias that path even when their v2 work-session IDs or
+  // target authorities differ.
+  unique(sessions.map((session) => session.target.id));
   let repository: CompanionWorkspace['repository'] = null;
   if (candidate.repository !== null) {
     const value = object(candidate.repository);
@@ -1201,6 +1209,9 @@ export function admitWorkspaceDeepLink(
   );
   if (
     server === undefined ||
+    server.tenantId !== request.tenantId ||
+    server.authorizationRevision !== request.authorizationRevision ||
+    server.principalGeneration !== request.principalGeneration ||
     server.authorization === 'revoked' ||
     !server.actions.includes('workspace_read')
   ) {
@@ -1239,13 +1250,16 @@ export function admitWorkspaceDeepLink(
   }
   const params: Record<string, string> = {
     server: request.serverIdentity,
+    tenant: server.tenantId,
+    authorization_revision: server.authorizationRevision,
+    principal_generation: server.principalGeneration,
     workspace: workspace.id,
     revision: workspace.revision,
     destination: request.destination,
   };
   if (request.destination === 'chat') {
     const session = workspace.sessions.find(
-      (candidate) => candidate.id === request.sessionId,
+      (candidate) => candidate.id === request.workSessionId,
     );
     if (
       session === undefined ||
@@ -1258,7 +1272,8 @@ export function admitWorkspaceDeepLink(
       session.target.id !== request.retainedTarget.coordinate.id
     )
       throw new Error('workspace_navigation_not_authorized');
-    params.session = session.id;
+    params.session = request.retainedTarget.coordinate.id;
+    params.work_session = session.id;
     params.relation_revision = session.revision;
     params.session_revision = request.retainedTarget.revision;
     params.session_authority = session.target.authority;
@@ -1270,7 +1285,7 @@ export function admitWorkspaceDeepLink(
     };
   }
   if (
-    request.sessionId !== null ||
+    request.workSessionId !== null ||
     request.sessionRelationRevision !== null ||
     request.retainedTarget !== null
   )

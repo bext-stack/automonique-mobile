@@ -415,6 +415,22 @@ test('attention links review anchors and typed lineage sessions without inferrin
       details: [currentDetail],
       detail: {
         ...currentDetail,
+        sessionBindings: currentDetail.sessionBindings.map((binding) => ({
+          ...binding,
+          workSessionId: binding.retainedSessionId,
+          retainedSessionId: binding.workSessionId,
+        })),
+      },
+      node: workerNode!,
+      retainedSessions,
+    }),
+  ).toThrow('attention_navigation_not_authorized');
+  expect(() =>
+    admitAttentionDeepLink({
+      catalog,
+      details: [currentDetail],
+      detail: {
+        ...currentDetail,
         lineage: {
           ...lineage,
           orchestration: lineage.orchestration.map((record) => ({
