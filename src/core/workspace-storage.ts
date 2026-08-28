@@ -28,6 +28,11 @@ export interface WorkspaceDraftScope {
   readonly workspaceRevision: DecimalRevision;
 }
 
+export interface WorkspaceCacheGeneration {
+  readonly serverIdentity: ServerIdentity;
+  readonly authorizationRevision: DecimalRevision;
+}
+
 interface StoredWorkspaceDraft extends WorkspaceDraftScope {
   readonly text: string;
   readonly updatedAtMs: string;
@@ -325,11 +330,63 @@ export function persistWorkspaceCatalogCache(
   cache: WorkspaceCompanionCache,
   serverIdentity: string,
   authorizationRevision: DecimalRevision,
+  signal?: AbortSignal,
+): Promise<void> {
+  return persistWorkspaceCatalogCacheForServers(
+    cache,
+    [
+      {
+        serverIdentity: serverIdentity as ServerIdentity,
+        authorizationRevision,
+      },
+    ],
+    signal,
+  );
+}
+
+/**
+ * Persist one public multi-server cache only when every included credential
+ * generation is explicitly fenced and the owning operation is still live.
+ */
+export function persistWorkspaceCatalogCacheForServers(
+  cache: WorkspaceCompanionCache,
+  generations: readonly WorkspaceCacheGeneration[],
+  signal?: AbortSignal,
 ): Promise<void> {
   return serialized(async () => {
-    if (generationRevoked(serverIdentity, authorizationRevision)) {
-      throw new Error('workspace_generation_revoked');
+    if (signal?.aborted) throw new Error('workspace_generation_replaced');
+    const expected = new Map(
+      cache.catalog.servers.map((server) => [
+        server.serverIdentity,
+        server.authorizationRevision,
+      ]),
+    );
+    const supplied = new Map(
+      generations.map((generation) => [
+        generation.serverIdentity,
+        generation.authorizationRevision,
+      ]),
+    );
+    if (
+      expected.size !== cache.catalog.servers.length ||
+      supplied.size !== generations.length ||
+      expected.size !== supplied.size ||
+      [...expected].some(
+        ([identity, revision]) => supplied.get(identity) !== revision,
+      ) ||
+      cache.intentDrafts.some((draft) => !expected.has(draft.serverIdentity))
+    ) {
+      throw new Error('workspace_cache_generation_scope_invalid');
     }
+    for (const [identity, revision] of expected) {
+      if (generationRevoked(identity, revision)) {
+        throw new Error('workspace_generation_revoked');
+      }
+    }
+    // Revocation installs its fence synchronously before queuing cleanup.
+    // Re-check the operation after all generation validation and immediately
+    // before the serialized write.
+    if (signal?.aborted) throw new Error('workspace_generation_replaced');
     await AsyncStorage.setItem(
       WORKSPACE_CACHE_KEY,
       encodeWorkspaceCompanionCache(cache),

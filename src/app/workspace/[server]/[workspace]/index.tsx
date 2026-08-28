@@ -287,7 +287,8 @@ function ReviewControlSurface({
   const live =
     status.phase === 'live' &&
     server.authorization === 'active' &&
-    workspaceGateway !== null;
+    workspaceGateway?.authorizationScope.serverIdentity ===
+      server.serverIdentity;
   const availability = (
     action: Parameters<typeof reviewActionAvailability>[0]['action'],
   ) =>
@@ -1019,7 +1020,7 @@ export default function WorkspaceDetailScreen() {
     status,
   } = useWorkspaces();
   const { snapshot } = useMobile();
-  const { state: lifecycleState } = useMobileLifecycle();
+  const { state: lifecycleState, workspaceGateway } = useMobileLifecycle();
   const server = findServer(params.server);
   const workspace = findWorkspace(params.server, params.workspace);
   const detail = findDetail(params.server, params.workspace);
@@ -1078,6 +1079,8 @@ export default function WorkspaceDetailScreen() {
   const liveDetail =
     status.phase === 'live' &&
     server.authorization === 'active' &&
+    workspaceGateway?.authorizationScope.serverIdentity ===
+      server.serverIdentity &&
     detail !== null;
   const routeParams = (value: WorkspaceDestination) => ({
     server: params.server,

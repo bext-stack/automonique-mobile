@@ -50,7 +50,6 @@ export interface MobileFleetState {
 export interface ReadOnlyMobileServerGateway {
   readonly slotId: string;
   readonly bootstrap: MobileAutomoniqueGateway['bootstrap'];
-  readonly reconcile: MobileAutomoniqueGateway['reconcile'];
 }
 
 export interface ReadOnlyWorkspaceServerGateway {
@@ -557,7 +556,6 @@ export class MobileFleetLifecycleCoordinator {
       gateways.push({
         slotId,
         bootstrap: gateway.bootstrap,
-        reconcile: gateway.reconcile,
       });
     }
     return gateways;

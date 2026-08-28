@@ -195,6 +195,32 @@ test('adds, explicitly selects, and revokes one slot while every other slot surv
   ).toBe(false);
 });
 
+test('revoking the selected slot leaves an explicit mutation authority gap', async () => {
+  const selected = await addCredentialRegistryConnection(
+    discovery(1),
+    issued(1),
+    NOW,
+  );
+  const sibling = await addCredentialRegistryConnection(
+    discovery(2),
+    issued(2, 1n, ['follow_up']),
+    NOW,
+  );
+
+  await revokeCredentialRegistrySlot(selected.slotId);
+
+  await expect(loadCredentialRegistry(NOW)).resolves.toMatchObject({
+    kind: 'ready',
+    registry: {
+      selectedMutationSlotId: null,
+      slots: [{ slotId: sibling.slotId }],
+    },
+  });
+  await expect(
+    loadSelectedCredentialRegistryConnection(NOW),
+  ).resolves.toBeNull();
+});
+
 test('recovers a selected slot after the durable commit loses its final acknowledgement', async () => {
   const first = await addCredentialRegistryConnection(
     discovery(1),

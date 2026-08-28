@@ -12,6 +12,7 @@ import {
   loadWorkspaceDraft,
   MAX_WORKSPACE_DRAFTS,
   persistWorkspaceCatalogCache,
+  persistWorkspaceCatalogCacheForServers,
   persistReviewDraft,
   persistWorkspaceDraft,
   registerWorkspaceOperation,
@@ -341,6 +342,114 @@ test('a revocation queued behind an in-flight write wins and fences later old wr
   await expect(
     persistWorkspaceCatalogCache(cache, serverIdentity, decimalRevision('11')),
   ).rejects.toThrow('workspace_generation_revoked');
+});
+
+test('a sibling cache write cannot resurrect a revoked server generation', async () => {
+  const firstIdentity = identity('4');
+  const secondIdentity = identity('5');
+  const first = cacheFor(firstIdentity, '21');
+  const secondServer = cacheFor(secondIdentity, '22').catalog.servers[0]!;
+  const multiServer: WorkspaceCompanionCache = {
+    ...first,
+    catalog: {
+      ...first.catalog,
+      servers: [...first.catalog.servers, secondServer],
+    },
+  };
+  const generations = multiServer.catalog.servers.map((server) => ({
+    serverIdentity: server.serverIdentity,
+    authorizationRevision: server.authorizationRevision,
+  }));
+  await persistWorkspaceCatalogCacheForServers(multiServer, generations);
+
+  await revokeWorkspaceServerStorage(secondIdentity, '22');
+  await expect(loadWorkspaceCatalogCache()).resolves.toMatchObject({
+    catalog: { servers: [{ serverIdentity: firstIdentity }] },
+  });
+
+  await expect(
+    persistWorkspaceCatalogCacheForServers(multiServer, generations),
+  ).rejects.toThrow('workspace_generation_revoked');
+  await expect(loadWorkspaceCatalogCache()).resolves.toMatchObject({
+    catalog: { servers: [{ serverIdentity: firstIdentity }] },
+  });
+});
+
+test('an absent revoked sibling intent draft cannot cross an A-only cache fence', async () => {
+  const firstIdentity = identity('8');
+  const revokedIdentity = identity('9');
+  await revokeWorkspaceServerStorage(revokedIdentity, '30');
+  jest.clearAllMocks();
+  const cache: WorkspaceCompanionCache = {
+    ...cacheFor(firstIdentity, '31'),
+    intentDrafts: [
+      {
+        kind: 'create',
+        serverIdentity: revokedIdentity,
+        hostId: 'host-revoked',
+        projectId: 'project-revoked',
+        task: {
+          provider: 'GitHub',
+          key: '#34',
+          title: 'Must not survive sibling revocation',
+        },
+        idempotencyKey: 'revoked-sibling-draft',
+      },
+    ],
+  };
+
+  await expect(
+    persistWorkspaceCatalogCacheForServers(cache, [
+      {
+        serverIdentity: firstIdentity,
+        authorizationRevision: decimalRevision('31'),
+      },
+    ]),
+  ).rejects.toThrow('workspace_cache_generation_scope_invalid');
+  expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+});
+
+test('a queued multi-server cache write re-checks its abort signal', async () => {
+  const blockerIdentity = identity('6');
+  const serverIdentity = identity('7');
+  let releaseBlocker!: () => void;
+  let announceBlocker!: () => void;
+  const blockerStarted = new Promise<void>((resolve) => {
+    announceBlocker = resolve;
+  });
+  jest
+    .mocked(AsyncStorage.setItem)
+    .mockImplementationOnce(async (key, value) => {
+      announceBlocker();
+      await new Promise<void>((resolve) => {
+        releaseBlocker = resolve;
+      });
+      values.set(key, value);
+    });
+  const blocker = persistWorkspaceCatalogCache(
+    cacheFor(blockerIdentity, '23'),
+    blockerIdentity,
+    decimalRevision('23'),
+  );
+  await blockerStarted;
+  const cache = cacheFor(serverIdentity, '24');
+  const controller = new AbortController();
+  const queued = persistWorkspaceCatalogCacheForServers(
+    cache,
+    [
+      {
+        serverIdentity,
+        authorizationRevision: decimalRevision('24'),
+      },
+    ],
+    controller.signal,
+  );
+  controller.abort('slot_generation_replaced');
+  releaseBlocker();
+  await blocker;
+
+  await expect(queued).rejects.toThrow('workspace_generation_replaced');
+  expect(AsyncStorage.setItem).toHaveBeenCalledTimes(1);
 });
 
 test('revocation cleanup failure is surfaced while the old generation remains fenced', async () => {

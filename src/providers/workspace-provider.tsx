@@ -57,7 +57,7 @@ import {
 import { reviewNotificationRuntime } from '@/core/review-notification-runtime';
 import {
   loadWorkspaceCatalogCache,
-  persistWorkspaceCatalogCache,
+  persistWorkspaceCatalogCacheForServers,
   registerWorkspaceOperation,
   revokeWorkspaceServerStorage,
 } from '@/core/workspace-storage';
@@ -629,14 +629,17 @@ export function WorkspaceProvider({
           ? { ...merged, selectedServerIdentity: selectedMutationIdentity }
           : merged;
       if (successful[0] !== undefined) {
-        await persistWorkspaceCatalogCache(
+        await persistWorkspaceCatalogCacheForServers(
           {
             schema: 'automonique.mobile-workspace-cache/v1',
             catalog: next,
             intentDrafts: draftsRef.current,
           },
-          successful[0].profile.serverIdentity,
-          successful[0].profile.authorizationRevision,
+          next.servers.map((server) => ({
+            serverIdentity: server.serverIdentity,
+            authorizationRevision: server.authorizationRevision,
+          })),
+          controller.signal,
         );
       }
       if (controller.signal.aborted) return;

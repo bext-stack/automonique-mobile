@@ -279,7 +279,10 @@ test('review route shows bounded sanitized hunks and keeps unsupported mutations
       profile: { serverIdentity: WORKSPACE_FIXTURE_IDENTITY },
     },
     workspaceGateway: {
-      authorizationScope: { actions: ['get_review'] },
+      authorizationScope: {
+        serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+        actions: ['get_review'],
+      },
       reviewEffectKinds: [],
     },
   });
@@ -305,6 +308,59 @@ test('review route shows bounded sanitized hunks and keeps unsupported mutations
     ).toBeTruthy(),
   );
   expect(view.getByText(/local drafts are not sent to an agent/)).toBeTruthy();
+});
+
+test('workspace review refuses a full gateway selected for another server', async () => {
+  const base = workspaceValue();
+  const server = base.catalog.servers[0]!;
+  const workspace = server.workspaces[0]!;
+  const withReview = {
+    ...workspace,
+    navigation: [
+      ...workspace.navigation,
+      { destination: 'review', revision: workspace.revision },
+    ],
+  };
+  const executeReviewAction = jest.fn();
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: {
+      ...base.catalog,
+      servers: [{ ...server, workspaces: [withReview] }],
+    },
+    executeReviewAction,
+    findWorkspace: () => withReview,
+    selectServer: jest.fn().mockResolvedValue(undefined),
+  });
+  mockUseMobileLifecycle.mockReturnValue({
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: `sha256:${'f'.repeat(64)}` },
+    },
+    workspaceGateway: {
+      authorizationScope: {
+        serverIdentity: `sha256:${'f'.repeat(64)}`,
+        actions: ['get_review', 'execute_review_action'],
+      },
+      reviewEffectKinds: ['add_comment', 'approve_review'],
+    },
+  });
+  mockRouteParams = {
+    server: server.serverIdentity,
+    workspace: workspace.id,
+    revision: workspace.revision,
+    destination: 'review',
+    review_revision: detail.review.revision,
+  };
+
+  const view = await render(<WorkspaceDetailScreen />);
+  expect(
+    view.getByText(
+      'This destination is unavailable for the exact current workspace grant and revision.',
+    ),
+  ).toBeTruthy();
+  expect(view.queryByLabelText('Approve review')).toBeNull();
+  expect(executeReviewAction).not.toHaveBeenCalled();
 });
 
 test('review approval requires an exact preview before one revision-bound mutation', async () => {
@@ -369,6 +425,7 @@ test('review approval requires an exact preview before one revision-bound mutati
     },
     workspaceGateway: {
       authorizationScope: {
+        serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
         actions: ['get_review', 'execute_review_action'],
       },
       reviewEffectKinds: ['add_comment', 'approve_review'],
@@ -484,6 +541,7 @@ test('a completed comment with failed local cleanup can only retry local cleanup
     },
     workspaceGateway: {
       authorizationScope: {
+        serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
         actions: ['get_review', 'execute_review_action'],
       },
       reviewEffectKinds: ['add_comment', 'approve_review'],

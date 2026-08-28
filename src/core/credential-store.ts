@@ -1873,7 +1873,7 @@ export function revokeCredentialRegistrySlot(slotId: string): Promise<void> {
       revision: incrementDecimal(manifest.revision),
       selectedMutationSlotId:
         manifest.selectedMutationSlotId === slotId
-          ? (remaining[0]?.slotId ?? null)
+          ? null
           : manifest.selectedMutationSlotId,
       slots: remaining,
     };

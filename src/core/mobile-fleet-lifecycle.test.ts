@@ -185,12 +185,9 @@ test('hydrates ready servers with a two-server bound and exposes read-only proje
   expect(maximum).toBe(2);
   const readOnly = fleet.readOnlyGateways();
   expect(readOnly).toHaveLength(3);
-  expect(Object.keys(readOnly[1]!)).toEqual([
-    'slotId',
-    'bootstrap',
-    'reconcile',
-  ]);
+  expect(Object.keys(readOnly[1]!)).toEqual(['slotId', 'bootstrap']);
   expect(readOnly[1]).not.toHaveProperty('attach');
+  expect(readOnly[1]).not.toHaveProperty('reconcile');
   const workspaceReads = fleet.readOnlyWorkspaceGateways();
   expect(workspaceReads).toHaveLength(3);
   expect(Object.keys(workspaceReads[1]!.gateway)).toEqual([
