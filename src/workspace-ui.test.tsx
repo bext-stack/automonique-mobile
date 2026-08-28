@@ -436,6 +436,134 @@ test('review approval requires an exact preview before one revision-bound mutati
   );
 });
 
+test('a completed comment with failed local cleanup can only retry local cleanup', async () => {
+  const base = workspaceValue();
+  const server = base.catalog.servers[0]!;
+  const workspace = server.workspaces[0]!;
+  const withReview = {
+    ...workspace,
+    navigation: [
+      ...workspace.navigation,
+      { destination: 'review', revision: workspace.revision },
+    ],
+  };
+  let completedRemotely = false;
+  let cleanupRejected = false;
+  const executeReviewAction = jest.fn().mockImplementation((options) => {
+    completedRemotely = true;
+    return Promise.resolve({
+      kind: 'settled',
+      idempotencyKey: options.idempotencyKey,
+      receipt: {
+        idempotency_key: options.idempotencyKey,
+        outcome: 'completed',
+      },
+      projectionRefreshRequired: true,
+    });
+  });
+  const reconcileReviewAction = jest.fn();
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: {
+      ...base.catalog,
+      servers: [{ ...server, workspaces: [withReview] }],
+    },
+    reviewBusy: false,
+    reviewReceipts: [],
+    pendingReviewReceipts: [],
+    executeReviewAction,
+    reconcileReviewAction,
+    findWorkspace: () => withReview,
+  });
+  mockUseMobileLifecycle.mockReturnValue({
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: WORKSPACE_FIXTURE_IDENTITY },
+    },
+    workspaceGateway: {
+      authorizationScope: {
+        actions: ['get_review', 'execute_review_action'],
+      },
+      reviewEffectKinds: ['add_comment', 'approve_review'],
+    },
+  });
+  mockRouteParams = {
+    server: WORKSPACE_FIXTURE_IDENTITY,
+    workspace: workspace.id,
+    revision: workspace.revision,
+    destination: 'review',
+    review_revision: detail.review.revision,
+    file: 'file-1',
+    hunk: 'hunk-1',
+  };
+  jest.mocked(AsyncStorage.setItem).mockImplementation((key, value) => {
+    const isEmptyReviewDraftWrite =
+      key === 'automonique.mobile.review-drafts.v1' &&
+      (JSON.parse(value) as { readonly drafts?: readonly unknown[] }).drafts
+        ?.length === 0;
+    if (completedRemotely && isEmptyReviewDraftWrite && !cleanupRejected) {
+      cleanupRejected = true;
+      return Promise.reject(new Error('draft clear failed'));
+    }
+    return Promise.resolve();
+  });
+
+  const view = await render(<WorkspaceDetailScreen />);
+  const draft = await view.findByLabelText(
+    'Comment draft for file-1, hunk hunk-1, new line 1',
+  );
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  await act(async () => {
+    fireEvent.changeText(draft, 'Please preserve this anchor');
+    await Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(view.getByLabelText('Add persisted comment')).not.toBeDisabled(),
+  );
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Add persisted comment'));
+    await Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(view.getByLabelText('Confirm exact review action')).toBeTruthy(),
+  );
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Confirm exact review action'));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  await waitFor(() =>
+    expect(
+      view.getByLabelText('Retry completed review local cleanup'),
+    ).toBeTruthy(),
+  );
+  expect(executeReviewAction).toHaveBeenCalledTimes(1);
+  expect(reconcileReviewAction).not.toHaveBeenCalled();
+  expect(view.queryByLabelText('Confirm exact review action')).toBeNull();
+  expect(view.queryByLabelText('Reconcile exact review receipt')).toBeNull();
+  expect(view.getByLabelText('Cancel review action')).toBeDisabled();
+
+  await act(async () => {
+    fireEvent.press(
+      view.getByLabelText('Retry completed review local cleanup'),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(
+      view.queryByLabelText('Exact review action confirmation'),
+    ).toBeNull(),
+  );
+  await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+  expect(executeReviewAction).toHaveBeenCalledTimes(1);
+  expect(reconcileReviewAction).not.toHaveBeenCalled();
+});
+
 test('discovery keeps external and orchestration status separate and labels partial coverage', async () => {
   const view = await render(<WorkspacesScreen />);
   expect(view.getByText('Orchestration: review')).toBeTruthy();
