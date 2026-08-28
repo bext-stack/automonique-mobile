@@ -598,6 +598,7 @@ test('check rerun fetches an inert server preview before a separate confirmed su
       },
     },
     confirmationDigest: 'ab'.repeat(32) as never,
+    receiptCorrelationDigest: 'cd'.repeat(32) as never,
   });
   const previewCheckRerun = jest.fn().mockResolvedValue(preview);
   const confirmCheckRerun = jest.fn().mockImplementation((_preview, key) =>

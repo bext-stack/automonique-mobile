@@ -725,14 +725,13 @@ test('deep links bind the live grant plus exact review, file, and hunk revisions
     ...review(),
     checks: [check],
   } as unknown as ReviewSnapshot;
-  expect(
-    admitReviewDeepLink(catalog, [detail(checkSnapshot)], {
-      ...request,
-      fileId: null,
-      hunkId: null,
-      checkId: check.id,
-    }),
-  ).toEqual({
+  const checkRoute = admitReviewDeepLink(catalog, [detail(checkSnapshot)], {
+    ...request,
+    fileId: null,
+    hunkId: null,
+    checkId: check.id,
+  });
+  expect(checkRoute).toEqual({
     pathname: '/workspace/[server]/[workspace]',
     params: expect.objectContaining({
       destination: 'review',
@@ -740,6 +739,9 @@ test('deep links bind the live grant plus exact review, file, and hunk revisions
       check: 'check-1',
     }),
   });
+  expect(JSON.stringify(checkRoute)).not.toMatch(
+    /confirmation|correlation|digest/iu,
+  );
   expect(() =>
     admitReviewDeepLink(catalog, [detail(checkSnapshot)], {
       ...request,

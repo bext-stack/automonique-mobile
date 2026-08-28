@@ -107,7 +107,7 @@ test('notification coordinates are exact, bounded, and inert until live re-admis
     ].sort(),
   );
   expect(JSON.stringify(encoded)).not.toMatch(
-    /session|pathname|body|title|token/iu,
+    /session|pathname|body|title|token|confirmation|correlation|digest/iu,
   );
   expect(decodeReviewNotificationData(encoded)).toEqual(request);
   expect(() =>
@@ -146,12 +146,23 @@ test('check attention notifications retain the exact rerun deep-link anchor', ()
     check_id: 'check-1',
   });
   expect(decodeReviewNotificationData(encoded)).toEqual(request);
+  expect(JSON.stringify(encoded)).not.toMatch(
+    /confirmation|correlation|digest/iu,
+  );
   expect(attentionNotificationKey({ target: 'review', request })).toContain(
     'check-1',
   );
   expect(() =>
     decodeReviewNotificationData({ ...encoded, file_id: 'file-1' }),
   ).toThrow('review_notification_invalid');
+  for (const forbidden of [
+    { confirmation_digest: 'ab'.repeat(32) },
+    { receipt_correlation_digest: 'cd'.repeat(32) },
+  ]) {
+    expect(() =>
+      decodeReviewNotificationData({ ...encoded, ...forbidden }),
+    ).toThrow('review_notification_invalid');
+  }
 });
 
 test('session notification carries only lookup coordinates and allows zero unread', () => {

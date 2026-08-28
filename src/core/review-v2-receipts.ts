@@ -1,19 +1,30 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { IdempotencyKey, type ReviewActionReceipt } from '@automonique/sdk';
+import {
+  IdempotencyKey,
+  ReviewReceiptCorrelationDigest,
+  WorkContextRevision,
+  type ReviewActionReceipt,
+} from '@automonique/sdk';
 
 export const REVIEW_V2_RECEIPT_HANDLE_SCHEMA =
-  'automonique.mobile-review-v2-receipt-handle/v2' as const;
+  'automonique.mobile-review-v2-receipt-handle/v3' as const;
 const LEGACY_REVIEW_V2_RECEIPT_HANDLE_SCHEMA =
+  'automonique.mobile-review-v2-receipt-handle/v2' as const;
+const LEGACY_REVIEW_V1_RECEIPT_HANDLE_SCHEMA =
   'automonique.mobile-review-v2-receipt-handle/v1' as const;
 const REVIEW_RECEIPT_INDEX_SCHEMA =
+  'automonique.mobile-review-v2-receipt-index/v3' as const;
+const LEGACY_REVIEW_V2_RECEIPT_INDEX_SCHEMA =
   'automonique.mobile-review-v2-receipt-index/v2' as const;
-const LEGACY_REVIEW_RECEIPT_INDEX_SCHEMA =
+const LEGACY_REVIEW_V1_RECEIPT_INDEX_SCHEMA =
   'automonique.mobile-review-v2-receipt-index/v1' as const;
 const REVIEW_RECEIPT_STORAGE_PREFIX =
+  'automonique.mobile.review-v2-receipts.v3';
+const LEGACY_REVIEW_V2_RECEIPT_STORAGE_PREFIX =
   'automonique.mobile.review-v2-receipts.v2';
-const LEGACY_REVIEW_RECEIPT_STORAGE_PREFIX =
+const LEGACY_REVIEW_V1_RECEIPT_STORAGE_PREFIX =
   'automonique.mobile.review-v2-receipts.v1';
 export const MAX_REVIEW_RECEIPT_HANDLES = 32;
 const MAX_REVIEW_RECEIPT_STORAGE_BYTES = 32 * 1024;
@@ -38,13 +49,24 @@ export interface ReviewV2ReceiptHandle {
   readonly action_digest: string;
   readonly idempotency_key: string;
   readonly created_at_ms: string;
+  /** Present only for a complete, correlated check-rerun recovery handle. */
+  readonly expected_workspace_revision: string | null;
+  /** Non-authorizing correlation proof; never a notification or deep-link field. */
+  readonly receipt_correlation_digest: string | null;
 }
 
 type LegacyReviewV2ReceiptHandle = Omit<
   ReviewV2ReceiptHandle,
-  'schema' | 'action_kind'
+  'schema' | 'expected_workspace_revision' | 'receipt_correlation_digest'
 > & {
   readonly schema: typeof LEGACY_REVIEW_V2_RECEIPT_HANDLE_SCHEMA;
+};
+
+type LegacyReviewV1ReceiptHandle = Omit<
+  LegacyReviewV2ReceiptHandle,
+  'schema' | 'action_kind'
+> & {
+  readonly schema: typeof LEGACY_REVIEW_V1_RECEIPT_HANDLE_SCHEMA;
   readonly action_kind: 'add_comment' | 'approve_review';
 };
 
@@ -79,14 +101,34 @@ function decimal(value: unknown): string {
   return result;
 }
 
+function workContextRevision(value: unknown): string {
+  try {
+    return WorkContextRevision(BigInt(decimal(value))).toString();
+  } catch {
+    throw new Error('review_receipt_handle_invalid');
+  }
+}
+
+function admitReceiptCorrelationDigest(value: unknown): string {
+  try {
+    return ReviewReceiptCorrelationDigest(bounded(value, 64));
+  } catch {
+    throw new Error('review_receipt_handle_invalid');
+  }
+}
+
 function admitReceiptHandle(
   value: unknown,
   schema:
     | typeof REVIEW_V2_RECEIPT_HANDLE_SCHEMA
-    | typeof LEGACY_REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
+    | typeof LEGACY_REVIEW_V2_RECEIPT_HANDLE_SCHEMA
+    | typeof LEGACY_REVIEW_V1_RECEIPT_HANDLE_SCHEMA,
   actionKinds: readonly ReviewV2ReceiptHandle['action_kind'][],
   authorityKinds: readonly ReviewV2ReceiptHandle['authority_kind'][],
-): ReviewV2ReceiptHandle | LegacyReviewV2ReceiptHandle {
+):
+  | ReviewV2ReceiptHandle
+  | LegacyReviewV2ReceiptHandle
+  | LegacyReviewV1ReceiptHandle {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('review_receipt_handle_invalid');
   }
@@ -105,6 +147,9 @@ function admitReceiptHandle(
     'action_digest',
     'idempotency_key',
     'created_at_ms',
+    ...(schema === REVIEW_V2_RECEIPT_HANDLE_SCHEMA
+      ? ['expected_workspace_revision', 'receipt_correlation_digest']
+      : []),
   ];
   if (
     Object.keys(candidate).length !== fields.length ||
@@ -135,7 +180,7 @@ function admitReceiptHandle(
   ) {
     throw new Error('review_receipt_handle_invalid');
   }
-  return {
+  const base = {
     schema,
     authorization_digest: authorizationDigest,
     project: bounded(candidate.project),
@@ -150,7 +195,30 @@ function admitReceiptHandle(
     action_digest: actionDigest,
     idempotency_key: IdempotencyKey(bounded(candidate.idempotency_key)),
     created_at_ms: decimal(candidate.created_at_ms),
-  } as ReviewV2ReceiptHandle | LegacyReviewV2ReceiptHandle;
+  };
+  if (schema !== REVIEW_V2_RECEIPT_HANDLE_SCHEMA) {
+    return base as LegacyReviewV2ReceiptHandle | LegacyReviewV1ReceiptHandle;
+  }
+  const expectedWorkspaceRevision =
+    candidate.expected_workspace_revision === null
+      ? null
+      : workContextRevision(candidate.expected_workspace_revision);
+  const receiptCorrelationDigest =
+    candidate.receipt_correlation_digest === null
+      ? null
+      : admitReceiptCorrelationDigest(candidate.receipt_correlation_digest);
+  if (
+    (expectedWorkspaceRevision === null) !==
+      (receiptCorrelationDigest === null) ||
+    (actionKind === 'rerun_check') !== (receiptCorrelationDigest !== null)
+  ) {
+    throw new Error('review_receipt_handle_invalid');
+  }
+  return {
+    ...base,
+    expected_workspace_revision: expectedWorkspaceRevision,
+    receipt_correlation_digest: receiptCorrelationDigest,
+  } as ReviewV2ReceiptHandle;
 }
 
 export function admitReviewV2ReceiptHandle(
@@ -176,9 +244,26 @@ function admitLegacyReviewV2ReceiptHandle(
   return admitReceiptHandle(
     value,
     LEGACY_REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
+    [
+      'add_comment',
+      'approve_review',
+      'send_comment_to_agent',
+      'batch_send_comments_to_agent',
+      'rerun_check',
+    ],
+    ['review', 'ci'],
+  ) as LegacyReviewV2ReceiptHandle;
+}
+
+function admitLegacyReviewV1ReceiptHandle(
+  value: unknown,
+): LegacyReviewV1ReceiptHandle {
+  return admitReceiptHandle(
+    value,
+    LEGACY_REVIEW_V1_RECEIPT_HANDLE_SCHEMA,
     ['add_comment', 'approve_review'],
     ['review'],
-  ) as LegacyReviewV2ReceiptHandle;
+  ) as LegacyReviewV1ReceiptHandle;
 }
 
 export function reviewReceiptSettled(receipt: ReviewActionReceipt): boolean {
@@ -195,7 +280,9 @@ export function admitReviewReceiptForHandle(
     receipt.actor !== admitted.actor_id ||
     (receipt.outcome === 'completed' &&
       (receipt.revision === null ||
-        receipt.revision <= BigInt(admitted.expected_revision))) ||
+        (admitted.action_kind === 'rerun_check'
+          ? receipt.revision !== BigInt(admitted.expected_revision) + 1n
+          : receipt.revision <= BigInt(admitted.expected_revision)))) ||
     (receipt.outcome === 'conflict' &&
       (receipt.current_revision === null ||
         receipt.current_revision < BigInt(admitted.expected_revision)))
@@ -247,23 +334,45 @@ function admitIndex(encoded: string | null): ReviewReceiptIndex {
   return { schema: REVIEW_RECEIPT_INDEX_SCHEMA, handles };
 }
 
-function admitLegacyIndex(encoded: string): readonly ReviewV2ReceiptHandle[] {
+function migrateLegacyHandle(
+  legacy: LegacyReviewV2ReceiptHandle | LegacyReviewV1ReceiptHandle,
+): ReviewV2ReceiptHandle | null {
+  // V2 rerun handles predate the server-issued correlation identity. They are
+  // intentionally terminalized locally instead of falling back to the
+  // generic lookup, which cannot prove which provider attempt belongs to us.
+  if (legacy.action_kind === 'rerun_check') return null;
+  return {
+    ...legacy,
+    schema: REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
+    expected_workspace_revision: null,
+    receipt_correlation_digest: null,
+  };
+}
+
+function admitLegacyIndex(
+  encoded: string,
+  indexSchema:
+    | typeof LEGACY_REVIEW_V2_RECEIPT_INDEX_SCHEMA
+    | typeof LEGACY_REVIEW_V1_RECEIPT_INDEX_SCHEMA,
+): readonly ReviewV2ReceiptHandle[] {
   const value = parseIndex(encoded);
   if (
     Object.keys(value).length !== 2 ||
-    value.schema !== LEGACY_REVIEW_RECEIPT_INDEX_SCHEMA ||
+    value.schema !== indexSchema ||
     !Array.isArray(value.handles) ||
     value.handles.length > MAX_REVIEW_RECEIPT_HANDLES
   ) {
     throw new Error('review_receipt_store_invalid');
   }
-  const handles = value.handles.map((candidate) => {
-    const legacy = admitLegacyReviewV2ReceiptHandle(candidate);
-    return {
-      ...legacy,
-      schema: REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
-    } satisfies ReviewV2ReceiptHandle;
-  });
+  const handles = value.handles
+    .map((candidate) =>
+      migrateLegacyHandle(
+        indexSchema === LEGACY_REVIEW_V2_RECEIPT_INDEX_SCHEMA
+          ? admitLegacyReviewV2ReceiptHandle(candidate)
+          : admitLegacyReviewV1ReceiptHandle(candidate),
+      ),
+    )
+    .filter((handle): handle is ReviewV2ReceiptHandle => handle !== null);
   if (
     new Set(handles.map((handle) => handle.idempotency_key)).size !==
     handles.length
@@ -297,11 +406,14 @@ function storageKey(familyDigest: string): string {
   return `${REVIEW_RECEIPT_STORAGE_PREFIX}.${familyDigest}`;
 }
 
-function legacyStorageKey(familyDigest: string): string {
+function legacyStorageKeys(familyDigest: string): readonly string[] {
   if (!/^sha256:[0-9a-f]{64}$/u.test(familyDigest)) {
     throw new Error('review_receipt_store_scope_invalid');
   }
-  return `${LEGACY_REVIEW_RECEIPT_STORAGE_PREFIX}.${familyDigest}`;
+  return [
+    `${LEGACY_REVIEW_V2_RECEIPT_STORAGE_PREFIX}.${familyDigest}`,
+    `${LEGACY_REVIEW_V1_RECEIPT_STORAGE_PREFIX}.${familyDigest}`,
+  ];
 }
 
 async function write(
@@ -326,24 +438,35 @@ async function write(
 
 async function loadWithMigration(
   key: string,
-  legacyKey: string,
+  legacyKeys: readonly string[],
 ): Promise<ReviewReceiptIndex> {
   const current = admitIndex(await AsyncStorage.getItem(key));
-  const legacyEncoded = await AsyncStorage.getItem(legacyKey);
-  if (legacyEncoded === null) return current;
   const merged = [...current.handles];
-  for (const handle of admitLegacyIndex(legacyEncoded)) {
-    const existing = merged.find(
-      (candidate) => candidate.idempotency_key === handle.idempotency_key,
-    );
-    if (existing === undefined) merged.push(handle);
-    else if (JSON.stringify(existing) !== JSON.stringify(handle)) {
-      throw new Error('review_receipt_handle_collision');
+  const migratedKeys: string[] = [];
+  for (const [index, legacyKey] of legacyKeys.entries()) {
+    const legacyEncoded = await AsyncStorage.getItem(legacyKey);
+    if (legacyEncoded === null) continue;
+    migratedKeys.push(legacyKey);
+    const indexSchema =
+      index === 0
+        ? LEGACY_REVIEW_V2_RECEIPT_INDEX_SCHEMA
+        : LEGACY_REVIEW_V1_RECEIPT_INDEX_SCHEMA;
+    for (const handle of admitLegacyIndex(legacyEncoded, indexSchema)) {
+      const existing = merged.find(
+        (candidate) => candidate.idempotency_key === handle.idempotency_key,
+      );
+      if (existing === undefined) merged.push(handle);
+      else if (JSON.stringify(existing) !== JSON.stringify(handle)) {
+        throw new Error('review_receipt_handle_collision');
+      }
     }
   }
+  if (migratedKeys.length === 0) return current;
   // Copy-before-remove makes an interrupted migration safe to retry.
   await write(key, merged);
-  await AsyncStorage.removeItem(legacyKey);
+  for (const legacyKey of migratedKeys) {
+    await AsyncStorage.removeItem(legacyKey);
+  }
   return { schema: REVIEW_RECEIPT_INDEX_SCHEMA, handles: merged };
 }
 
@@ -362,26 +485,26 @@ export function createReviewV2ReceiptStore(
     ]);
     return {
       key: storageKey(family),
-      legacyKey: legacyStorageKey(family),
+      legacyKeys: legacyStorageKeys(family),
       authorization,
     };
   };
   return {
     async list() {
-      const { key, legacyKey } = await coordinates();
+      const { key, legacyKeys } = await coordinates();
       return locked(
         key,
-        async () => (await loadWithMigration(key, legacyKey)).handles,
+        async () => (await loadWithMigration(key, legacyKeys)).handles,
       );
     },
     async put(value) {
       const handle = admitReviewV2ReceiptHandle(value);
-      const { key, legacyKey, authorization } = await coordinates();
+      const { key, legacyKeys, authorization } = await coordinates();
       if (handle.authorization_digest !== authorization) {
         throw new Error('review_receipt_handle_scope_mismatch');
       }
       return locked(key, async () => {
-        const current = await loadWithMigration(key, legacyKey);
+        const current = await loadWithMigration(key, legacyKeys);
         const existing = current.handles.find(
           (candidate) => candidate.idempotency_key === handle.idempotency_key,
         );
@@ -397,9 +520,9 @@ export function createReviewV2ReceiptStore(
     },
     async remove(idempotencyKey) {
       IdempotencyKey(idempotencyKey);
-      const { key, legacyKey } = await coordinates();
+      const { key, legacyKeys } = await coordinates();
       await locked(key, async () => {
-        const current = await loadWithMigration(key, legacyKey);
+        const current = await loadWithMigration(key, legacyKeys);
         await write(
           key,
           current.handles.filter(

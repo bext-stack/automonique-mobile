@@ -9,6 +9,7 @@ import {
   PlatformV2Client,
   PlatformVersionNumber,
   ProjectId,
+  ReviewReceiptCorrelationDigest,
   SupportedPlatformVersionNumber,
   UserWorkspaceId,
   WorkContextPageLimit,
@@ -25,6 +26,7 @@ import {
   type PlatformV2Refusal,
   type ReviewCapabilities,
   type ReviewConfirmationDigest,
+  type ReviewReceiptCorrelationDigest as ReviewReceiptCorrelationDigestValue,
   type ProjectId as ProjectIdValue,
   type ReviewSnapshot,
   type ReviewAction,
@@ -52,6 +54,7 @@ import {
 } from './workspace-v2-receipts';
 import {
   REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
+  admitReviewV2ReceiptHandle,
   admitReviewReceiptForHandle,
   reviewReceiptSettled,
   type ReviewV2ReceiptHandle,
@@ -164,6 +167,7 @@ export interface PreparedCheckRerun {
   readonly authority: ReviewAuthority;
   readonly action: Extract<ReviewAction, { readonly kind: 'rerun_check' }>;
   readonly confirmationDigest: ReviewConfirmationDigest;
+  readonly receiptCorrelationDigest: ReviewReceiptCorrelationDigestValue;
 }
 
 export interface WorkspaceV2Gateway {
@@ -319,6 +323,8 @@ interface WorkspaceV2Client {
     action: Extract<ReviewAction, { readonly kind: 'rerun_check' }>,
     idempotencyKey: ReturnType<typeof IdempotencyKey>,
     confirmationDigest: ReviewConfirmationDigest,
+    expectedWorkspaceRevision: ReturnType<typeof WorkContextRevision>,
+    receiptCorrelationDigest: ReviewReceiptCorrelationDigestValue,
     signal?: AbortSignal,
   ): ReturnType<PlatformV2Client['executeConfirmedReviewAction']>;
   getReviewReceipt(
@@ -327,6 +333,13 @@ interface WorkspaceV2Client {
     idempotencyKey: ReturnType<typeof IdempotencyKey>,
     signal?: AbortSignal,
   ): ReturnType<PlatformV2Client['getReviewReceipt']>;
+  getCorrelatedReviewReceipt(
+    project: ProjectIdValue,
+    workspace: ReviewWorkspaceIdentity,
+    idempotencyKey: ReturnType<typeof IdempotencyKey>,
+    receiptCorrelationDigest: ReviewReceiptCorrelationDigestValue,
+    signal?: AbortSignal,
+  ): ReturnType<PlatformV2Client['getCorrelatedReviewReceipt']>;
   prepareMutation(
     key: ReturnType<typeof IdempotencyKey>,
     intent: WorkContextMutationIntent,
@@ -645,19 +658,32 @@ async function reviewActionDigest(
   expectedRevision: bigint,
   authority: ReviewAuthority,
   action: ReviewAction,
-  confirmationDigest: ReviewConfirmationDigest | null = null,
+  rerunRecovery: {
+    readonly confirmationDigest: ReviewConfirmationDigest;
+    readonly expectedWorkspaceRevision: bigint;
+    readonly receiptCorrelationDigest: ReviewReceiptCorrelationDigestValue;
+  } | null = null,
 ): Promise<string> {
-  const canonical = JSON.stringify(
-    {
-      schema: 'automonique.mobile-review-action-digest/v1',
-      workspace,
-      expectedRevision,
-      authority,
-      action,
-      confirmationDigest,
-    },
-    (_key, value: unknown) =>
-      typeof value === 'bigint' ? value.toString() : value,
+  const coordinates =
+    rerunRecovery === null
+      ? {
+          schema: 'automonique.mobile-review-action-digest/v1',
+          workspace,
+          expectedRevision,
+          authority,
+          action,
+          confirmationDigest: null,
+        }
+      : {
+          schema: 'automonique.mobile-review-action-digest/v2',
+          workspace,
+          expectedRevision,
+          authority,
+          action,
+          rerunRecovery,
+        };
+  const canonical = JSON.stringify(coordinates, (_key, value: unknown) =>
+    typeof value === 'bigint' ? value.toString() : value,
   );
   const digest = await Crypto.digestStringAsync(
     Crypto.CryptoDigestAlgorithm.SHA256,
@@ -855,7 +881,11 @@ export function createWorkspaceV2Gateway(
     readonly authority: ReviewAuthority;
     readonly action: MobileSupportedReviewAction;
     readonly idempotencyKey: string;
-    readonly confirmationDigest: ReviewConfirmationDigest | null;
+    readonly rerunRecovery: {
+      readonly confirmationDigest: ReviewConfirmationDigest;
+      readonly expectedWorkspaceRevision: bigint;
+      readonly receiptCorrelationDigest: ReviewReceiptCorrelationDigestValue;
+    } | null;
     readonly signal: AbortSignal | undefined;
     readonly send: (
       idempotencyKey: ReturnType<typeof IdempotencyKey>,
@@ -886,10 +916,14 @@ export function createWorkspaceV2Gateway(
         options.expectedRevision,
         options.authority,
         options.action,
-        options.confirmationDigest,
+        options.rerunRecovery,
       ),
       idempotency_key: idempotencyKey,
       created_at_ms: BigInt(now()).toString(),
+      expected_workspace_revision:
+        options.rerunRecovery?.expectedWorkspaceRevision.toString() ?? null,
+      receipt_correlation_digest:
+        options.rerunRecovery?.receiptCorrelationDigest ?? null,
     };
     let inserted = false;
     try {
@@ -1146,7 +1180,7 @@ export function createWorkspaceV2Gateway(
         authority,
         action,
         idempotencyKey: idempotencyKeyValue,
-        confirmationDigest: null,
+        rerunRecovery: null,
         signal,
         send: (idempotencyKey, combined) =>
           options.client.executeReviewAction(
@@ -1217,6 +1251,8 @@ export function createWorkspaceV2Gateway(
         !sameWorkContextIdentity(capabilities.workspace, workspace) ||
         capabilities.snapshot_revision !==
           WorkContextRevision(expectedRevision) ||
+        capabilities.workspace_revision !==
+          WorkContextRevision(expectedWorkspaceRevision) ||
         candidates.length !== 1
       ) {
         throw new WorkspaceV2GatewayError('review_rerun_capability_stale');
@@ -1251,6 +1287,7 @@ export function createWorkspaceV2Gateway(
         authority: capability.authority,
         action,
         confirmationDigest: capability.confirmation_digest,
+        receiptCorrelationDigest: capability.receipt_correlation_digest,
       });
       pendingCheckReruns.add(prepared);
       return prepared;
@@ -1305,7 +1342,11 @@ export function createWorkspaceV2Gateway(
         authority: prepared.authority,
         action: prepared.action,
         idempotencyKey: idempotencyKeyValue,
-        confirmationDigest: prepared.confirmationDigest,
+        rerunRecovery: {
+          confirmationDigest: prepared.confirmationDigest,
+          expectedWorkspaceRevision: prepared.workspaceRevision,
+          receiptCorrelationDigest: prepared.receiptCorrelationDigest,
+        },
         signal,
         send: (idempotencyKey, combined) =>
           options.client.executeConfirmedReviewAction(
@@ -1314,6 +1355,8 @@ export function createWorkspaceV2Gateway(
             prepared.action,
             idempotencyKey,
             prepared.confirmationDigest,
+            WorkContextRevision(prepared.workspaceRevision),
+            prepared.receiptCorrelationDigest,
             combined,
           ),
       });
@@ -1327,9 +1370,11 @@ export function createWorkspaceV2Gateway(
       const handles = await guardedReceiptOperation(() =>
         reviewReceiptStore.list(),
       );
-      return handles.filter((handle) =>
-        authorization.project_roots.includes(ProjectId(handle.project)),
-      );
+      return handles
+        .map(admitReviewV2ReceiptHandle)
+        .filter((handle) =>
+          authorization.project_roots.includes(ProjectId(handle.project)),
+        );
     },
 
     async reconcileReviewAction(idempotencyKeyValue, signal) {
@@ -1341,26 +1386,42 @@ export function createWorkspaceV2Gateway(
       const handles = await guardedReceiptOperation(() =>
         reviewReceiptStore.list(),
       );
-      const handle = handles.find(
+      const storedHandle = handles.find(
         (candidate) => candidate.idempotency_key === idempotencyKey,
       );
-      if (handle === undefined) {
+      if (storedHandle === undefined) {
         throw new WorkspaceV2GatewayError('review_receipt_handle_missing');
       }
+      const handle = admitReviewV2ReceiptHandle(storedHandle);
       const project = ProjectId(handle.project);
       requireProject(project);
       const workspace: ReviewWorkspaceIdentity = {
         kind: handle.workspace_kind,
         id: handle.workspace_id,
       } as ReviewWorkspaceIdentity;
-      const response = await guarded(signal, (combined) =>
-        options.client.getReviewReceipt(
+      const response = await guarded(signal, (combined) => {
+        if (handle.action_kind === 'rerun_check') {
+          if (
+            handle.expected_workspace_revision === null ||
+            handle.receipt_correlation_digest === null
+          ) {
+            throw new WorkspaceV2GatewayError('review_receipt_handle_invalid');
+          }
+          return options.client.getCorrelatedReviewReceipt(
+            project,
+            workspace,
+            idempotencyKey,
+            ReviewReceiptCorrelationDigest(handle.receipt_correlation_digest),
+            combined,
+          );
+        }
+        return options.client.getReviewReceipt(
           project,
           workspace,
           idempotencyKey,
           combined,
-        ),
-      );
+        );
+      });
       if (response.kind === 'platform_v2_refused') refusal(response.refusal);
       const receipt = admitReviewReceiptForHandle(response.receipt, handle);
       if (reviewReceiptSettled(receipt)) {
