@@ -70,6 +70,9 @@ never cached.
   output make admission fail rather than being ignored.
 - A stale workspace/session revision, missing destination grant, or unscoped
   retained session refuses a deep link.
+- A nested attention record cannot supply a session route by display text. Its
+  exact typed lineage origin must match a live Platform v2 work-session binding
+  and a current retained v1 target under the selected server identity.
 - Omitting a workspace, attempt, or session cannot erase its revision fence;
   an equal or older reintroduction forces resynchronization.
 - Terminal navigation is refused even when visible in a workspace unless both

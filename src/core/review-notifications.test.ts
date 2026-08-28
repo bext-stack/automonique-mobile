@@ -64,6 +64,15 @@ test('background notification is content-free and requires current Needs You att
   expect(
     admitReviewNotification({ ...candidate, attentionState: 'working' }),
   ).toBeNull();
+  for (const refused of [
+    { permission: 'denied' as const },
+    { permission: 'undetermined' as const },
+    { appState: 'inactive' as const },
+    { projectionLive: false },
+    { unread: 0 },
+  ]) {
+    expect(admitReviewNotification({ ...candidate, ...refused })).toBeNull();
+  }
 });
 
 test('notification coordinates are exact, bounded, and inert until live re-admission', () => {

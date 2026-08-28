@@ -5,10 +5,12 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Screen } from '@/components/screen';
 import {
-  admitReviewDeepLink,
+  admitAttentionDeepLink,
   projectAttentionNodes,
   workspaceForDetail,
 } from '@/core/review-attention';
+import { useMobile } from '@/providers/mobile-provider';
+import { useMobileLifecycle } from '@/providers/production-mobile-provider';
 import { useWorkspaces } from '@/providers/workspace-provider';
 import { usePalette } from '@/theme/palette';
 
@@ -22,6 +24,8 @@ const labels = {
 
 export default function AttentionScreen() {
   const palette = usePalette();
+  const { snapshot } = useMobile();
+  const { state: lifecycleState } = useMobileLifecycle();
   const {
     catalog,
     details,
@@ -33,20 +37,25 @@ export default function AttentionScreen() {
     const workspace = workspaceForDetail(catalog, detail);
     if (workspace === null || detail.review === null) return [];
     const nodes = projectAttentionNodes(detail.review.snapshot, detail.lineage);
-    let href: ReturnType<typeof admitReviewDeepLink> | null = null;
-    try {
-      href = admitReviewDeepLink(catalog, details, {
-        serverIdentity: detail.serverIdentity,
-        workspaceId: workspace.id,
-        workspaceRevision: workspace.revision,
-        reviewRevision: detail.review.revision,
-        fileId: null,
-        hunkId: null,
-      });
-    } catch {
-      href = null;
-    }
-    return nodes.map((node) => ({ detail, href, node, workspace }));
+    return nodes.map((node) => {
+      let href: ReturnType<typeof admitAttentionDeepLink> | null = null;
+      try {
+        href = admitAttentionDeepLink({
+          catalog,
+          details,
+          detail,
+          node,
+          retainedSessions:
+            lifecycleState.phase === 'ready' &&
+            lifecycleState.profile?.serverIdentity === detail.serverIdentity
+              ? snapshot.sessions
+              : [],
+        });
+      } catch {
+        href = null;
+      }
+      return { detail, href, node, workspace };
+    });
   });
 
   return (
@@ -116,9 +125,25 @@ export default function AttentionScreen() {
         </Pressable>
       </View>
       {rows.map(({ detail, href, node, workspace }) => {
+        const relationship =
+          node.parentLabel === null
+            ? node.kind === 'review'
+              ? 'Review summary'
+              : 'Top-level orchestration'
+            : `Nested under ${node.parentLabel}`;
+        const destination =
+          href?.pathname === '/workspace/[server]/[workspace]/session/[session]'
+            ? 'exact retained session'
+            : 'exact review anchor';
         const card = (
           <Pressable
             accessibilityRole="button"
+            accessibilityLabel={`${labels[node.state]}. ${node.label}. ${relationship}. ${node.unread} unread. ${workspace.title}.`}
+            accessibilityHint={
+              href === null
+                ? 'No exact current navigation coordinate is available.'
+                : `Opens the ${destination}.`
+            }
             accessibilityState={{ disabled: href === null }}
             disabled={href === null}
             style={[
@@ -149,6 +174,9 @@ export default function AttentionScreen() {
               )}
             </View>
             <Text style={{ color: palette.text }}>{node.label}</Text>
+            <Text style={[styles.meta, { color: palette.textMuted }]}>
+              {relationship}
+            </Text>
             <Text style={[styles.meta, { color: palette.textMuted }]}>
               {workspace.title} · {node.semanticKey} · source revision{' '}
               {node.revision ?? 'not applicable'} · review{' '}

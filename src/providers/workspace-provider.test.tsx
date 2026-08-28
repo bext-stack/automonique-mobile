@@ -271,6 +271,7 @@ function catalogBuild(
       workspaceRevision: workspace.revision,
       lineageAvailable: false,
       lineage: null,
+      sessionBindings: [],
       review: null,
     })),
     coverage: 'complete' as const,
@@ -793,6 +794,36 @@ test('notification permission is requested only after an explicit operator gestu
   );
 });
 
+test('a denied notification permission remains explicit and creates no notification', async () => {
+  mockNotificationRequestPermissions.mockResolvedValue({
+    status: 'denied',
+    canAskAgain: false,
+  });
+  const view = await render(
+    <WorkspaceProvider
+      gateway={null}
+      generationKey="notification-permission-denied"
+      profile={null}
+    >
+      <Probe />
+    </WorkspaceProvider>,
+  );
+
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Request review notifications'));
+    await Promise.resolve();
+  });
+
+  await waitFor(() =>
+    expect(view.getByTestId('notification-permission')).toHaveTextContent(
+      'denied',
+    ),
+  );
+  expect(mockNotificationRequestPermissions).toHaveBeenCalledTimes(1);
+  expect(mockNotificationSchedule).not.toHaveBeenCalled();
+  expect(mockNotificationRouterPush).not.toHaveBeenCalled();
+});
+
 test('revoked or unavailable state rejects notification delivery and navigation', async () => {
   mockNotificationGetPermissions.mockResolvedValue({
     status: 'granted',
@@ -861,15 +892,68 @@ test('cold-start and already-background refreshes admit and schedule exact notif
     revision: 7n,
     workspace: { kind: 'user_workspace', id: workspace.id },
     attention: {
-      reason: 'approval_required',
-      source_revision: 3n,
+      reason: 'comment_reply',
+      source_revision: 5n,
       state: 'needs_you',
       unread: 1n,
     },
-    attention_events: [],
-    files: [],
+    attention_events: [
+      {
+        id: 'attention-comment-1',
+        origin: {
+          authority: { kind: 'review', id: 'review-local' },
+          id: 'comment-1',
+          kind: 'comment',
+          revision: 5n,
+        },
+        reason: 'comment_reply',
+        unread: 1n,
+      },
+    ],
+    files: [
+      {
+        id: 'file-1',
+        path: 'src/exact.ts',
+        change: 'modified',
+        conflict: 'none',
+        worktree: 'unstaged',
+        preview: {
+          byte_size: 10n,
+          height: null,
+          kind: 'text',
+          media_type: 'text/plain',
+          sanitized: true,
+          width: null,
+        },
+        hunks: [
+          {
+            id: 'hunk-1',
+            old_start: 1n,
+            old_lines: 1n,
+            new_start: 1n,
+            new_lines: 1n,
+            preview: '-old\n+new',
+          },
+        ],
+      },
+    ],
     checks: [],
-    comments: [],
+    comments: [
+      {
+        actor: 'reviewer',
+        agent_state: 'not_sent',
+        anchor: {
+          file_id: 'file-1',
+          hunk_id: 'hunk-1',
+          line: 1n,
+          side: 'new',
+        },
+        body: 'Inspect this exact line.',
+        id: 'comment-1',
+        revision: 5n,
+        unread: true,
+      },
+    ],
     proposals: [],
     review: {
       authority: { kind: 'review', id: 'review-local' },
@@ -912,18 +996,39 @@ test('cold-start and already-background refreshes admit and schedule exact notif
         workspaceRevision: workspace.revision,
         lineageAvailable: false,
         lineage: null,
+        sessionBindings: [],
         review: {
           snapshot,
           revision: '7',
           attentionState: 'needs_you',
           unread: 1,
-          files: [],
+          files: [
+            {
+              id: 'file-1',
+              path: 'src/exact.ts',
+              change: 'modified',
+              worktree: 'unstaged',
+              conflict: 'none',
+              previewKind: 'text',
+              sanitized: true,
+              hunks: [
+                {
+                  id: 'hunk-1',
+                  oldStart: '1',
+                  oldLines: '1',
+                  newStart: '1',
+                  newLines: '1',
+                  preview: '-old\n+new',
+                },
+              ],
+            },
+          ],
           pullRequestState: 'open',
           pullRequestId: '35',
           reviewDecision: 'pending',
           deliveryState: 'not_delivered',
-          attentionReason: 'approval_required',
-          comments: [],
+          attentionReason: 'comment_reply',
+          comments: snapshot.comments,
           checks: [],
           proposals: [],
           reviewAuthority: snapshot.review.authority,
@@ -951,8 +1056,8 @@ test('cold-start and already-background refreshes admit and schedule exact notif
     workspace_id: workspace.id,
     workspace_revision: workspace.revision,
     review_revision: '7',
-    file_id: null,
-    hunk_id: null,
+    file_id: 'file-1',
+    hunk_id: 'hunk-1',
   };
   mockNotificationGetLastResponse.mockResolvedValue({
     notification: { request: { content: { data: notificationData } } },
@@ -1020,6 +1125,8 @@ test('cold-start and already-background refreshes admit and schedule exact notif
         revision: workspace.revision,
         destination: 'review',
         review_revision: '7',
+        file: 'file-1',
+        hunk: 'hunk-1',
       },
     }),
   );
@@ -1082,6 +1189,8 @@ test('cold-start and already-background refreshes admit and schedule exact notif
       revision: workspace.revision,
       destination: 'review',
       review_revision: '8',
+      file: 'file-1',
+      hunk: 'hunk-1',
     },
   });
 
@@ -1093,4 +1202,34 @@ test('cold-start and already-background refreshes admit and schedule exact notif
     },
   });
   expect(mockNotificationRouterPush).toHaveBeenCalledTimes(2);
+
+  await act(async () => {
+    view.rerender(
+      <WorkspaceProvider
+        gateway={null}
+        generationKey="revoked-after-live-notification"
+        profile={null}
+      >
+        <Probe />
+      </WorkspaceProvider>,
+    );
+    await Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(view.getByText('unavailable:1:cached')).toBeTruthy(),
+  );
+  await act(async () => {
+    mockNotificationResponse!({
+      notification: {
+        request: {
+          content: { data: { ...notificationData, review_revision: '8' } },
+        },
+      },
+    });
+    mockAppStateChange!('inactive');
+    mockAppStateChange!('background');
+    await Promise.resolve();
+  });
+  expect(mockNotificationRouterPush).toHaveBeenCalledTimes(2);
+  expect(mockNotificationSchedule).toHaveBeenCalledTimes(2);
 });

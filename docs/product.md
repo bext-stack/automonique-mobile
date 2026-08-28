@@ -209,10 +209,14 @@ one of these rows cannot create a receipt handle or network request.
 
 Exact chat jumps additionally require the workspace revision, typed retained
 session relation, session revision, and an exact session in the bounded v1
-mobile projection. Cached data and revision-scoped drafts survive offline, but
-non-chat destinations and every workspace mutation fail closed. Create/resume
-remain visibly disabled because no production UI adapter binds those intents
-to server-issued previews and receipts yet. Concurrent active credentials for
+mobile projection. Nested attention rows preserve the server's typed parent
+graph and expose a chat jump only when the lineage origin names a work session
+that the same live Platform v2 read bound to that exact retained session; the
+current selected v1 projection must independently contain its exact target and
+revision. Cached data and revision-scoped drafts survive offline, but non-chat
+destinations and every workspace mutation fail closed. Create/resume remain
+visibly disabled because no production UI adapter binds those intents to
+server-issued previews and receipts yet. Concurrent active credentials for
 multiple servers and live-server acceptance remain pending because the
 credential lifecycle currently admits one active server generation at a time.
 Terminal

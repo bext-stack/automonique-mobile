@@ -76,6 +76,11 @@ export interface WorkspaceCatalogDetail {
   readonly workspaceRevision: string;
   readonly lineageAvailable: boolean;
   readonly lineage: LineageProjection | null;
+  /** Exact live binding from a lineage work-session origin to its retained target. */
+  readonly sessionBindings: readonly {
+    readonly workSessionId: string;
+    readonly retainedSessionId: string;
+  }[];
   readonly review: WorkspaceReviewProjection | null;
 }
 
@@ -678,6 +683,10 @@ export async function buildWorkspaceServerCatalog(
       lineageAvailable:
         detail?.lineage !== null && detail?.lineage !== undefined,
       lineage: detail?.lineage ?? null,
+      sessionBindings: graph.sessions.map(({ record: session, target }) => ({
+        workSessionId: recordId(session),
+        retainedSessionId: target.id,
+      })),
       review: reviewRead,
     });
     const navigation: CompanionWorkspace['navigation'] = [
