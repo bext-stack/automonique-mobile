@@ -9,8 +9,16 @@ import {
   useState,
   type PropsWithChildren,
 } from 'react';
+import { useRouter } from 'expo-router';
+import { AppState } from 'react-native';
 
 import type { ConnectionProfile } from '@/core/credential-store';
+import type {
+  ReviewAction,
+  ReviewActionReceipt,
+  ReviewAuthority,
+} from '@automonique/sdk';
+import { UserWorkspaceId } from '@automonique/sdk';
 import {
   cacheWorkspaceCatalog,
   emptyWorkspaceCatalog,
@@ -27,7 +35,24 @@ import {
   buildWorkspaceServerCatalog,
   type WorkspaceCatalogDetail,
 } from '@/core/workspace-v2-catalog';
-import type { WorkspaceV2Gateway } from '@/core/workspace-v2-gateway';
+import type {
+  ReviewActionReconciliation,
+  ReviewActionSubmission,
+  WorkspaceV2Gateway,
+} from '@/core/workspace-v2-gateway';
+import type { ReviewV2ReceiptHandle } from '@/core/review-v2-receipts';
+import {
+  admitReviewDeepLink,
+  reviewAttentionAnchor,
+  workspaceForDetail,
+} from '@/core/review-attention';
+import {
+  admitReviewNotification,
+  decodeReviewNotificationData,
+  encodeReviewNotificationData,
+  type NotificationPermission,
+} from '@/core/review-notifications';
+import { reviewNotificationRuntime } from '@/core/review-notification-runtime';
 import {
   loadWorkspaceCatalogCache,
   persistWorkspaceCatalogCache,
@@ -52,6 +77,11 @@ interface WorkspaceContextValue {
   readonly catalog: WorkspaceCompanionCatalog;
   readonly status: WorkspaceCatalogStatus;
   readonly details: readonly WorkspaceCatalogDetail[];
+  readonly reviewBusy: boolean;
+  readonly reviewReceipts: readonly ReviewReceiptProjection[];
+  readonly pendingReviewReceipts: readonly ReviewV2ReceiptHandle[];
+  readonly notificationPermission: NotificationPermission;
+  readonly requestReviewNotificationPermission: () => Promise<void>;
   readonly refresh: () => Promise<void>;
   readonly selectServer: (identity: ServerIdentity) => void;
   readonly findServer: (identity: string) => ScopedServerProfile | null;
@@ -63,6 +93,28 @@ interface WorkspaceContextValue {
     serverIdentity: string,
     workspaceId: string,
   ) => WorkspaceCatalogDetail | null;
+  readonly executeReviewAction: (options: {
+    readonly projectId: string;
+    readonly workspaceId: string;
+    readonly workspaceRevision: string;
+    readonly reviewRevision: string;
+    readonly authority: ReviewAuthority;
+    readonly action: Extract<
+      ReviewAction,
+      { readonly kind: 'add_comment' | 'approve_review' }
+    >;
+    readonly idempotencyKey: string;
+  }) => Promise<ReviewActionSubmission>;
+  readonly reconcileReviewAction: (
+    idempotencyKey: string,
+  ) => Promise<ReviewActionReconciliation>;
+}
+
+export interface ReviewReceiptProjection {
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly actionKind: 'add_comment' | 'approve_review';
+  readonly receipt: ReviewActionReceipt;
 }
 
 interface WorkspaceProviderProps extends PropsWithChildren {
@@ -111,19 +163,216 @@ export function WorkspaceProvider({
   profile,
   generationKey,
 }: WorkspaceProviderProps) {
+  const router = useRouter();
+  const routerRef = useRef(router);
   const [catalog, setCatalog] = useState<WorkspaceCompanionCatalog>(() =>
     emptyWorkspaceCatalog(),
   );
   const [details, setDetails] = useState<readonly WorkspaceCatalogDetail[]>([]);
   const [status, setStatus] = useState<WorkspaceCatalogStatus>(INITIAL_STATUS);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewReceipts, setReviewReceipts] = useState<
+    readonly ReviewReceiptProjection[]
+  >([]);
+  const [pendingReviewReceipts, setPendingReviewReceipts] = useState<
+    readonly ReviewV2ReceiptHandle[]
+  >([]);
+  const [notificationPermission, setNotificationPermission] =
+    useState<NotificationPermission>(() =>
+      reviewNotificationRuntime.supported ? 'undetermined' : 'denied',
+    );
   const catalogRef = useRef(catalog);
+  const detailsRef = useRef(details);
+  const statusRef = useRef(status);
   const draftsRef = useRef<WorkspaceCompanionCache['intentDrafts']>([]);
   const operation = useRef<AbortController | null>(null);
+  const reviewOperation = useRef(false);
   const hydrated = useRef(false);
+  const notificationPermissionRef =
+    useRef<NotificationPermission>('undetermined');
+  const notifiedReviews = useRef(new Set<string>());
+  const appStateRef = useRef(AppState.currentState);
+  const pendingNotificationResponse = useRef<unknown | null>(null);
 
   useEffect(() => {
     catalogRef.current = catalog;
   }, [catalog]);
+
+  useEffect(() => {
+    detailsRef.current = details;
+  }, [details]);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  useEffect(() => {
+    notificationPermissionRef.current = notificationPermission;
+  }, [notificationPermission]);
+
+  useEffect(() => {
+    routerRef.current = router;
+  }, [router]);
+
+  const admitNotificationResponse = useCallback((data: unknown): boolean => {
+    if (statusRef.current.phase !== 'live') return false;
+    try {
+      const request = decodeReviewNotificationData(data);
+      const route = admitReviewDeepLink(
+        catalogRef.current,
+        detailsRef.current,
+        request,
+      );
+      routerRef.current.push({
+        pathname: route.pathname,
+        params: route.params,
+      });
+      return true;
+    } catch {
+      // Notification data is inert until current live state re-admits it.
+      return false;
+    }
+  }, []);
+
+  const scheduleLiveReviewNotifications = useCallback(
+    async (
+      liveCatalog: WorkspaceCompanionCatalog,
+      liveDetails: readonly WorkspaceCatalogDetail[],
+    ): Promise<void> => {
+      if (
+        appStateRef.current !== 'background' ||
+        notificationPermissionRef.current !== 'granted'
+      ) {
+        return;
+      }
+      for (const detail of liveDetails) {
+        if (
+          detail.review === null ||
+          detail.review.snapshot.attention.state !== 'needs_you' ||
+          detail.review.unread <= 0
+        ) {
+          continue;
+        }
+        const workspace = workspaceForDetail(liveCatalog, detail);
+        const server = liveCatalog.servers.find(
+          (candidate) => candidate.serverIdentity === detail.serverIdentity,
+        );
+        if (
+          workspace === null ||
+          server?.authorization !== 'active' ||
+          server.staleProjectIds.includes(workspace.projectId)
+        ) {
+          continue;
+        }
+        const request = {
+          serverIdentity: detail.serverIdentity,
+          workspaceId: workspace.id,
+          workspaceRevision: workspace.revision,
+          reviewRevision: detail.review.revision,
+          ...reviewAttentionAnchor(detail.review.snapshot),
+        };
+        let notificationKey: string | null = null;
+        try {
+          const route = admitReviewDeepLink(liveCatalog, liveDetails, request);
+          const candidate = admitReviewNotification({
+            permission: 'granted',
+            appState: 'background',
+            authorizationActive: true,
+            projectionLive: true,
+            attentionState: 'needs_you',
+            unread: detail.review.unread,
+            route,
+          });
+          notificationKey = `${detail.serverIdentity}:${workspace.id}:${detail.review.revision}`;
+          if (
+            candidate === null ||
+            notifiedReviews.current.has(notificationKey)
+          )
+            continue;
+          notifiedReviews.current.add(notificationKey);
+          await reviewNotificationRuntime.schedule({
+            title: candidate.title,
+            body: candidate.body,
+            data: encodeReviewNotificationData(request),
+          });
+        } catch {
+          // Stale/incomplete coordinates and scheduling failures stay retriable.
+          if (notificationKey !== null)
+            notifiedReviews.current.delete(notificationKey);
+        }
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    void reviewNotificationRuntime.configure().catch(() => undefined);
+    void reviewNotificationRuntime
+      .permission()
+      .then(setNotificationPermission)
+      .catch(() => setNotificationPermission('denied'));
+    void reviewNotificationRuntime
+      .lastResponse()
+      .then((data) => {
+        if (data === null) return;
+        if (admitNotificationResponse(data)) {
+          void reviewNotificationRuntime
+            .clearLastResponse()
+            .catch(() => undefined);
+        } else {
+          pendingNotificationResponse.current = data;
+        }
+      })
+      .catch(() => undefined);
+
+    const removeResponse = reviewNotificationRuntime.onResponse((data) => {
+      if (admitNotificationResponse(data)) {
+        void reviewNotificationRuntime
+          .clearLastResponse()
+          .catch(() => undefined);
+      } else {
+        pendingNotificationResponse.current = data;
+      }
+    });
+    const appStateSubscription = AppState.addEventListener('change', (next) => {
+      appStateRef.current = next;
+      if (next === 'background' && statusRef.current.phase === 'live') {
+        void scheduleLiveReviewNotifications(
+          catalogRef.current,
+          detailsRef.current,
+        );
+      } else if (
+        next === 'active' &&
+        pendingNotificationResponse.current !== null
+      ) {
+        const data = pendingNotificationResponse.current;
+        if (admitNotificationResponse(data)) {
+          pendingNotificationResponse.current = null;
+          void reviewNotificationRuntime
+            .clearLastResponse()
+            .catch(() => undefined);
+        }
+      }
+    });
+    return () => {
+      removeResponse();
+      appStateSubscription.remove();
+    };
+  }, [admitNotificationResponse, scheduleLiveReviewNotifications]);
+
+  const requestReviewNotificationPermission = useCallback(async () => {
+    if (!reviewNotificationRuntime.supported) {
+      setNotificationPermission('denied');
+      return;
+    }
+    try {
+      setNotificationPermission(
+        await reviewNotificationRuntime.requestPermission(),
+      );
+    } catch {
+      setNotificationPermission('denied');
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     operation.current?.abort('workspace_generation_replaced');
@@ -152,6 +401,29 @@ export function WorkspaceProvider({
       message: 'Refreshing typed workspace relations',
     }));
     try {
+      const recovered: ReviewReceiptProjection[] = [];
+      let pending: readonly ReviewV2ReceiptHandle[] = [];
+      if (
+        gateway.reviewEffectKinds.length > 0 &&
+        gateway.authorizationScope.actions.includes('get_review_receipt')
+      ) {
+        pending = await gateway.pendingReviewReceipts();
+        for (const handle of pending) {
+          if (controller.signal.aborted) return;
+          const result = await gateway.reconcileReviewAction(
+            handle.idempotency_key,
+            controller.signal,
+          );
+          recovered.push({
+            projectId: handle.project,
+            workspaceId: handle.workspace_id,
+            actionKind: handle.action_kind,
+            receipt: result.receipt,
+          });
+        }
+        pending = await gateway.pendingReviewReceipts();
+      }
+      if (controller.signal.aborted) return;
       const built = await buildWorkspaceServerCatalog({
         gateway,
         origin: profile.origin,
@@ -180,7 +452,20 @@ export function WorkspaceProvider({
       catalogRef.current = next;
       setCatalog(next);
       setDetails(built.details);
-      setStatus({
+      detailsRef.current = built.details;
+      setPendingReviewReceipts(pending);
+      setReviewReceipts((current) => [
+        ...recovered,
+        ...current.filter(
+          (projection) =>
+            !recovered.some(
+              (candidate) =>
+                candidate.receipt.idempotency_key ===
+                projection.receipt.idempotency_key,
+            ),
+        ),
+      ]);
+      const nextStatus: WorkspaceCatalogStatus = {
         phase: 'live',
         coverage: built.coverage,
         message:
@@ -194,7 +479,17 @@ export function WorkspaceProvider({
         omittedSessionCount: built.omittedSessionCount,
         failedProjectCount: built.failedProjectCount,
         failedDetailCount: built.failedDetailCount,
-      });
+      };
+      statusRef.current = nextStatus;
+      setStatus(nextStatus);
+      const response = pendingNotificationResponse.current;
+      if (response !== null && admitNotificationResponse(response)) {
+        pendingNotificationResponse.current = null;
+        void reviewNotificationRuntime
+          .clearLastResponse()
+          .catch(() => undefined);
+      }
+      await scheduleLiveReviewNotifications(next, built.details);
     } catch (error) {
       if (controller.signal.aborted) return;
       const cached = cacheWorkspaceCatalog(catalogRef.current);
@@ -213,7 +508,123 @@ export function WorkspaceProvider({
     } finally {
       unregister();
     }
-  }, [gateway, profile]);
+  }, [
+    admitNotificationResponse,
+    gateway,
+    profile,
+    scheduleLiveReviewNotifications,
+  ]);
+
+  const executeReviewAction = useCallback(
+    async (options: {
+      readonly projectId: string;
+      readonly workspaceId: string;
+      readonly workspaceRevision: string;
+      readonly reviewRevision: string;
+      readonly authority: ReviewAuthority;
+      readonly action: Extract<
+        ReviewAction,
+        { readonly kind: 'add_comment' | 'approve_review' }
+      >;
+      readonly idempotencyKey: string;
+    }): Promise<ReviewActionSubmission> => {
+      if (gateway === null || profile === null || reviewOperation.current) {
+        throw new Error('review_mutation_unavailable');
+      }
+      const detail = detailsRef.current.find(
+        (candidate) =>
+          candidate.serverIdentity ===
+            gateway.authorizationScope.serverIdentity &&
+          candidate.workspaceId === options.workspaceId &&
+          candidate.workspaceRevision === options.workspaceRevision &&
+          candidate.review?.revision === options.reviewRevision,
+      );
+      const server = catalogRef.current.servers.find(
+        (candidate) =>
+          candidate.serverIdentity ===
+          gateway.authorizationScope.serverIdentity,
+      );
+      if (
+        statusRef.current.phase !== 'live' ||
+        server?.authorization !== 'active' ||
+        server.staleProjectIds.includes(options.projectId) ||
+        detail === undefined ||
+        !gateway.reviewEffectKinds.includes(options.action.kind)
+      ) {
+        throw new Error('review_mutation_unavailable');
+      }
+      reviewOperation.current = true;
+      setReviewBusy(true);
+      try {
+        const result = await gateway.executeReviewAction(
+          options.projectId,
+          { kind: 'user_workspace', id: UserWorkspaceId(options.workspaceId) },
+          BigInt(options.reviewRevision),
+          options.authority,
+          options.action,
+          options.idempotencyKey,
+        );
+        if (result.receipt !== null) {
+          const receipt = result.receipt;
+          setReviewReceipts((current) => [
+            {
+              projectId: options.projectId,
+              workspaceId: options.workspaceId,
+              actionKind: options.action.kind,
+              receipt,
+            },
+            ...current.filter(
+              (projection) =>
+                projection.receipt.idempotency_key !== receipt.idempotency_key,
+            ),
+          ]);
+        }
+        await refresh();
+        return result;
+      } finally {
+        reviewOperation.current = false;
+        setReviewBusy(false);
+      }
+    },
+    [gateway, profile, refresh],
+  );
+
+  const reconcileReviewAction = useCallback(
+    async (idempotencyKey: string): Promise<ReviewActionReconciliation> => {
+      if (gateway === null || profile === null || reviewOperation.current) {
+        throw new Error('review_reconciliation_unavailable');
+      }
+      const handle = pendingReviewReceipts.find(
+        (candidate) => candidate.idempotency_key === idempotencyKey,
+      );
+      if (handle === undefined) {
+        throw new Error('review_receipt_handle_missing');
+      }
+      reviewOperation.current = true;
+      setReviewBusy(true);
+      try {
+        const result = await gateway.reconcileReviewAction(idempotencyKey);
+        setReviewReceipts((current) => [
+          {
+            projectId: result.handle.project,
+            workspaceId: result.handle.workspace_id,
+            actionKind: result.handle.action_kind,
+            receipt: result.receipt,
+          },
+          ...current.filter(
+            (projection) =>
+              projection.receipt.idempotency_key !== idempotencyKey,
+          ),
+        ]);
+        await refresh();
+        return result;
+      } finally {
+        reviewOperation.current = false;
+        setReviewBusy(false);
+      }
+    },
+    [gateway, pendingReviewReceipts, profile, refresh],
+  );
 
   useEffect(() => {
     let active = true;
@@ -260,6 +671,10 @@ export function WorkspaceProvider({
         catalog,
         status,
         details,
+        reviewBusy,
+        reviewReceipts,
+        pendingReviewReceipts,
+        notificationPermission,
         refresh,
         selectServer,
         findServer: (identity) =>
@@ -277,6 +692,9 @@ export function WorkspaceProvider({
               detail.serverIdentity === identity &&
               detail.workspaceId === workspaceId,
           ) ?? null,
+        executeReviewAction,
+        reconcileReviewAction,
+        requestReviewNotificationPermission,
       }}
     >
       {children}

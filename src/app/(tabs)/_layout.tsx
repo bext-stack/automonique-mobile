@@ -10,6 +10,7 @@ const icons = {
   index: '⌂',
   sessions: '◉',
   workspaces: '◇',
+  attention: '!',
   approvals: '✓',
   activity: '≋',
   server: '⌘',
@@ -71,6 +72,14 @@ export default function OperatorTabs() {
           tabBarIcon: ({ color }) => (
             <TabIcon color={color} name="workspaces" />
           ),
+        }}
+      />
+      <Tabs.Screen
+        name="attention"
+        options={{
+          title: 'Attention',
+          tabBarAccessibilityLabel: 'Workspace review attention',
+          tabBarIcon: ({ color }) => <TabIcon color={color} name="attention" />,
         }}
       />
       <Tabs.Screen

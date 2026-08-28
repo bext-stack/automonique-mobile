@@ -66,10 +66,11 @@ restart and history resynchronization. Only a fresh command-state projection
 whose session revision is strictly greater clears it. A refresh at the same or
 an older revision cannot manufacture write authority.
 
-Rejected, conflict, and resync-required receipts leave the draft intact so the
-operator can review it after freshness is restored. A possibly applied outcome
-clears the draft because the reconciliation store intentionally contains no
-command payload and must never act as a replay queue.
+Accepted, unknown, rejected, conflict, and resync-required review outcomes leave
+the confirmation and draft intact while the durable handle is reconciled or a
+terminal result is inspected. Only a final completed review receipt clears the
+draft. The reconciliation store intentionally contains no command payload and
+can never act as a replay queue.
 
 ## Production networking gate
 

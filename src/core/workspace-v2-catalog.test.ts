@@ -486,6 +486,7 @@ test('projects typed relations, lineage status, review attention, and separately
     navigation: [
       { destination: 'chat', revision: '2' },
       { destination: 'files', revision: '2' },
+      { destination: 'review', revision: '2' },
       { destination: 'preview', revision: '2' },
       { destination: 'source_control', revision: '2' },
     ],

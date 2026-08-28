@@ -34,6 +34,7 @@ import {
   createWorkspaceV2ReceiptStore,
   migrateLegacyWorkspaceV2Receipts,
 } from './workspace-v2-receipt-storage';
+import { createReviewV2ReceiptStore } from './review-v2-receipts';
 
 export type MobileLifecycleState =
   | { readonly phase: 'loading'; readonly profile: null }
@@ -721,6 +722,10 @@ export class MobileLifecycleCoordinator {
         },
       },
       receiptStore: createWorkspaceV2ReceiptStore(
+        () => mobileV2DelegationFamilyDigest(workspaceAuthorization),
+        () => mobileV2AuthorizationDigest(workspaceAuthorization),
+      ),
+      reviewReceiptStore: createReviewV2ReceiptStore(
         () => mobileV2DelegationFamilyDigest(workspaceAuthorization),
         () => mobileV2AuthorizationDigest(workspaceAuthorization),
       ),

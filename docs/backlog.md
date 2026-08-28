@@ -114,6 +114,35 @@ Remaining tracked work is grouped in the
     credentials, live-server acceptance, and device evidence remain external
     gates.
 
+## In progress — scoped review and attention controls
+
+- [ ] **[MOB-135 — Add scoped mobile review, attention, notification, and PR controls](https://github.com/bext-stack/automonique-mobile/issues/35).**
+  - [x] Render bounded sanitized diffs, checks, pull-request/readiness state,
+        structured `Needs You`/`Working`/`Blocked`/`Done` attention, unread
+        counts, and nested orchestration without parsing display labels.
+  - [x] Persist exact authorization/principal/workspace/review/file/hunk/side/line
+        comment drafts and purge them on server credential revocation.
+  - [x] Require an explicit confirmation preview for revision-bound add-comment
+        and approve-review effects, persist an idempotency handle before sending,
+        and reconcile ambiguous responses without replaying the mutation.
+  - [ ] Add opt-in, content-free background delivery whose inert coordinates
+        are re-admitted against the current live catalog before navigation.
+        Local scheduling, cold-start response admission, and web/SSR isolation
+        are implemented; an authorized OS background/push source is still
+        required for attention arriving after suspension.
+  - [x] Cover permission prompting, stale/revoked deep links, local background
+        eligibility, draft-persistence failure, one-key confirmation and
+        receipt recovery, and accessibility contracts in automated tests and
+        all-platform exports.
+  - [ ] Add separately delegated server adapters for batch-send-to-agent,
+        check rerun, pull-request update, and merge; they remain explicitly
+        unavailable and there is no generic execute or shell fallback.
+  - [ ] Record live Mobile/ShellDeck/web fixture parity plus an authorized
+        background-notification deep-link pass.
+  - [ ] Record immutable iOS/EAS, VoiceOver/TalkBack, and independent-review
+        evidence for the final merged commit. Automated export and semantic
+        accessibility checks are not substitutes for those device gates.
+
 ## Native release readiness
 
 - [ ] **[MOB-200 — Run reproducible EAS Android and iOS simulator builds](https://github.com/bext-stack/automonique-mobile/issues/6).**

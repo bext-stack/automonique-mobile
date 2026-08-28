@@ -98,12 +98,15 @@ migration record. The expired grant is not returned as authority and cannot
 construct a gateway, while the primary refresh token remains available. A
 malformed optional grant or migration record is discarded without erasing an
 otherwise valid primary credential.
-Canonical receipts
-must match the exact project-bound
-handle, preview, digests, idempotency key, approval, and resulting revision.
-Accepted or transport-lost submissions remain explicitly reconcilable across
-reload without replay, and settled receipts require an authoritative
-projection refresh.
+Canonical receipts must match their exact project-bound handle, intent/action
+digest, idempotency key, actor, authority, target revision, and resulting
+revision. Review receipt handles also retain the exact workspace and action
+kind, so the UI can disable and render only the matching effect. Accepted,
+unknown, or transport-lost submissions remain explicitly reconcilable across
+reload without replay. Only a completed review receipt clears its local draft;
+refused and conflict outcomes remain visible with the draft intact. Receipt
+reconciliation precedes the next authoritative projection refresh so a stale
+pre-reconciliation snapshot is never published as current.
 
 The synthetic and SDK gateways implement the same interface. Synthetic data
 must pass through gateway bootstrap, attachment, cursor reduction, mutation,
@@ -234,17 +237,19 @@ mobile actions in the first slice.
 
 ## Persistence boundaries
 
-| Data                                     | Store                 | Ceiling/lifetime                                                 | Rule                                                             |
-| ---------------------------------------- | --------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Scoped access and refresh credentials    | OS Secure Store       | Server expiry/rotation/revocation                                | Never Async Storage; pairing proof is never persisted            |
-| v2 receipt migration coordinates         | OS Secure Store       | Current/expired credential family; fixed digest only             | Non-authority; cannot construct a gateway or mutation            |
-| Endpoint, actor, expiry, server identity | Async Storage profile | One active profile                                               | Metadata only; endpoint must pass HTTPS policy                   |
-| Endpoint draft                           | Async Storage         | One draft; 2 KiB                                                 | Re-admitted on load; validation makes no network call            |
-| Read projection                          | Async Storage         | 256 KiB; 100 sessions; 1,000 events; 100 approvals; 200 receipts | Schema-admitted and always restored stale/read-only              |
-| Workspace companion projection           | Async Storage         | 256 KiB; 8 servers; 64 server and 1,024 object tombstones        | Exact-scope admitted; restored stale with read authority only    |
-| Workspace task-context draft             | Async Storage         | 32 inert server/workspace/revision-scoped drafts                 | Purged on server revocation; never restores an authority preview |
-| Message draft                            | Async Storage         | One draft per session; negotiated UTF-8 follow-up byte ceiling   | Re-admitted on load; never submitted in the background           |
-| Reconciliation handle                    | Async Storage         | 20 handles; 16 KiB encoded set                                   | Action, exact target and key only; never an executable command   |
+| Data                                     | Store                 | Ceiling/lifetime                                                 | Rule                                                               |
+| ---------------------------------------- | --------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Scoped access and refresh credentials    | OS Secure Store       | Server expiry/rotation/revocation                                | Never Async Storage; pairing proof is never persisted              |
+| v2 receipt migration coordinates         | OS Secure Store       | Current/expired credential family; fixed digest only             | Non-authority; cannot construct a gateway or mutation              |
+| Endpoint, actor, expiry, server identity | Async Storage profile | One active profile                                               | Metadata only; endpoint must pass HTTPS policy                     |
+| Endpoint draft                           | Async Storage         | One draft; 2 KiB                                                 | Re-admitted on load; validation makes no network call              |
+| Read projection                          | Async Storage         | 256 KiB; 100 sessions; 1,000 events; 100 approvals; 200 receipts | Schema-admitted and always restored stale/read-only                |
+| Workspace companion projection           | Async Storage         | 256 KiB; 8 servers; 64 server and 1,024 object tombstones        | Exact-scope admitted; restored stale with read authority only      |
+| Workspace task-context draft             | Async Storage         | 32 inert server/workspace/revision-scoped drafts                 | Purged on server revocation; never restores an authority preview   |
+| Review line-comment draft                | Async Storage         | 64 exact authorization/principal/review/anchor-scoped drafts     | Purged on server revocation; draft text is never notification data |
+| Message draft                            | Async Storage         | One draft per session; negotiated UTF-8 follow-up byte ceiling   | Re-admitted on load; never submitted in the background             |
+| Reconciliation handle                    | Async Storage         | 20 handles; 16 KiB encoded set                                   | Action, exact target and key only; never an executable command     |
+| Review reconciliation handle             | Async Storage         | 32 handles; 32 KiB encoded set                                   | Exact actor/authority/action digest/revision/key; no comment body  |
 
 Provider credentials, raw provider/tool output, routing policy, and an offline
 mutation queue never cross or live inside the mobile boundary.

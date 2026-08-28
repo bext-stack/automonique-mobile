@@ -28,6 +28,7 @@ import {
   type JsonValue,
   type MutationApproval,
   type MutationPreview,
+  type ReviewSnapshot,
   type WorkContextMutationIntent,
   type WorkContextRecord,
 } from '@automonique/sdk';
@@ -57,13 +58,29 @@ import {
   createWorkspaceV2ReceiptStore,
   migrateLegacyWorkspaceV2Receipts,
 } from './workspace-v2-receipt-storage';
+import {
+  type ReviewV2ReceiptHandle,
+  type ReviewV2ReceiptStore,
+} from './review-v2-receipts';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require('@react-native-async-storage/async-storage/jest/async-storage-mock'),
 );
+jest.mock('expo-crypto', () => {
+  const crypto =
+    jest.requireActual<typeof import('node:crypto')>('node:crypto');
+  return {
+    CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+    digestStringAsync: async (_algorithm: string, value: string) =>
+      crypto.createHash('sha256').update(value).digest('hex'),
+  };
+});
 type ReceiptStore = WorkspaceV2ReceiptStore & {
   readonly handles: WorkspaceV2ReceiptHandle[];
+};
+type ReviewReceiptStore = ReviewV2ReceiptStore & {
+  readonly handles: ReviewV2ReceiptHandle[];
 };
 
 const project = ProjectId('project-mobile');
@@ -143,6 +160,35 @@ function memoryReceiptStore(): ReceiptStore {
   };
 }
 
+function memoryReviewReceiptStore(): ReviewReceiptStore {
+  const handles: ReviewV2ReceiptHandle[] = [];
+  return {
+    handles,
+    async list() {
+      return [...handles];
+    },
+    async put(handle) {
+      const existing = handles.find(
+        (candidate) => candidate.idempotency_key === handle.idempotency_key,
+      );
+      if (existing !== undefined) {
+        if (JSON.stringify(existing) !== JSON.stringify(handle)) {
+          throw new Error('review_receipt_handle_collision');
+        }
+        return false;
+      }
+      handles.push(handle);
+      return true;
+    },
+    async remove(idempotencyKey) {
+      const index = handles.findIndex(
+        (candidate) => candidate.idempotency_key === idempotencyKey,
+      );
+      if (index !== -1) handles.splice(index, 1);
+    },
+  };
+}
+
 const negotiatedV2 = {
   kind: 'negotiated' as const,
   negotiated: {
@@ -207,6 +253,7 @@ function gatewayFor<T extends WorkspaceV2ReceiptStore = ReceiptStore>(
   authorization = delegatedAuthorization(now),
   operationGuard?: WorkspaceV2OperationGuard,
   digest = authorizationDigest,
+  reviewReceiptStore?: ReviewV2ReceiptStore,
 ) {
   const adapter = new DeterministicPlatformV2Adapter(steps);
   const gateway = createWorkspaceV2Gateway({
@@ -216,6 +263,7 @@ function gatewayFor<T extends WorkspaceV2ReceiptStore = ReceiptStore>(
     now: () => now,
     ...(operationGuard === undefined ? {} : { operationGuard }),
     receiptStore,
+    ...(reviewReceiptStore === undefined ? {} : { reviewReceiptStore }),
   });
   return { adapter, gateway, receiptStore };
 }
@@ -265,6 +313,267 @@ function projectSnapshotStep(workspaceRevision = 9n) {
 async function negotiate(gateway: ReturnType<typeof gatewayFor>['gateway']) {
   await gateway.negotiate();
 }
+
+function reviewSnapshot(): ReviewSnapshot {
+  return {
+    schema: 'automonique.platform/review/v2',
+    platform_version: 2n,
+    revision: 7n,
+    workspace: userWorkspaceIdentity,
+    attention: {
+      reason: 'approval_required',
+      source_revision: 3n,
+      state: 'needs_you',
+      unread: 1n,
+    },
+    attention_events: [
+      {
+        id: 'attention-approval-1',
+        origin: {
+          authority: { kind: 'review', id: 'review-local' },
+          id: null,
+          kind: 'review',
+          revision: 3n,
+        },
+        reason: 'approval_required',
+        unread: 1n,
+      },
+    ],
+    files: [],
+    checks: [],
+    comments: [],
+    proposals: [],
+    review: {
+      authority: { kind: 'review', id: 'review-local' },
+      decision: 'pending',
+      freshness: {
+        observed_at_ms: 1_500n,
+        observed_revision: 3n,
+        state: 'fresh',
+      },
+    },
+    pull_request: {
+      authority: { kind: 'pull_request', id: 'pull-request-local' },
+      freshness: {
+        observed_at_ms: 1_500n,
+        observed_revision: 1n,
+        state: 'fresh',
+      },
+      head_revision: null,
+      id: null,
+      readiness: 'unknown',
+      state: 'absent',
+    },
+    delivery: {
+      authority: { kind: 'delivery', id: 'delivery-local' },
+      freshness: {
+        observed_at_ms: 1_500n,
+        observed_revision: 1n,
+        state: 'fresh',
+      },
+      id: null,
+      state: 'not_delivered',
+    },
+  } as ReviewSnapshot;
+}
+
+function reviewAuthorization(now = 1_500): DelegatedMobileV2Authorization {
+  return delegatedAuthorization(now);
+}
+
+test('executes and durably reconciles only an authority-bound local review action', async () => {
+  const snapshot = reviewSnapshot();
+  const action = {
+    kind: 'approve_review' as const,
+    payload: { expected_review_revision: 3n },
+  };
+  const idempotencyKey = IdempotencyKey('mobile-review-action-1');
+  const reviewStore = memoryReviewReceiptStore();
+  const { gateway, adapter } = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review',
+          request: { project, workspace: userWorkspaceIdentity },
+        },
+        result: { kind: 'review_result', review: snapshot },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'execute_review_action',
+          request: {
+            workspace: userWorkspaceIdentity,
+            expected_revision: WorkContextRevision(7n),
+            action,
+            idempotency_key: idempotencyKey,
+          },
+        },
+        result: {
+          kind: 'review_receipt',
+          receipt: {
+            schema: 'automonique.platform/review/v1',
+            platform_version: 2n,
+            receipt_id: 'review-receipt-1',
+            action_id: 'review-action-1',
+            actor: 'operator-mobile',
+            idempotency_key: idempotencyKey,
+            outcome: 'accepted',
+            reconciliation: 'poll_receipt',
+            revision: null,
+            current_revision: null,
+          },
+        },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review_receipt',
+          lookup: {
+            project,
+            workspace: userWorkspaceIdentity,
+            idempotency_key: idempotencyKey,
+          },
+        },
+        result: {
+          kind: 'review_receipt',
+          receipt: {
+            schema: 'automonique.platform/review/v1',
+            platform_version: 2n,
+            receipt_id: 'review-receipt-1',
+            action_id: 'review-action-1',
+            actor: 'operator-mobile',
+            idempotency_key: idempotencyKey,
+            outcome: 'completed',
+            reconciliation: 'final',
+            revision: 8n,
+            current_revision: null,
+          },
+        },
+      },
+    ],
+    1_500,
+    memoryReceiptStore(),
+    reviewAuthorization(),
+    undefined,
+    authorizationDigest,
+    reviewStore,
+  );
+  await negotiate(gateway);
+  await gateway.loadProject(project);
+  await gateway.loadReview(project, userWorkspaceIdentity);
+
+  await expect(
+    gateway.executeReviewAction(
+      project,
+      userWorkspaceIdentity,
+      7n,
+      snapshot.review.authority,
+      action,
+      idempotencyKey,
+    ),
+  ).resolves.toMatchObject({
+    kind: 'submitted',
+    receipt: { outcome: 'accepted' },
+  });
+  expect(reviewStore.handles).toHaveLength(1);
+  expect(reviewStore.handles[0]).toMatchObject({
+    expected_revision: '7',
+    authority_kind: 'review',
+    authority_id: 'review-local',
+    actor_id: 'operator-mobile',
+    action_kind: 'approve_review',
+  });
+  await expect(gateway.pendingReviewReceipts()).resolves.toHaveLength(1);
+  await expect(
+    gateway.reconcileReviewAction(idempotencyKey),
+  ).resolves.toMatchObject({
+    receipt: { outcome: 'completed', revision: 8n },
+    projectionRefreshRequired: true,
+  });
+  expect(reviewStore.handles).toEqual([]);
+  expect(adapter.pendingSteps).toBe(0);
+});
+
+test('refuses stale review revisions, mismatched authorities, and undelegated effects before transport', async () => {
+  const snapshot = reviewSnapshot();
+  const reviewStore = memoryReviewReceiptStore();
+  const authorized = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review',
+          request: { project, workspace: userWorkspaceIdentity },
+        },
+        result: { kind: 'review_result', review: snapshot },
+      },
+    ],
+    1_500,
+    memoryReceiptStore(),
+    reviewAuthorization(),
+    undefined,
+    authorizationDigest,
+    reviewStore,
+  );
+  await negotiate(authorized.gateway);
+  await authorized.gateway.loadProject(project);
+  await authorized.gateway.loadReview(project, userWorkspaceIdentity);
+  const action = {
+    kind: 'approve_review' as const,
+    payload: { expected_review_revision: 3n },
+  };
+  await expect(
+    authorized.gateway.executeReviewAction(
+      project,
+      userWorkspaceIdentity,
+      6n,
+      snapshot.review.authority,
+      action,
+      'stale-review-action',
+    ),
+  ).rejects.toMatchObject({ category: 'review_target_revision_stale' });
+  await expect(
+    authorized.gateway.executeReviewAction(
+      project,
+      userWorkspaceIdentity,
+      7n,
+      { kind: 'review', id: 'review-foreign' },
+      action,
+      'foreign-review-action',
+    ),
+  ).rejects.toMatchObject({ category: 'review_target_revision_stale' });
+  expect(reviewStore.handles).toEqual([]);
+  expect(authorized.adapter.pendingSteps).toBe(0);
+
+  const undelegatedAuthorization: DelegatedMobileV2Authorization = {
+    ...delegatedAuthorization(),
+    actions: MOBILE_V2_ACTIONS.filter(
+      (delegatedAction) => delegatedAction !== 'execute_review_action',
+    ),
+  };
+  const undelegated = gatewayFor(
+    [],
+    1_500,
+    memoryReceiptStore(),
+    undelegatedAuthorization,
+  ).gateway;
+  await expect(
+    undelegated.executeReviewAction(
+      project,
+      userWorkspaceIdentity,
+      7n,
+      snapshot.review.authority,
+      action,
+      'undelegated-review-action',
+    ),
+  ).rejects.toMatchObject({ category: 'mobile_v2_action_unauthorized' });
+});
 
 test('exposes only immutable non-secret coordinates for catalog projection', () => {
   const { gateway } = gatewayFor([]);
