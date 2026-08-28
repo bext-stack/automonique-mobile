@@ -193,7 +193,7 @@ function review(index: number): ReviewSnapshot {
     revision: 7n,
     workspace: { kind: 'user_workspace', id: `workspace-${index}` },
     attention: {
-      reason: 'review',
+      reason: 'review_requested',
       source_revision: 7n,
       state: 'needs_you',
       unread: 3n,
@@ -249,7 +249,7 @@ function review(index: number): ReviewSnapshot {
         state: 'fresh',
       },
       id: null,
-      state: 'not_started',
+      state: 'not_delivered',
     },
   } as unknown as ReviewSnapshot;
 }
@@ -490,6 +490,40 @@ test('projects typed relations, lineage status, review attention, and separately
       { destination: 'preview', revision: '2' },
       { destination: 'source_control', revision: '2' },
     ],
+  });
+  expect(result.details[0]?.review?.semantics).toMatchObject({
+    attention: {
+      semantic_key: 'attention.needs_you',
+      source_revision: 7n,
+    },
+    review: {
+      semantic_key: 'review.changes_requested',
+      freshness_key: 'freshness.fresh',
+    },
+    pull_request: { semantic_key: 'pull_request.open.ready' },
+    delivery: { semantic_key: 'delivery.not_delivered' },
+    previews: [{ semantic_key: 'preview.text.sanitized' }],
+  });
+});
+
+test('withholds an incoherent review from detail, attention, and navigation', async () => {
+  const { gateway } = fakeGateway(1);
+  const baseline = review(0);
+  jest.mocked(gateway.loadReview).mockResolvedValue({
+    ...baseline,
+    attention: { ...baseline.attention, reason: 'complete' },
+  });
+  const result = await buildWorkspaceServerCatalog({
+    gateway,
+    origin: 'https://ops.example.test',
+    serverLabel: 'ops.example.test',
+  });
+
+  expect(result).toMatchObject({ coverage: 'partial', failedDetailCount: 1 });
+  expect(result.details[0]?.review).toBeNull();
+  expect(result.profile.workspaces[0]).toMatchObject({
+    unreadAttention: 0,
+    navigation: [{ destination: 'chat', revision: '2' }],
   });
 });
 

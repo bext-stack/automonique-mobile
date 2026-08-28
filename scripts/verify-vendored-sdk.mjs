@@ -123,7 +123,10 @@ if (
   typeof PlatformV2Client !== 'function' ||
   typeof HttpsPlatformV2Transport !== 'function' ||
   Object.hasOwn(sdkRoot, 'PlatformV2CanonicalTestingTransport') ||
-  Object.hasOwn(sdkTesting, 'PlatformV2CanonicalTestingTransport')
+  Object.hasOwn(sdkTesting, 'PlatformV2CanonicalTestingTransport') ||
+  typeof sdkTesting.createRenderConformanceCorpus !== 'function' ||
+  sdkTesting.createRenderConformanceCorpus().schema !==
+    'automonique.render-conformance/v1'
 ) {
   throw new Error('vendored_automonique_sdk_verification_failed');
 }

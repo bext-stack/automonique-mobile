@@ -13,7 +13,8 @@ export interface ReviewNotificationCandidate {
   readonly appState: 'active' | 'background' | 'inactive';
   readonly authorizationActive: boolean;
   readonly projectionLive: boolean;
-  readonly attentionState: 'needs_you' | 'working' | 'blocked' | 'done';
+  readonly attentionState:
+    'idle' | 'needs_you' | 'working' | 'blocked' | 'done';
   readonly unread: number;
   readonly route: AdmittedReviewRoute;
 }

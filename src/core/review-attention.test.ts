@@ -9,6 +9,7 @@ import {
   reviewActionAvailability,
   safeHunkPreview,
 } from './review-attention';
+import { projectReviewRenderSemantics } from './review-render-semantics';
 import { workspaceCompanionFixture } from './workspace-fixtures';
 import type { WorkspaceCatalogDetail } from './workspace-v2-catalog';
 
@@ -110,6 +111,7 @@ function detail(snapshot = review()): WorkspaceCatalogDetail {
     lineage: null,
     review: {
       snapshot,
+      semantics: projectReviewRenderSemantics(snapshot)!,
       revision: '7',
       attentionState: 'needs_you',
       attentionReason: 'approval_required',
@@ -173,12 +175,48 @@ test('projects exact review and nested-agent states without flattening parents',
   } as unknown as LineageProjection;
 
   expect(projectAttentionNodes(review(), lineage)).toMatchObject([
-    { key: 'review', state: 'needs_you', unread: 2, depth: 0 },
-    { key: 'task\u0000task-1', state: 'working', depth: 0 },
+    {
+      key: 'review',
+      semanticKey: 'attention.needs_you',
+      state: 'needs_you',
+      revision: '3',
+      unread: 2,
+      depth: 0,
+    },
+    {
+      key: 'task\u0000task-1',
+      semanticKey: 'orchestration.working',
+      state: 'working',
+      depth: 0,
+    },
     {
       key: 'question\u0000question-1',
       state: 'needs_you',
       depth: 1,
+    },
+  ]);
+});
+
+test('preserves canonical idle attention without inventing a snapshot revision', () => {
+  const snapshot = review();
+  expect(
+    projectAttentionNodes(
+      {
+        ...snapshot,
+        attention: {
+          reason: null,
+          source_revision: null,
+          state: 'idle',
+          unread: 0n,
+        },
+      },
+      null,
+    ),
+  ).toMatchObject([
+    {
+      semanticKey: 'attention.idle',
+      state: 'idle',
+      revision: null,
     },
   ]);
 });

@@ -13,6 +13,7 @@ import { useWorkspaces } from '@/providers/workspace-provider';
 import { usePalette } from '@/theme/palette';
 
 const labels = {
+  idle: 'Idle',
   needs_you: 'Needs You',
   working: 'Working',
   blocked: 'Blocked',
@@ -149,7 +150,8 @@ export default function AttentionScreen() {
             </View>
             <Text style={{ color: palette.text }}>{node.label}</Text>
             <Text style={[styles.meta, { color: palette.textMuted }]}>
-              {workspace.title} · {node.kind} revision {node.revision} · review{' '}
+              {workspace.title} · {node.semanticKey} · source revision{' '}
+              {node.revision ?? 'not applicable'} · review{' '}
               {detail.review!.revision}
             </Text>
           </Pressable>

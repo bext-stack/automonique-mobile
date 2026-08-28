@@ -13,6 +13,7 @@ import type {
   WorkspaceCompanionCatalog,
 } from './workspace-companion';
 import type { WorkspaceCatalogDetail } from './workspace-v2-catalog';
+import { projectReviewRenderSemantics } from './review-render-semantics';
 
 export const MAX_MOBILE_REVIEW_FILES = 128;
 export const MAX_MOBILE_REVIEW_HUNKS = 512;
@@ -20,15 +21,17 @@ export const MAX_MOBILE_REVIEW_COMMENTS = 256;
 export const MAX_MOBILE_REVIEW_CHECKS = 128;
 export const MAX_MOBILE_ATTENTION_NODES = 256;
 
-export type MobileAttentionState = 'needs_you' | 'working' | 'blocked' | 'done';
+export type MobileAttentionState =
+  'idle' | 'needs_you' | 'working' | 'blocked' | 'done';
 
 export interface MobileAttentionNode {
   readonly key: string;
   readonly kind: string;
   readonly label: string;
+  readonly semanticKey: string;
   readonly state: MobileAttentionState;
   readonly depth: number;
-  readonly revision: string;
+  readonly revision: string | null;
   readonly unread: number;
 }
 
@@ -97,6 +100,8 @@ export function projectAttentionNodes(
   review: ReviewSnapshot,
   lineage: LineageProjection | null,
 ): readonly MobileAttentionNode[] {
+  const semantics = projectReviewRenderSemantics(review);
+  if (semantics === null) return [];
   const result: MobileAttentionNode[] = [
     {
       key: 'review',
@@ -105,10 +110,10 @@ export function projectAttentionNodes(
         review.attention.reason === null
           ? 'Review attention'
           : review.attention.reason.replaceAll('_', ' '),
-      state:
-        review.attention.state === 'idle' ? 'done' : review.attention.state,
+      semanticKey: semantics.attention.semantic_key,
+      state: review.attention.state,
       depth: 0,
-      revision: review.revision.toString(),
+      revision: semantics.attention.source_revision?.toString() ?? null,
       unread: Number(review.attention.unread),
     },
   ];
@@ -146,6 +151,7 @@ export function projectAttentionNodes(
       label:
         record.latest_useful_message?.text ??
         `${record.identity.kind.replaceAll('_', ' ')} ${record.identity.id}`,
+      semanticKey: `orchestration.${record.status.kind}`,
       state: statusOf(record),
       depth: depthOf(record),
       revision: record.revision.toString(),
