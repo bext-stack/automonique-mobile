@@ -406,6 +406,8 @@ function actionAuthority(
   switch (action.kind) {
     case 'add_comment':
     case 'approve_review':
+    case 'send_comment_to_agent':
+    case 'batch_send_comments_to_agent':
       return snapshot.review.authority;
     default:
       return null;
@@ -440,6 +442,35 @@ export function reviewActionAvailability(options: {
   if (
     options.action.kind === 'approve_review' &&
     !['pending', 'changes_requested'].includes(options.snapshot.review.decision)
+  ) {
+    return { enabled: false, reason: 'target_already_settled' };
+  }
+  if (options.action.kind === 'send_comment_to_agent') {
+    const target = options.action.payload;
+    const comment = options.snapshot.comments.find(
+      (candidate) => candidate.id === target.comment_id,
+    );
+    if (
+      comment === undefined ||
+      comment.revision !== target.expected_comment_revision ||
+      !['not_sent', 'refused'].includes(comment.agent_state)
+    ) {
+      return { enabled: false, reason: 'target_already_settled' };
+    }
+  }
+  if (
+    options.action.kind === 'batch_send_comments_to_agent' &&
+    (options.action.payload.comments.length === 0 ||
+      options.action.payload.comments.some((target) => {
+        const comment = options.snapshot.comments.find(
+          (candidate) => candidate.id === target.comment_id,
+        );
+        return (
+          comment === undefined ||
+          comment.revision !== target.expected_comment_revision ||
+          !['not_sent', 'refused'].includes(comment.agent_state)
+        );
+      }))
   ) {
     return { enabled: false, reason: 'target_already_settled' };
   }

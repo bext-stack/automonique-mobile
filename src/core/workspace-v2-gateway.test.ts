@@ -381,11 +381,60 @@ function reviewSnapshot(): ReviewSnapshot {
   } as ReviewSnapshot;
 }
 
+function reviewSnapshotWithAgentComment(): ReviewSnapshot {
+  return {
+    ...reviewSnapshot(),
+    files: [
+      {
+        id: 'file-1',
+        path: 'src/exact.ts',
+        change: 'modified',
+        conflict: 'none',
+        worktree: 'unstaged',
+        preview: {
+          byte_size: 12n,
+          height: null,
+          kind: 'text',
+          media_type: 'text/plain',
+          sanitized: true,
+          width: null,
+        },
+        hunks: [
+          {
+            id: 'hunk-1',
+            old_start: 1n,
+            old_lines: 1n,
+            new_start: 1n,
+            new_lines: 1n,
+            preview: '-old +new',
+          },
+        ],
+      },
+    ],
+    comments: [
+      {
+        actor: 'operator-mobile',
+        agent_state: 'not_sent',
+        anchor: {
+          file_id: 'file-1',
+          hunk_id: 'hunk-1',
+          line: 1n,
+          side: 'new',
+        },
+        body: 'Please address this exact finding.',
+        id: 'comment-1',
+        revision: 4n,
+        unread: false,
+      },
+    ],
+  } as ReviewSnapshot;
+}
+
 function reviewAuthorization(now = 1_500): DelegatedMobileV2Authorization {
   return delegatedAuthorization(now);
 }
 
-test('executes and durably reconciles only an authority-bound local review action', async () => {
+test('executes and durably reconciles an authority-bound review action', async () => {
   const snapshot = reviewSnapshot();
   const action = {
     kind: 'approve_review' as const,
@@ -467,7 +516,12 @@ test('executes and durably reconciles only an authority-bound local review actio
     reviewStore,
   );
   await negotiate(gateway);
-  expect(gateway.reviewEffectKinds).toEqual(['add_comment', 'approve_review']);
+  expect(gateway.reviewEffectKinds).toEqual([
+    'add_comment',
+    'approve_review',
+    'send_comment_to_agent',
+    'batch_send_comments_to_agent',
+  ]);
   expect(Object.isFrozen(gateway.reviewEffectKinds)).toBe(true);
   await gateway.loadProject(project);
   await gateway.loadReview(project, userWorkspaceIdentity);
@@ -502,6 +556,289 @@ test('executes and durably reconciles only an authority-bound local review actio
   });
   expect(reviewStore.handles).toEqual([]);
   expect(adapter.pendingSteps).toBe(0);
+});
+
+test('retains and reconciles an exact comment-to-agent delivery without storing its body', async () => {
+  const snapshot = reviewSnapshotWithAgentComment();
+  const action = {
+    kind: 'send_comment_to_agent' as const,
+    payload: { comment_id: 'comment-1', expected_comment_revision: 4n },
+  };
+  const idempotencyKey = IdempotencyKey('mobile-agent-delivery-1');
+  const reviewStore = memoryReviewReceiptStore();
+  const { gateway, adapter } = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review',
+          request: { project, workspace: userWorkspaceIdentity },
+        },
+        result: { kind: 'review_result', review: snapshot },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'execute_review_action',
+          request: {
+            workspace: userWorkspaceIdentity,
+            expected_revision: WorkContextRevision(7n),
+            action,
+            idempotency_key: idempotencyKey,
+          },
+        },
+        result: {
+          kind: 'review_receipt',
+          receipt: {
+            schema: 'automonique.platform/review/v1',
+            platform_version: 2n,
+            receipt_id: 'agent-delivery-receipt-1',
+            action_id: 'agent-delivery-action-1',
+            actor: 'operator-mobile',
+            idempotency_key: idempotencyKey,
+            outcome: 'accepted',
+            reconciliation: 'poll_receipt',
+            revision: null,
+            current_revision: null,
+          },
+        },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review_receipt',
+          lookup: {
+            project,
+            workspace: userWorkspaceIdentity,
+            idempotency_key: idempotencyKey,
+          },
+        },
+        result: {
+          kind: 'review_receipt',
+          receipt: {
+            schema: 'automonique.platform/review/v1',
+            platform_version: 2n,
+            receipt_id: 'agent-delivery-receipt-1',
+            action_id: 'agent-delivery-action-1',
+            actor: 'operator-mobile',
+            idempotency_key: idempotencyKey,
+            outcome: 'completed',
+            reconciliation: 'final',
+            revision: 8n,
+            current_revision: null,
+          },
+        },
+      },
+    ],
+    1_500,
+    memoryReceiptStore(),
+    reviewAuthorization(),
+    undefined,
+    authorizationDigest,
+    reviewStore,
+  );
+  await negotiate(gateway);
+  await gateway.loadProject(project);
+  await gateway.loadReview(project, userWorkspaceIdentity);
+  await expect(
+    gateway.executeReviewAction(
+      project,
+      userWorkspaceIdentity,
+      7n,
+      snapshot.review.authority,
+      action,
+      idempotencyKey,
+    ),
+  ).resolves.toMatchObject({
+    kind: 'submitted',
+    receipt: { outcome: 'accepted' },
+  });
+  expect(reviewStore.handles).toEqual([
+    expect.objectContaining({
+      action_kind: 'send_comment_to_agent',
+      expected_revision: '7',
+      authority_kind: 'review',
+      authority_id: 'review-local',
+      actor_id: 'operator-mobile',
+      idempotency_key: idempotencyKey,
+    }),
+  ]);
+  expect(JSON.stringify(reviewStore.handles)).not.toContain(
+    'Please address this exact finding.',
+  );
+  await expect(
+    gateway.reconcileReviewAction(idempotencyKey),
+  ).resolves.toMatchObject({
+    receipt: { outcome: 'completed', revision: 8n },
+    projectionRefreshRequired: true,
+  });
+  expect(reviewStore.handles).toEqual([]);
+  expect(adapter.pendingSteps).toBe(0);
+});
+
+test('batch agent delivery persists before dispatch and reconciles ambiguity without replay', async () => {
+  const base = reviewSnapshotWithAgentComment();
+  const snapshot: ReviewSnapshot = {
+    ...base,
+    comments: [
+      ...base.comments,
+      {
+        ...base.comments[0]!,
+        id: 'comment-2',
+        revision: 5n,
+        agent_state: 'refused',
+        body: 'Second exact persisted finding.',
+      },
+    ],
+  };
+  const action = {
+    kind: 'batch_send_comments_to_agent' as const,
+    payload: {
+      comments: [
+        { comment_id: 'comment-1', expected_comment_revision: 4n },
+        { comment_id: 'comment-2', expected_comment_revision: 5n },
+      ],
+    },
+  };
+  const idempotencyKey = IdempotencyKey('mobile-agent-batch-1');
+  const reviewStore = memoryReviewReceiptStore();
+  const first = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review',
+          request: { project, workspace: userWorkspaceIdentity },
+        },
+        result: { kind: 'review_result', review: snapshot },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'execute_review_action',
+          request: {
+            workspace: userWorkspaceIdentity,
+            expected_revision: WorkContextRevision(7n),
+            action,
+            idempotency_key: idempotencyKey,
+          },
+        },
+        result: Promise.reject(new Error('response_lost')),
+      },
+    ],
+    1_500,
+    memoryReceiptStore(),
+    reviewAuthorization(),
+    undefined,
+    authorizationDigest,
+    reviewStore,
+  );
+  await negotiate(first.gateway);
+  await first.gateway.loadProject(project);
+  await first.gateway.loadReview(project, userWorkspaceIdentity);
+  await expect(
+    first.gateway.executeReviewAction(
+      project,
+      userWorkspaceIdentity,
+      7n,
+      snapshot.review.authority,
+      action,
+      idempotencyKey,
+    ),
+  ).resolves.toEqual({
+    kind: 'ambiguous',
+    idempotencyKey,
+    receipt: null,
+    projectionRefreshRequired: true,
+  });
+  expect(reviewStore.handles).toEqual([
+    expect.objectContaining({
+      action_kind: 'batch_send_comments_to_agent',
+      idempotency_key: idempotencyKey,
+      expected_revision: '7',
+    }),
+  ]);
+  expect(JSON.stringify(reviewStore.handles)).not.toContain(
+    'Second exact persisted finding.',
+  );
+  expect(first.adapter.pendingSteps).toBe(0);
+
+  const reloaded = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review',
+          request: { project, workspace: userWorkspaceIdentity },
+        },
+        result: { kind: 'review_result', review: snapshot },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review_receipt',
+          lookup: {
+            project,
+            workspace: userWorkspaceIdentity,
+            idempotency_key: idempotencyKey,
+          },
+        },
+        result: {
+          kind: 'review_receipt',
+          receipt: {
+            schema: 'automonique.platform/review/v1',
+            platform_version: 2n,
+            receipt_id: 'agent-batch-receipt-1',
+            action_id: 'agent-batch-action-1',
+            actor: 'operator-mobile',
+            idempotency_key: idempotencyKey,
+            outcome: 'completed',
+            reconciliation: 'final',
+            revision: 8n,
+            current_revision: null,
+          },
+        },
+      },
+    ],
+    1_500,
+    memoryReceiptStore(),
+    reviewAuthorization(),
+    undefined,
+    authorizationDigest,
+    reviewStore,
+  );
+  await negotiate(reloaded.gateway);
+  await reloaded.gateway.loadProject(project);
+  await reloaded.gateway.loadReview(project, userWorkspaceIdentity);
+  await expect(
+    reloaded.gateway.executeReviewAction(
+      project,
+      userWorkspaceIdentity,
+      7n,
+      snapshot.review.authority,
+      action,
+      idempotencyKey,
+    ),
+  ).resolves.toEqual({
+    kind: 'ambiguous',
+    idempotencyKey,
+    receipt: null,
+    projectionRefreshRequired: true,
+  });
+  await expect(
+    reloaded.gateway.reconcileReviewAction(idempotencyKey),
+  ).resolves.toMatchObject({
+    receipt: { outcome: 'completed', revision: 8n },
+    projectionRefreshRequired: true,
+  });
+  expect(reviewStore.handles).toEqual([]);
+  expect(reloaded.adapter.pendingSteps).toBe(0);
 });
 
 test('refuses stale review revisions, mismatched authorities, and undelegated effects before transport', async () => {
@@ -608,16 +945,6 @@ test('every unsupported review family refuses before a request or durable handle
   await authorized.gateway.loadProject(project);
   await authorized.gateway.loadReview(project, userWorkspaceIdentity);
   const actions = [
-    {
-      kind: 'send_comment_to_agent',
-      payload: { comment_id: 'comment-1', expected_comment_revision: 1n },
-    },
-    {
-      kind: 'batch_send_comments_to_agent',
-      payload: {
-        comments: [{ comment_id: 'comment-1', expected_comment_revision: 1n }],
-      },
-    },
     { kind: 'stage', payload: { proposal_id: 'proposal-1' } },
     { kind: 'unstage', payload: { proposal_id: 'proposal-1' } },
     { kind: 'commit', payload: { proposal_id: 'proposal-1' } },

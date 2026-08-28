@@ -408,7 +408,7 @@ test('review route shows bounded sanitized hunks and keeps unsupported mutations
   );
   expect(view.getByText('-old\n+new')).toBeTruthy();
   expect(view.getByLabelText(/Approve review, unavailable/)).toBeDisabled();
-  expect(view.getByLabelText(/Batch send comments/)).toBeDisabled();
+  expect(view.getByLabelText(/Batch send 0 comments/)).toBeDisabled();
   await waitFor(() =>
     expect(
       view.getByText(/Local draft persistence failed · not ready to send/),
@@ -529,13 +529,10 @@ test('unsupported typed review families stay inert with exact adapter categories
     view.getByText(/preview\.text\.sanitized · source revision 7/),
   ).toBeTruthy();
   const expectations = [
+    ['Batch send 1 comment to retained agent', 'effect unavailable'],
     [
-      'Batch send comments to agent',
-      'platform_v2_review_agent_adapter_unavailable',
-    ],
-    [
-      'Send comment comment-1 to agent',
-      'platform_v2_review_agent_adapter_unavailable',
+      'Send comment comment-1 revision 4 to retained agent',
+      'effect unavailable',
     ],
     ['Rerun check check-1', 'platform_v2_review_ci_adapter_unavailable'],
     [
@@ -558,6 +555,147 @@ test('unsupported typed review families stay inert with exact adapter categories
   }
   expect(executeReviewAction).not.toHaveBeenCalled();
   expect(view.queryByLabelText('Exact review action confirmation')).toBeNull();
+});
+
+test('retained-agent batch delivery previews and submits every exact persisted comment revision', async () => {
+  const base = workspaceValue();
+  const server = base.catalog.servers[0]!;
+  const workspace = server.workspaces[0]!;
+  const withReview = {
+    ...workspace,
+    navigation: [
+      ...workspace.navigation,
+      { destination: 'review' as const, revision: workspace.revision },
+    ],
+  };
+  const deliverySnapshot = {
+    ...detail.review.snapshot,
+    comments: [
+      {
+        actor: 'operator-mobile',
+        agent_state: 'not_sent',
+        anchor: {
+          file_id: 'file-1',
+          hunk_id: 'hunk-1',
+          line: 1n,
+          side: 'new',
+        },
+        body: 'Exact persisted comment',
+        id: 'comment-1',
+        revision: 4n,
+        unread: false,
+      },
+    ],
+  };
+  const deliveryDetail = {
+    ...detail,
+    review: {
+      ...detail.review,
+      snapshot: deliverySnapshot,
+      comments: deliverySnapshot.comments,
+    },
+  };
+  const executeReviewAction = jest.fn().mockImplementation((options) =>
+    Promise.resolve({
+      kind: 'ambiguous',
+      idempotencyKey: options.idempotencyKey,
+      receipt: null,
+      projectionRefreshRequired: true,
+    }),
+  );
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: {
+      ...base.catalog,
+      servers: [{ ...server, workspaces: [withReview] }],
+    },
+    details: [deliveryDetail],
+    reviewBusy: false,
+    reviewReceipts: [],
+    pendingReviewReceipts: [],
+    executeReviewAction,
+    reconcileReviewAction: jest.fn(),
+    findWorkspace: () => withReview,
+    findDetail: () => deliveryDetail,
+  });
+  mockUseMobileLifecycle.mockReturnValue({
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: WORKSPACE_FIXTURE_IDENTITY },
+    },
+    workspaceGateway: {
+      authorizationScope: {
+        serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+        actions: ['get_review', 'execute_review_action', 'get_review_receipt'],
+      },
+      reviewEffectKinds: [
+        'add_comment',
+        'approve_review',
+        'send_comment_to_agent',
+        'batch_send_comments_to_agent',
+      ],
+    },
+  });
+  mockRouteParams = {
+    server: WORKSPACE_FIXTURE_IDENTITY,
+    workspace: workspace.id,
+    revision: workspace.revision,
+    destination: 'review',
+    review_revision: detail.review.revision,
+  };
+
+  const view = await render(<WorkspaceDetailScreen />);
+  const single = view.getByLabelText(
+    'Send comment comment-1 revision 4 to retained agent',
+  );
+  expect(single).not.toBeDisabled();
+  expect(
+    view.getByLabelText('Batch send 1 comment to retained agent'),
+  ).not.toBeDisabled();
+  fireEvent.press(
+    view.getByLabelText('Batch send 1 comment to retained agent'),
+  );
+  expect(executeReviewAction).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(
+      view.getByLabelText('Exact review action confirmation'),
+    ).toBeTruthy(),
+  );
+  expect(
+    view.getByText(
+      `Workspace ${workspace.id} · workspace revision ${workspace.revision} · review revision ${detail.review.revision} · action batch send comments to agent`,
+    ),
+  ).toBeTruthy();
+  expect(view.getByLabelText('Exact batch review targets')).toBeTruthy();
+  expect(view.getByText('Comment comment-1 · revision 4')).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Confirm exact review action'));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(executeReviewAction).toHaveBeenCalledTimes(1));
+  expect(executeReviewAction).toHaveBeenCalledWith(
+    expect.objectContaining({
+      projectId: workspace.projectId,
+      workspaceId: workspace.id,
+      workspaceRevision: workspace.revision,
+      reviewRevision: detail.review.revision,
+      authority: reviewSnapshot.review.authority,
+      action: {
+        kind: 'batch_send_comments_to_agent',
+        payload: {
+          comments: [
+            {
+              comment_id: 'comment-1',
+              expected_comment_revision: 4n,
+            },
+          ],
+        },
+      },
+      idempotencyKey: expect.stringMatching(/^mobile-review-/u),
+    }),
+  );
 });
 
 test('attention truthfully separates local exact deep links from unavailable push admission', async () => {

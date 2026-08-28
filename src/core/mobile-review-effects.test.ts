@@ -12,6 +12,8 @@ test('the mobile effect audit classifies every canonical review action exactly o
   expect(MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS).toEqual([
     'add_comment',
     'approve_review',
+    'send_comment_to_agent',
+    'batch_send_comments_to_agent',
   ]);
   expect(Object.isFrozen(MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS)).toBe(true);
   expect(Object.isFrozen(MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES)).toBe(
@@ -24,6 +26,7 @@ test('the mobile effect audit classifies every canonical review action exactly o
     ].sort(),
   ).toEqual([...ReviewActionKind_VALUES].sort());
   expect(unavailableReviewEffectCategory('add_comment')).toBeNull();
+  expect(unavailableReviewEffectCategory('send_comment_to_agent')).toBeNull();
   expect(unavailableReviewEffectCategory('rerun_check')).toBe(
     'platform_v2_review_ci_adapter_unavailable',
   );

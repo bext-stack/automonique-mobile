@@ -3,13 +3,15 @@
 import type { ReviewAction } from '@automonique/sdk';
 
 /**
- * Production server adapters currently complete only these local-store
- * families. The coarse execute_review_action grant is not evidence that any
- * external adapter exists.
+ * Production server adapters complete local review effects plus the retained
+ * comment-delivery lane. The coarse execute_review_action grant is still not
+ * evidence that Git, CI, or pull-request adapters exist.
  */
 export const MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS = Object.freeze([
   'add_comment',
   'approve_review',
+  'send_comment_to_agent',
+  'batch_send_comments_to_agent',
 ] as const satisfies readonly ReviewAction['kind'][]);
 
 export type MobileSupportedReviewEffectKind =
@@ -21,8 +23,6 @@ export type MobileSupportedReviewAction = Extract<
 >;
 
 export const MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES = Object.freeze({
-  send_comment_to_agent: 'platform_v2_review_agent_adapter_unavailable',
-  batch_send_comments_to_agent: 'platform_v2_review_agent_adapter_unavailable',
   stage: 'platform_v2_review_git_adapter_unavailable',
   unstage: 'platform_v2_review_git_adapter_unavailable',
   commit: 'platform_v2_review_git_adapter_unavailable',

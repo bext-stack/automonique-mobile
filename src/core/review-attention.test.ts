@@ -679,3 +679,110 @@ test('local review actions require live exact revisions, delegated transport, an
     }),
   ).toEqual({ enabled: false, reason: 'action_not_delegated' });
 });
+
+test('retained-agent comment delivery requires an exact unsent comment revision', () => {
+  const snapshot = {
+    ...review(),
+    comments: [
+      {
+        actor: 'operator-mobile',
+        agent_state: 'not_sent',
+        anchor: {
+          file_id: 'file-1',
+          hunk_id: 'hunk-1',
+          line: 1n,
+          side: 'new',
+        },
+        body: 'Exact persisted comment',
+        id: 'comment-1',
+        revision: 4n,
+        unread: false,
+      },
+    ],
+  } as ReviewSnapshot;
+  const available = {
+    action: {
+      kind: 'send_comment_to_agent' as const,
+      payload: { comment_id: 'comment-1', expected_comment_revision: 4n },
+    },
+    delegatedActions: ['execute_review_action'],
+    effectKinds: ['send_comment_to_agent'] as const,
+    live: true,
+    projectStale: false,
+    exactReviewRevision: true,
+    snapshot,
+  };
+  expect(reviewActionAvailability(available)).toEqual({
+    enabled: true,
+    reason: 'available',
+  });
+  expect(
+    reviewActionAvailability({
+      ...available,
+      action: {
+        ...available.action,
+        payload: {
+          ...available.action.payload,
+          expected_comment_revision: 3n,
+        },
+      },
+    }),
+  ).toEqual({ enabled: false, reason: 'target_already_settled' });
+  expect(
+    reviewActionAvailability({
+      ...available,
+      snapshot: {
+        ...snapshot,
+        comments: [{ ...snapshot.comments[0]!, agent_state: 'sent' }],
+      } as ReviewSnapshot,
+    }),
+  ).toEqual({ enabled: false, reason: 'target_already_settled' });
+
+  const refused = {
+    ...snapshot.comments[0]!,
+    id: 'comment-2',
+    revision: 5n,
+    agent_state: 'refused' as const,
+  };
+  const batch = {
+    ...available,
+    effectKinds: ['batch_send_comments_to_agent'] as const,
+    snapshot: { ...snapshot, comments: [...snapshot.comments, refused] },
+    action: {
+      kind: 'batch_send_comments_to_agent' as const,
+      payload: {
+        comments: [
+          { comment_id: 'comment-1', expected_comment_revision: 4n },
+          { comment_id: 'comment-2', expected_comment_revision: 5n },
+        ],
+      },
+    },
+  };
+  expect(reviewActionAvailability(batch)).toEqual({
+    enabled: true,
+    reason: 'available',
+  });
+  expect(
+    reviewActionAvailability({
+      ...batch,
+      action: {
+        ...batch.action,
+        payload: {
+          comments: [
+            batch.action.payload.comments[0]!,
+            { comment_id: 'comment-2', expected_comment_revision: 4n },
+          ],
+        },
+      },
+    }),
+  ).toEqual({ enabled: false, reason: 'target_already_settled' });
+  expect(
+    reviewActionAvailability({
+      ...batch,
+      snapshot: {
+        ...batch.snapshot,
+        comments: [snapshot.comments[0]!, { ...refused, agent_state: 'sent' }],
+      },
+    }),
+  ).toEqual({ enabled: false, reason: 'target_already_settled' });
+});

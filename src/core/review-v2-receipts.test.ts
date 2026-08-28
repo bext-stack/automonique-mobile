@@ -15,6 +15,7 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   default: {
     getItem: jest.fn(),
     setItem: jest.fn(),
+    removeItem: jest.fn(),
   },
 }));
 
@@ -52,6 +53,9 @@ beforeEach(() => {
   jest.mocked(AsyncStorage.setItem).mockImplementation(async (key, value) => {
     values.set(key, value);
   });
+  jest.mocked(AsyncStorage.removeItem).mockImplementation(async (key) => {
+    values.delete(key);
+  });
 });
 
 test('durably stores only exact delegation-scoped reconciliation handles', async () => {
@@ -69,6 +73,53 @@ test('durably stores only exact delegation-scoped reconciliation handles', async
   await expect(
     store.put(handle({ action_digest: `sha256:${'d'.repeat(64)}` })),
   ).rejects.toThrow('review_receipt_handle_collision');
+});
+
+test('admits retained-agent delivery handles without persisting comment content', async () => {
+  const store = createReviewV2ReceiptStore(
+    async () => familyDigest,
+    async () => authorizationDigest,
+  );
+  const delivery = handle({
+    action_kind: 'batch_send_comments_to_agent',
+    action_digest: `sha256:${'d'.repeat(64)}`,
+    idempotency_key: 'review-agent-delivery-1',
+  });
+  await expect(store.put(delivery)).resolves.toBe(true);
+  await expect(store.list()).resolves.toEqual([delivery]);
+  const encoded = [...values.values()][0]!;
+  expect(encoded).toContain('batch_send_comments_to_agent');
+  expect(encoded).not.toContain('comment-1');
+  expect(encoded).not.toContain('comment body');
+});
+
+test('copy-before-remove migrates exact legacy local handles into the expanded schema', async () => {
+  const legacyKey = `automonique.mobile.review-v2-receipts.v1.${familyDigest}`;
+  values.set(
+    legacyKey,
+    JSON.stringify({
+      schema: 'automonique.mobile-review-v2-receipt-index/v1',
+      handles: [
+        {
+          ...handle(),
+          schema: 'automonique.mobile-review-v2-receipt-handle/v1',
+          action_kind: 'approve_review',
+        },
+      ],
+    }),
+  );
+  const store = createReviewV2ReceiptStore(
+    async () => familyDigest,
+    async () => authorizationDigest,
+  );
+  await expect(store.list()).resolves.toEqual([handle()]);
+  expect(values.has(legacyKey)).toBe(false);
+  expect(AsyncStorage.removeItem).toHaveBeenCalledWith(legacyKey);
+  expect(
+    [...values.values()].some((encoded) =>
+      encoded.includes('mobile-review-v2-receipt-index/v2'),
+    ),
+  ).toBe(true);
 });
 
 test('rejects handles from another authorization generation', async () => {
