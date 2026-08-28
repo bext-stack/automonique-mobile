@@ -224,7 +224,7 @@ function ReviewControlSurface({
     readonly completed: () => Promise<void>;
     readonly cancelled: () => void;
     readonly idempotencyKey: string;
-    readonly phase: 'confirm' | 'reconcile' | 'terminal';
+    readonly phase: 'confirm' | 'reconcile' | 'cleanup' | 'terminal';
     readonly outcome: string | null;
   } | null>(null);
   const [confirmationBusy, setConfirmationBusy] = useState(false);
@@ -334,10 +334,37 @@ function ReviewControlSurface({
     });
   };
   const cancelPending = () => {
-    if (pending?.phase === 'reconcile') return;
+    if (pending?.phase === 'reconcile' || pending?.phase === 'cleanup') return;
     pending?.cancelled();
     setPending(null);
     setReviewError(null);
+  };
+  const completePendingLocally = async (
+    current: NonNullable<typeof pending>,
+  ) => {
+    // A completed receipt is terminal server evidence. Publish that fact
+    // before touching fallible local storage so no UI retry can cross the
+    // network boundary again.
+    setPending({
+      ...current,
+      phase: 'cleanup',
+      outcome: 'completed',
+    });
+    try {
+      await current.completed();
+      setPending((value) =>
+        value?.idempotencyKey === current.idempotencyKey &&
+        value.phase === 'cleanup'
+          ? null
+          : value,
+      );
+    } catch (error) {
+      setReviewError(
+        error instanceof Error
+          ? `review_local_cleanup_required:${error.message}`
+          : 'review_local_cleanup_required',
+      );
+    }
   };
   const confirmPending = async () => {
     if (pending === null || pending.phase !== 'confirm' || confirmationBusy)
@@ -349,8 +376,7 @@ function ReviewControlSurface({
       const result = await submit(current.action);
       const receipt = result.receipt;
       if (receipt?.outcome === 'completed') {
-        await current.completed();
-        setPending(null);
+        await completePendingLocally(current);
       } else if (
         receipt?.outcome === 'conflict' ||
         receipt?.outcome === 'refused'
@@ -384,8 +410,7 @@ function ReviewControlSurface({
     try {
       const result = await reconcileReviewAction(current.idempotencyKey);
       if (result.receipt.outcome === 'completed') {
-        await current.completed();
-        setPending(null);
+        await completePendingLocally(current);
       } else if (
         result.receipt.outcome === 'conflict' ||
         result.receipt.outcome === 'refused'
@@ -404,8 +429,7 @@ function ReviewControlSurface({
           projection.receipt.idempotency_key === current.idempotencyKey,
       )?.receipt;
       if (recovered?.outcome === 'completed') {
-        await current.completed();
-        setPending(null);
+        await completePendingLocally(current);
       } else if (
         recovered?.outcome === 'conflict' ||
         recovered?.outcome === 'refused'
@@ -667,6 +691,28 @@ function ReviewControlSurface({
                 </Text>
               </Pressable>
             )}
+            {pending.phase === 'cleanup' && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retry completed review local cleanup"
+                accessibilityState={{ disabled: confirmationBusy }}
+                disabled={confirmationBusy}
+                onPress={() => {
+                  setConfirmationBusy(true);
+                  setReviewError(null);
+                  void completePendingLocally(pending).finally(() =>
+                    setConfirmationBusy(false),
+                  );
+                }}
+                style={[styles.reviewAction, { borderColor: palette.warning }]}
+              >
+                <Text style={{ color: palette.warning, fontWeight: '900' }}>
+                  {confirmationBusy
+                    ? 'Cleaning local draft…'
+                    : 'Retry local cleanup'}
+                </Text>
+              </Pressable>
+            )}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={
@@ -675,14 +721,25 @@ function ReviewControlSurface({
                   : 'Cancel review action'
               }
               accessibilityState={{
-                disabled: confirmationBusy || pending.phase === 'reconcile',
+                disabled:
+                  confirmationBusy ||
+                  pending.phase === 'reconcile' ||
+                  pending.phase === 'cleanup',
               }}
-              disabled={confirmationBusy || pending.phase === 'reconcile'}
+              disabled={
+                confirmationBusy ||
+                pending.phase === 'reconcile' ||
+                pending.phase === 'cleanup'
+              }
               onPress={cancelPending}
               style={[styles.reviewAction, { borderColor: palette.border }]}
             >
               <Text style={{ color: palette.textMuted, fontWeight: '800' }}>
-                {pending.phase === 'terminal' ? 'Dismiss result' : 'Cancel'}
+                {pending.phase === 'terminal'
+                  ? 'Dismiss result'
+                  : pending.phase === 'cleanup'
+                    ? 'Completed · cleanup required'
+                    : 'Cancel'}
               </Text>
             </Pressable>
           </View>

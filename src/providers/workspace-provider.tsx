@@ -619,7 +619,8 @@ export function WorkspaceProvider({
         })),
       );
       const selectedMutationIdentity =
-        gateway?.authorizationScope.serverIdentity ?? null;
+        (gateway?.authorizationScope.serverIdentity as
+          ServerIdentity | undefined) ?? null;
       const next =
         selectedMutationIdentity !== null &&
         merged.servers.some(
