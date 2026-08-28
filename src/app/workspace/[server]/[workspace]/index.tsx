@@ -953,8 +953,14 @@ export default function WorkspaceDetailScreen() {
     hunk?: string;
   }>();
   const palette = usePalette();
-  const { catalog, findServer, findWorkspace, findDetail, status } =
-    useWorkspaces();
+  const {
+    catalog,
+    findServer,
+    findWorkspace,
+    findDetail,
+    selectServer,
+    status,
+  } = useWorkspaces();
   const { snapshot } = useMobile();
   const { state: lifecycleState } = useMobileLifecycle();
   const server = findServer(params.server);
@@ -962,6 +968,15 @@ export default function WorkspaceDetailScreen() {
   const detail = findDetail(params.server, params.workspace);
   const mutation = workspaceMutationAvailability();
   const exactRevision = workspace?.revision === params.revision;
+
+  useEffect(() => {
+    if (
+      server?.authorization === 'active' &&
+      lifecycleState.profile?.serverIdentity !== server.serverIdentity
+    ) {
+      void selectServer(server.serverIdentity).catch(() => undefined);
+    }
+  }, [lifecycleState.profile?.serverIdentity, selectServer, server]);
 
   if (server === null || workspace === null || !exactRevision) {
     return (

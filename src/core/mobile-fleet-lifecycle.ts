@@ -13,6 +13,7 @@ import {
   rotateCredentialRegistryConnection,
   saveCredentialRegistryWorkspaceAuthorization,
   selectCredentialRegistryMutationSlot,
+  type ConnectionProfile,
   type CredentialRegistrySlot,
   type ScopedConnection,
   type StoredConnection,
@@ -24,7 +25,10 @@ import {
   type MobileLifecycleState,
 } from './mobile-lifecycle';
 import type { MobileAutomoniqueGateway } from './types';
-import type { WorkspaceV2Gateway } from './workspace-v2-gateway';
+import type {
+  ReadOnlyWorkspaceV2Gateway,
+  WorkspaceV2Gateway,
+} from './workspace-v2-gateway';
 
 const MAX_PARALLEL_SERVER_HYDRATIONS = 2;
 
@@ -47,6 +51,12 @@ export interface ReadOnlyMobileServerGateway {
   readonly slotId: string;
   readonly bootstrap: MobileAutomoniqueGateway['bootstrap'];
   readonly reconcile: MobileAutomoniqueGateway['reconcile'];
+}
+
+export interface ReadOnlyWorkspaceServerGateway {
+  readonly slotId: string;
+  readonly profile: ConnectionProfile;
+  readonly gateway: ReadOnlyWorkspaceV2Gateway;
 }
 
 export type ReadOnlyMobileServerDiscovery =
@@ -504,6 +514,39 @@ export class MobileFleetLifecycleCoordinator {
     if (coordinator === undefined)
       throw new Error('credential_registry_slot_missing');
     return coordinator.createWorkspaceGateway();
+  }
+
+  /**
+   * Project only bounded Platform v2 reads for every ready slot. Full child
+   * gateways, receipt stores, commands, and tokens never cross this
+   * fan-out boundary.
+   */
+  readOnlyWorkspaceGateways(): readonly ReadOnlyWorkspaceServerGateway[] {
+    const gateways: ReadOnlyWorkspaceServerGateway[] = [];
+    for (const [slotId, coordinator] of this.coordinators) {
+      const state = coordinator.snapshot();
+      if (state.phase !== 'ready' || state.profile === null) continue;
+      let gateway: WorkspaceV2Gateway | null;
+      try {
+        gateway = coordinator.createWorkspaceGateway();
+      } catch {
+        // One expired or concurrently replaced slot cannot suppress siblings.
+        continue;
+      }
+      if (gateway === null) continue;
+      gateways.push({
+        slotId,
+        profile: state.profile,
+        gateway: {
+          authorizationScope: gateway.authorizationScope,
+          negotiate: gateway.negotiate,
+          loadProject: gateway.loadProject,
+          loadLineage: gateway.loadLineage,
+          loadReview: gateway.loadReview,
+        },
+      });
+    }
+    return gateways;
   }
 
   readOnlyGateways(): readonly ReadOnlyMobileServerGateway[] {

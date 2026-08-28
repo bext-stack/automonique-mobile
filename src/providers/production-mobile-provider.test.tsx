@@ -53,6 +53,7 @@ jest.mock('@/core/mobile-fleet-lifecycle', () => ({
     invalidateAllGateways: jest.fn(),
     createGateway: jest.fn(),
     createWorkspaceGateway: jest.fn(),
+    readOnlyWorkspaceGateways: jest.fn(),
     refresh: jest.fn(),
     revoke: jest.fn(),
     pair: jest.fn(),
@@ -130,6 +131,9 @@ beforeEach(() => {
   jest
     .mocked(mobileFleetLifecycle.createWorkspaceGateway)
     .mockReturnValue({} as never);
+  jest
+    .mocked(mobileFleetLifecycle.readOnlyWorkspaceGateways)
+    .mockReturnValue([]);
   fleetListener = undefined;
   exposedRevoke = undefined;
   jest.mocked(mobileFleetLifecycle.subscribe).mockImplementation((next) => {

@@ -12,6 +12,7 @@ import { AppState } from 'react-native';
 import {
   mobileFleetLifecycle,
   type MobileFleetServer,
+  type ReadOnlyWorkspaceServerGateway,
 } from '@/core/mobile-fleet-lifecycle';
 import { type MobileLifecycleState } from '@/core/mobile-lifecycle';
 import type { MobileAutomoniqueGateway } from '@/core/types';
@@ -58,6 +59,7 @@ interface GatewayGeneration {
   readonly scope: string;
   readonly gateway: MobileAutomoniqueGateway;
   readonly workspaceGateway: WorkspaceV2Gateway | null;
+  readonly readOnlyWorkspaceServers: readonly ReadOnlyWorkspaceServerGateway[];
 }
 
 function storageScope(
@@ -71,7 +73,20 @@ const INITIAL_GATEWAY: GatewayGeneration = {
   scope: 'unpaired',
   gateway: unavailableGateway('mobile_pairing_required'),
   workspaceGateway: null,
+  readOnlyWorkspaceServers: [],
 };
+
+function fleetGenerationKey(
+  fleet: ReturnType<typeof mobileFleetLifecycle.snapshot>,
+): string {
+  return fleet.servers
+    .map(({ slotId, state }) =>
+      state.profile === null
+        ? `${slotId}:${state.phase}`
+        : `${slotId}:${state.phase}:${state.profile.serverIdentity}:a${state.profile.authorizationRevision}:c${state.profile.credentialRevision}`,
+    )
+    .join('|');
+}
 
 async function revokeCredentialGeneration(
   state: MobileLifecycleState,
@@ -132,9 +147,12 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
       setFleet(nextFleet);
       const next = mobileFleetLifecycle.selectedState();
       setState(next);
+      const readOnlyWorkspaceServers =
+        mobileFleetLifecycle.readOnlyWorkspaceGateways();
+      const fleetKey = fleetGenerationKey(nextFleet);
       if (next.phase === 'ready' && next.profile !== null) {
         const scope = storageScope(next.profile);
-        const key = `ready:${scope}:c${next.profile.credentialRevision}:f${nextFleet.authorityGeneration}`;
+        const key = `ready:${scope}:c${next.profile.credentialRevision}:f${nextFleet.authorityGeneration}:${fleetKey}`;
         setGeneration((current) =>
           current.key === key
             ? current
@@ -143,6 +161,7 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
                 scope,
                 gateway: mobileFleetLifecycle.createGateway(),
                 workspaceGateway: mobileFleetLifecycle.createWorkspaceGateway(),
+                readOnlyWorkspaceServers,
               },
         );
       } else if (
@@ -160,6 +179,7 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
           scope,
           gateway: unavailableGateway(reason),
           workspaceGateway: null,
+          readOnlyWorkspaceServers,
         });
       } else if (
         next.phase === 'loading' ||
@@ -175,6 +195,7 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
           scope,
           gateway: unavailableGateway(`mobile_credential_${next.phase}`),
           workspaceGateway: null,
+          readOnlyWorkspaceServers,
         });
       }
     });
@@ -234,6 +255,11 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
           gateway={generation.workspaceGateway}
           generationKey={generation.key}
           profile={state.profile}
+          readOnlyServers={generation.readOnlyWorkspaceServers}
+          selectMutationServer={async (slotId) => {
+            if (fleet.selectedMutationSlotId === slotId) return;
+            await mobileFleetLifecycle.selectMutationSlot(slotId);
+          }}
         >
           {children}
         </WorkspaceProvider>

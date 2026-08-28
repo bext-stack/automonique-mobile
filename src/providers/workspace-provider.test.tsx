@@ -79,9 +79,12 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 function Probe() {
   const {
     catalog,
+    details,
     notificationPermission,
     requestReviewNotificationPermission,
     refresh,
+    selectServer,
+    serverStatuses,
     status,
   } = useWorkspaces();
   return (
@@ -91,6 +94,20 @@ function Probe() {
         {catalog.servers[0]?.authorization ?? 'none'}
       </Text>
       <Text testID="notification-permission">{notificationPermission}</Text>
+      <Text testID="fanout-probe">
+        {
+          Object.values(serverStatuses).filter(({ phase }) => phase === 'live')
+            .length
+        }
+        :{details.length}
+      </Text>
+      <Text testID="selected-server">{catalog.selectedServerIdentity}</Text>
+      {catalog.servers[1] !== undefined && (
+        <Pressable
+          accessibilityLabel="Select second workspace server"
+          onPress={() => void selectServer(catalog.servers[1]!.serverIdentity)}
+        />
+      )}
       <Pressable
         accessibilityLabel="Request review notifications"
         onPress={() => void requestReviewNotificationPermission()}
@@ -140,19 +157,192 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-test('cold cache remains visible but read-only when no current delegated gateway exists', async () => {
+test.each(['expired', 'recovery-required'])(
+  '%s credentials preserve cold cache navigation without a gateway',
+  async (generationKey) => {
+    const view = await render(
+      <WorkspaceProvider
+        gateway={null}
+        generationKey={generationKey}
+        profile={null}
+        readOnlyServers={[]}
+      >
+        <Probe />
+      </WorkspaceProvider>,
+    );
+    await waitFor(() =>
+      expect(view.getByText('unavailable:1:cached')).toBeTruthy(),
+    );
+  },
+);
+
+function catalogBuild(
+  server: (typeof workspaceCompanionFixture.servers)[number],
+) {
+  return {
+    profile: { ...server, authorization: 'active' as const },
+    details: server.workspaces.map((workspace) => ({
+      serverIdentity: server.serverIdentity,
+      workspaceId: workspace.id,
+      workspaceRevision: workspace.revision,
+      lineageAvailable: false,
+      lineage: null,
+      review: null,
+    })),
+    coverage: 'complete' as const,
+    omittedDetailCount: 0,
+    omittedProjectCount: 0,
+    omittedHostCount: 0,
+    omittedWorkspaceCount: 0,
+    omittedSessionCount: 0,
+    failedProjectCount: 0,
+    failedDetailCount: 0,
+    successfulProjectIds: server.projects.map((project) => project.id),
+    failedProjectIds: [],
+  };
+}
+
+test('two ready Platform v2 slots fan out independently and select the exact slot', async () => {
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  const first = workspaceCompanionFixture.servers[0]!;
+  const secondIdentity =
+    `sha256:${'b'.repeat(64)}` as typeof first.serverIdentity;
+  const second = {
+    ...first,
+    serverIdentity: secondIdentity,
+    origin: 'https://second.example.test',
+    tenantId: 'tenant-second',
+    label: 'Second server',
+    authorizationRevision: '9' as typeof first.authorizationRevision,
+    workspaces: first.workspaces.map((workspace) => ({
+      ...workspace,
+      id: `${workspace.id}-second`,
+      title: `${workspace.title} second`,
+    })),
+  };
+  mockBuildWorkspaceServerCatalog.mockImplementation(
+    ({ origin }: { readonly origin: string }) =>
+      Promise.resolve(catalogBuild(origin === second.origin ? second : first)),
+  );
+  const selectMutationServer = jest.fn().mockResolvedValue(undefined);
+  const readOnlyServers = [
+    {
+      slotId: 'slot-first',
+      profile: { origin: first.origin },
+      gateway: {
+        authorizationScope: { serverIdentity: first.serverIdentity },
+      },
+    },
+    {
+      slotId: 'slot-second',
+      profile: { origin: second.origin },
+      gateway: {
+        authorizationScope: { serverIdentity: second.serverIdentity },
+      },
+    },
+  ] as never;
+  const selectedGateway = {
+    authorizationScope: {
+      serverIdentity: second.serverIdentity,
+      actions: [],
+    },
+    reviewEffectKinds: [],
+  } as never;
+
+  const view = await render(
+    <WorkspaceProvider
+      gateway={selectedGateway}
+      generationKey="two-ready-slots"
+      profile={{ origin: second.origin } as never}
+      readOnlyServers={readOnlyServers}
+      selectMutationServer={selectMutationServer}
+    >
+      <Probe />
+    </WorkspaceProvider>,
+  );
+
+  await waitFor(() => expect(view.getByText('live:2:active')).toBeTruthy());
+  expect(view.getByTestId('fanout-probe')).toHaveTextContent('2:2');
+  expect(view.getByTestId('selected-server')).toHaveTextContent(secondIdentity);
+  expect(mockBuildWorkspaceServerCatalog).toHaveBeenCalledTimes(2);
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Select second workspace server'));
+    await Promise.resolve();
+  });
+  expect(selectMutationServer).toHaveBeenCalledWith('slot-second');
+  const persisted = jest.mocked(AsyncStorage.setItem).mock.calls.at(-1)?.[1];
+  expect(persisted).toEqual(expect.any(String));
+  const decoded = decodeWorkspaceCompanionCache(persisted!);
+  expect(decoded.catalog.servers).toHaveLength(2);
+  expect(
+    decoded.catalog.servers.map(({ authorization }) => authorization),
+  ).toEqual(['cached', 'cached']);
+});
+
+test('a slot generation switch aborts an in-flight fan-out before publishing it', async () => {
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  const server = workspaceCompanionFixture.servers[0]!;
+  let oldAborted = false;
+  mockBuildWorkspaceServerCatalog.mockImplementationOnce(
+    ({ signal }: { readonly signal: AbortSignal }) =>
+      new Promise((_, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            oldAborted = signal.aborted;
+            reject(new Error('old_slot_aborted'));
+          },
+          { once: true },
+        );
+      }),
+  );
+  const firstRead = [
+    {
+      slotId: 'slot-old',
+      profile: { origin: server.origin },
+      gateway: {
+        authorizationScope: { serverIdentity: server.serverIdentity },
+      },
+    },
+  ] as never;
   const view = await render(
     <WorkspaceProvider
       gateway={null}
-      generationKey="refresh-required"
+      generationKey="slot-old"
       profile={null}
+      readOnlyServers={firstRead}
     >
       <Probe />
     </WorkspaceProvider>,
   );
   await waitFor(() =>
-    expect(view.getByText('unavailable:1:cached')).toBeTruthy(),
+    expect(mockBuildWorkspaceServerCatalog).toHaveBeenCalledTimes(1),
   );
+  mockBuildWorkspaceServerCatalog.mockResolvedValueOnce(catalogBuild(server));
+  const nextRead = [
+    {
+      slotId: 'slot-new',
+      profile: { origin: server.origin },
+      gateway: {
+        authorizationScope: { serverIdentity: server.serverIdentity },
+      },
+    },
+  ] as never;
+  await act(async () => {
+    view.rerender(
+      <WorkspaceProvider
+        gateway={null}
+        generationKey="slot-new"
+        profile={null}
+        readOnlyServers={nextRead}
+      >
+        <Probe />
+      </WorkspaceProvider>,
+    );
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(oldAborted).toBe(true));
+  await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
 });
 
 test('credential revocation durably removes only the exact server scope', async () => {

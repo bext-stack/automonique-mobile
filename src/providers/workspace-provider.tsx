@@ -5,6 +5,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PropsWithChildren,
@@ -22,7 +23,7 @@ import { UserWorkspaceId } from '@automonique/sdk';
 import {
   cacheWorkspaceCatalog,
   emptyWorkspaceCatalog,
-  mergeWorkspaceCatalogServer,
+  mergeWorkspaceCatalogServers,
 } from '@/core/workspace-catalog-reducer';
 import type { WorkspaceCompanionCache } from '@/core/workspace-companion-cache';
 import type {
@@ -38,6 +39,7 @@ import {
 import type {
   ReviewActionReconciliation,
   ReviewActionSubmission,
+  ReadOnlyWorkspaceV2Gateway,
   WorkspaceV2Gateway,
 } from '@/core/workspace-v2-gateway';
 import type { ReviewV2ReceiptHandle } from '@/core/review-v2-receipts';
@@ -76,6 +78,7 @@ export interface WorkspaceCatalogStatus {
 interface WorkspaceContextValue {
   readonly catalog: WorkspaceCompanionCatalog;
   readonly status: WorkspaceCatalogStatus;
+  readonly serverStatuses: Readonly<Record<string, WorkspaceCatalogStatus>>;
   readonly details: readonly WorkspaceCatalogDetail[];
   readonly reviewBusy: boolean;
   readonly reviewReceipts: readonly ReviewReceiptProjection[];
@@ -83,7 +86,7 @@ interface WorkspaceContextValue {
   readonly notificationPermission: NotificationPermission;
   readonly requestReviewNotificationPermission: () => Promise<void>;
   readonly refresh: () => Promise<void>;
-  readonly selectServer: (identity: ServerIdentity) => void;
+  readonly selectServer: (identity: ServerIdentity) => Promise<void>;
   readonly findServer: (identity: string) => ScopedServerProfile | null;
   readonly findWorkspace: (
     serverIdentity: string,
@@ -117,10 +120,18 @@ export interface ReviewReceiptProjection {
   readonly receipt: ReviewActionReceipt;
 }
 
+export interface WorkspaceReadServer {
+  readonly slotId: string;
+  readonly profile: ConnectionProfile;
+  readonly gateway: ReadOnlyWorkspaceV2Gateway;
+}
+
 interface WorkspaceProviderProps extends PropsWithChildren {
   readonly gateway: WorkspaceV2Gateway | null;
   readonly profile: ConnectionProfile | null;
   readonly generationKey: string;
+  readonly readOnlyServers?: readonly WorkspaceReadServer[];
+  readonly selectMutationServer?: (slotId: string) => Promise<void>;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -137,6 +148,83 @@ const INITIAL_STATUS: WorkspaceCatalogStatus = {
   failedProjectCount: 0,
   failedDetailCount: 0,
 };
+
+const MAX_PARALLEL_WORKSPACE_SERVERS = 2;
+
+function liveServerStatus(
+  built: Awaited<ReturnType<typeof buildWorkspaceServerCatalog>>,
+): WorkspaceCatalogStatus {
+  return {
+    phase: 'live',
+    coverage: built.coverage,
+    message:
+      built.coverage === 'complete'
+        ? 'Current delegated workspace inventory'
+        : 'Current inventory with bounded or unavailable detail reads',
+    omittedDetailCount: built.omittedDetailCount,
+    omittedProjectCount: built.omittedProjectCount,
+    omittedHostCount: built.omittedHostCount,
+    omittedWorkspaceCount: built.omittedWorkspaceCount,
+    omittedSessionCount: built.omittedSessionCount,
+    failedProjectCount: built.failedProjectCount,
+    failedDetailCount: built.failedDetailCount,
+  };
+}
+
+function aggregateServerStatuses(
+  statuses: Readonly<Record<string, WorkspaceCatalogStatus>>,
+): WorkspaceCatalogStatus {
+  const values = Object.values(statuses);
+  const live = values.filter((entry) => entry.phase === 'live');
+  if (live.length === 0) {
+    return {
+      ...INITIAL_STATUS,
+      phase: values.length === 0 ? 'unavailable' : 'stale',
+      message:
+        values.length === 0
+          ? 'No current delegated Platform v2 project reads. Cached workspaces remain read only.'
+          : 'Workspace refresh unavailable; showing admitted cache read only',
+    };
+  }
+  const partial =
+    live.length !== values.length ||
+    live.some((entry) => entry.coverage !== 'complete');
+  return {
+    phase: 'live',
+    coverage: partial ? 'partial' : 'complete',
+    message: partial
+      ? 'Current multi-server inventory with bounded or unavailable reads'
+      : 'Current delegated multi-server workspace inventory',
+    omittedDetailCount: live.reduce(
+      (total, entry) => total + entry.omittedDetailCount,
+      0,
+    ),
+    omittedProjectCount: live.reduce(
+      (total, entry) => total + entry.omittedProjectCount,
+      0,
+    ),
+    omittedHostCount: live.reduce(
+      (total, entry) => total + entry.omittedHostCount,
+      0,
+    ),
+    omittedWorkspaceCount: live.reduce(
+      (total, entry) => total + entry.omittedWorkspaceCount,
+      0,
+    ),
+    omittedSessionCount: live.reduce(
+      (total, entry) => total + entry.omittedSessionCount,
+      0,
+    ),
+    failedProjectCount:
+      values.length -
+      live.length +
+      live.reduce((total, entry) => total + entry.failedProjectCount, 0),
+    failedDetailCount: live.reduce(
+      (total, entry) => total + entry.failedDetailCount,
+      0,
+    ),
+  };
+}
 
 /** Remove one exact server scope before its credential is revoked. */
 export async function revokeWorkspaceCatalogCache(
@@ -162,14 +250,27 @@ export function WorkspaceProvider({
   gateway,
   profile,
   generationKey,
+  readOnlyServers,
+  selectMutationServer,
 }: WorkspaceProviderProps) {
   const router = useRouter();
+  const readableServers = useMemo<readonly WorkspaceReadServer[]>(
+    () =>
+      readOnlyServers ??
+      (gateway === null || profile === null
+        ? []
+        : [{ slotId: 'selected', profile, gateway }]),
+    [gateway, profile, readOnlyServers],
+  );
   const routerRef = useRef(router);
   const [catalog, setCatalog] = useState<WorkspaceCompanionCatalog>(() =>
     emptyWorkspaceCatalog(),
   );
   const [details, setDetails] = useState<readonly WorkspaceCatalogDetail[]>([]);
   const [status, setStatus] = useState<WorkspaceCatalogStatus>(INITIAL_STATUS);
+  const [serverStatuses, setServerStatuses] = useState<
+    Readonly<Record<string, WorkspaceCatalogStatus>>
+  >({});
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewReceipts, setReviewReceipts] = useState<
     readonly ReviewReceiptProjection[]
@@ -184,6 +285,7 @@ export function WorkspaceProvider({
   const catalogRef = useRef(catalog);
   const detailsRef = useRef(details);
   const statusRef = useRef(status);
+  const serverStatusesRef = useRef(serverStatuses);
   const draftsRef = useRef<WorkspaceCompanionCache['intentDrafts']>([]);
   const operation = useRef<AbortController | null>(null);
   const reviewOperation = useRef(false);
@@ -205,6 +307,10 @@ export function WorkspaceProvider({
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
+
+  useEffect(() => {
+    serverStatusesRef.current = serverStatuses;
+  }, [serverStatuses]);
 
   useEffect(() => {
     notificationPermissionRef.current = notificationPermission;
@@ -378,81 +484,174 @@ export function WorkspaceProvider({
     operation.current?.abort('workspace_generation_replaced');
     const controller = new AbortController();
     operation.current = controller;
-    if (gateway === null || profile === null) {
+    const uniqueReadableServers = [
+      ...new Map(
+        readableServers.map((server) => [
+          server.gateway.authorizationScope.serverIdentity,
+          server,
+        ]),
+      ).values(),
+    ];
+    if (uniqueReadableServers.length === 0) {
       const cached = cacheWorkspaceCatalog(catalogRef.current);
       catalogRef.current = cached;
       setCatalog(cached);
       setDetails([]);
-      setStatus({
-        ...INITIAL_STATUS,
-        phase: 'unavailable',
-        message:
-          'This credential has no current delegated Platform v2 project reads. Cached workspaces remain read only.',
-      });
+      const unavailable = aggregateServerStatuses({});
+      statusRef.current = unavailable;
+      setStatus(unavailable);
+      setServerStatuses({});
       return;
     }
-    const unregister = registerWorkspaceOperation(
-      gateway.authorizationScope.serverIdentity,
-      controller,
+    const unregister = uniqueReadableServers.map((server) =>
+      registerWorkspaceOperation(
+        server.gateway.authorizationScope.serverIdentity,
+        controller,
+      ),
     );
+    const cached = cacheWorkspaceCatalog(catalogRef.current);
+    catalogRef.current = cached;
+    setCatalog(cached);
+    const refreshingStatuses = Object.fromEntries(
+      uniqueReadableServers.map((server) => [
+        server.gateway.authorizationScope.serverIdentity,
+        {
+          ...INITIAL_STATUS,
+          phase: 'loading' as const,
+          message: 'Refreshing typed workspace relations',
+        },
+      ]),
+    );
+    serverStatusesRef.current = refreshingStatuses;
+    setServerStatuses(refreshingStatuses);
     setStatus((current) => ({
       ...current,
       phase: current.phase === 'loading' ? 'loading' : 'stale',
-      message: 'Refreshing typed workspace relations',
+      message: 'Refreshing bounded multi-server workspace relations',
     }));
     try {
       const recovered: ReviewReceiptProjection[] = [];
       let pending: readonly ReviewV2ReceiptHandle[] = [];
+      let selectedReadFailed = false;
       if (
+        gateway !== null &&
         gateway.reviewEffectKinds.length > 0 &&
         gateway.authorizationScope.actions.includes('get_review_receipt')
       ) {
-        pending = await gateway.pendingReviewReceipts();
-        for (const handle of pending) {
-          if (controller.signal.aborted) return;
-          const result = await gateway.reconcileReviewAction(
-            handle.idempotency_key,
-            controller.signal,
-          );
-          recovered.push({
-            projectId: handle.project,
-            workspaceId: handle.workspace_id,
-            actionKind: handle.action_kind,
-            receipt: result.receipt,
-          });
+        try {
+          pending = await gateway.pendingReviewReceipts();
+          for (const handle of pending) {
+            if (controller.signal.aborted) return;
+            const result = await gateway.reconcileReviewAction(
+              handle.idempotency_key,
+              controller.signal,
+            );
+            recovered.push({
+              projectId: handle.project,
+              workspaceId: handle.workspace_id,
+              actionKind: handle.action_kind,
+              receipt: result.receipt,
+            });
+          }
+          pending = await gateway.pendingReviewReceipts();
+        } catch {
+          selectedReadFailed = true;
         }
-        pending = await gateway.pendingReviewReceipts();
       }
       if (controller.signal.aborted) return;
-      const built = await buildWorkspaceServerCatalog({
-        gateway,
-        origin: profile.origin,
-        serverLabel: serverLabel(profile),
-        signal: controller.signal,
-      });
+      const outcomes: {
+        readonly server: WorkspaceReadServer;
+        readonly built?: Awaited<
+          ReturnType<typeof buildWorkspaceServerCatalog>
+        >;
+        readonly error?: unknown;
+      }[] = [];
+      for (
+        let offset = 0;
+        offset < uniqueReadableServers.length;
+        offset += MAX_PARALLEL_WORKSPACE_SERVERS
+      ) {
+        const batch = uniqueReadableServers.slice(
+          offset,
+          offset + MAX_PARALLEL_WORKSPACE_SERVERS,
+        );
+        outcomes.push(
+          ...(await Promise.all(
+            batch.map(async (server) => {
+              if (
+                selectedReadFailed &&
+                gateway?.authorizationScope.serverIdentity ===
+                  server.gateway.authorizationScope.serverIdentity
+              ) {
+                return {
+                  server,
+                  error: new Error('review_reconciliation_unavailable'),
+                };
+              }
+              try {
+                return {
+                  server,
+                  built: await buildWorkspaceServerCatalog({
+                    gateway: server.gateway,
+                    origin: server.profile.origin,
+                    serverLabel: serverLabel(server.profile),
+                    signal: controller.signal,
+                  }),
+                };
+              } catch (error) {
+                return { server, error };
+              }
+            }),
+          )),
+        );
+        if (controller.signal.aborted) return;
+      }
       if (controller.signal.aborted) return;
-      const next = mergeWorkspaceCatalogServer(
-        catalogRef.current,
-        built.profile,
-        {
+      const successful = outcomes.flatMap((outcome) =>
+        outcome.built === undefined ? [] : [outcome.built],
+      );
+      const merged = mergeWorkspaceCatalogServers(
+        cached,
+        successful.map((built) => ({
+          profile: built.profile,
           successfulProjectIds: built.successfulProjectIds,
           failedProjectIds: built.failedProjectIds,
-        },
+        })),
       );
-      await persistWorkspaceCatalogCache(
-        {
-          schema: 'automonique.mobile-workspace-cache/v1',
-          catalog: next,
-          intentDrafts: draftsRef.current,
-        },
-        built.profile.serverIdentity,
-        built.profile.authorizationRevision,
-      );
+      const selectedMutationIdentity =
+        gateway?.authorizationScope.serverIdentity ?? null;
+      const next =
+        selectedMutationIdentity !== null &&
+        merged.servers.some(
+          (server) => server.serverIdentity === selectedMutationIdentity,
+        )
+          ? { ...merged, selectedServerIdentity: selectedMutationIdentity }
+          : merged;
+      if (successful[0] !== undefined) {
+        await persistWorkspaceCatalogCache(
+          {
+            schema: 'automonique.mobile-workspace-cache/v1',
+            catalog: next,
+            intentDrafts: draftsRef.current,
+          },
+          successful[0].profile.serverIdentity,
+          successful[0].profile.authorizationRevision,
+        );
+      }
       if (controller.signal.aborted) return;
       catalogRef.current = next;
       setCatalog(next);
-      setDetails(built.details);
-      detailsRef.current = built.details;
+      const successfulIdentities = new Set(
+        successful.map((built) => built.profile.serverIdentity),
+      );
+      const nextDetails = [
+        ...successful.flatMap((built) => built.details),
+        ...detailsRef.current.filter(
+          (detail) => !successfulIdentities.has(detail.serverIdentity),
+        ),
+      ];
+      setDetails(nextDetails);
+      detailsRef.current = nextDetails;
       setPendingReviewReceipts(pending);
       setReviewReceipts((current) => [
         ...recovered,
@@ -465,21 +664,30 @@ export function WorkspaceProvider({
             ),
         ),
       ]);
-      const nextStatus: WorkspaceCatalogStatus = {
-        phase: 'live',
-        coverage: built.coverage,
-        message:
-          built.coverage === 'complete'
-            ? 'Current delegated workspace inventory'
-            : 'Current inventory with bounded or unavailable detail reads',
-        omittedDetailCount: built.omittedDetailCount,
-        omittedProjectCount: built.omittedProjectCount,
-        omittedHostCount: built.omittedHostCount,
-        omittedWorkspaceCount: built.omittedWorkspaceCount,
-        omittedSessionCount: built.omittedSessionCount,
-        failedProjectCount: built.failedProjectCount,
-        failedDetailCount: built.failedDetailCount,
-      };
+      const nextServerStatuses = Object.fromEntries(
+        outcomes.map((outcome) => {
+          const identity =
+            outcome.server.gateway.authorizationScope.serverIdentity;
+          if (outcome.built !== undefined) {
+            return [identity, liveServerStatus(outcome.built)];
+          }
+          return [
+            identity,
+            {
+              ...INITIAL_STATUS,
+              phase: 'stale' as const,
+              message:
+                outcome.error instanceof Error &&
+                outcome.error.message === 'workspace_catalog_resync_required'
+                  ? 'Workspace revisions changed unexpectedly; a clean refresh is required'
+                  : 'Server refresh unavailable; admitted cache remains read only',
+            },
+          ];
+        }),
+      );
+      serverStatusesRef.current = nextServerStatuses;
+      setServerStatuses(nextServerStatuses);
+      const nextStatus = aggregateServerStatuses(nextServerStatuses);
       statusRef.current = nextStatus;
       setStatus(nextStatus);
       const response = pendingNotificationResponse.current;
@@ -489,14 +697,27 @@ export function WorkspaceProvider({
           .clearLastResponse()
           .catch(() => undefined);
       }
-      await scheduleLiveReviewNotifications(next, built.details);
+      await scheduleLiveReviewNotifications(next, nextDetails);
     } catch (error) {
       if (controller.signal.aborted) return;
       const cached = cacheWorkspaceCatalog(catalogRef.current);
       catalogRef.current = cached;
       setCatalog(cached);
       setDetails([]);
-      setStatus({
+      const failedStatuses = Object.fromEntries(
+        uniqueReadableServers.map((server) => [
+          server.gateway.authorizationScope.serverIdentity,
+          {
+            ...INITIAL_STATUS,
+            phase: 'stale' as const,
+            message:
+              'Server refresh unavailable; admitted cache remains read only',
+          },
+        ]),
+      );
+      serverStatusesRef.current = failedStatuses;
+      setServerStatuses(failedStatuses);
+      const failedStatus = {
         ...INITIAL_STATUS,
         phase: 'stale',
         message:
@@ -504,14 +725,16 @@ export function WorkspaceProvider({
           error.message === 'workspace_catalog_resync_required'
             ? 'Workspace revisions changed unexpectedly; a clean refresh is required'
             : 'Workspace refresh unavailable; showing admitted cache read only',
-      });
+      } as const;
+      statusRef.current = failedStatus;
+      setStatus(failedStatus);
     } finally {
-      unregister();
+      for (const remove of unregister) remove();
     }
   }, [
     admitNotificationResponse,
     gateway,
-    profile,
+    readableServers,
     scheduleLiveReviewNotifications,
   ]);
 
@@ -637,11 +860,25 @@ export function WorkspaceProvider({
           draftsRef.current = cache.intentDrafts;
           catalogRef.current = cache.catalog;
           setCatalog(cache.catalog);
-          setStatus({
+          const cachedStatuses = Object.fromEntries(
+            cache.catalog.servers.map((server) => [
+              server.serverIdentity,
+              {
+                ...INITIAL_STATUS,
+                phase: 'stale' as const,
+                message: 'Admitted cached workspace inventory · read only',
+              },
+            ]),
+          );
+          serverStatusesRef.current = cachedStatuses;
+          setServerStatuses(cachedStatuses);
+          const cachedStatus = {
             ...INITIAL_STATUS,
             phase: 'stale',
             message: 'Admitted cached workspace inventory · read only',
-          });
+          } as const;
+          statusRef.current = cachedStatus;
+          setStatus(cachedStatus);
         }
       }
       if (active) await refresh();
@@ -652,24 +889,33 @@ export function WorkspaceProvider({
     };
   }, [generationKey, refresh]);
 
-  const selectServer = useCallback((identity: ServerIdentity) => {
-    setCatalog((current) => {
+  const selectServer = useCallback(
+    async (identity: ServerIdentity) => {
       if (
-        !current.servers.some((server) => server.serverIdentity === identity)
-      ) {
-        return current;
-      }
-      const next = { ...current, selectedServerIdentity: identity };
+        !catalogRef.current.servers.some(
+          (server) => server.serverIdentity === identity,
+        )
+      )
+        return;
+      const next = { ...catalogRef.current, selectedServerIdentity: identity };
       catalogRef.current = next;
-      return next;
-    });
-  }, []);
+      setCatalog(next);
+      if (selectMutationServer === undefined) return;
+      const readable = readableServers.find(
+        (server) =>
+          server.gateway.authorizationScope.serverIdentity === identity,
+      );
+      if (readable !== undefined) await selectMutationServer(readable.slotId);
+    },
+    [readableServers, selectMutationServer],
+  );
 
   return (
     <WorkspaceContext.Provider
       value={{
         catalog,
         status,
+        serverStatuses,
         details,
         reviewBusy,
         reviewReceipts,

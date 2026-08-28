@@ -17,6 +17,7 @@ const mockUseWorkspaces = jest.fn();
 const mockUseMobile = jest.fn();
 const mockUseMobileLifecycle = jest.fn();
 const mockRedirect = jest.fn();
+const mockRouterPush = jest.fn();
 
 jest.mock('expo-router', () => ({
   Link: ({ children }: { readonly children: ReactNode }) => children,
@@ -25,6 +26,7 @@ jest.mock('expo-router', () => ({
     return null;
   },
   useLocalSearchParams: () => mockRouteParams,
+  useRouter: () => ({ push: mockRouterPush }),
 }));
 jest.mock('@/providers/workspace-provider', () => ({
   useWorkspaces: () => mockUseWorkspaces(),
@@ -446,6 +448,86 @@ test('discovery keeps external and orchestration status separate and labels part
       'Open Read-mostly workspace companion on Paris builder',
     ),
   ).toBeTruthy();
+});
+
+test('search spans servers and waits for exact slot selection before navigation', async () => {
+  const base = workspaceValue();
+  const first = base.catalog.servers[0]!;
+  const secondIdentity =
+    `sha256:${'c'.repeat(64)}` as typeof first.serverIdentity;
+  const secondWorkspace = {
+    ...first.workspaces[0]!,
+    id: 'workspace-second',
+    title: 'Needle on second server',
+  };
+  const second = {
+    ...first,
+    serverIdentity: secondIdentity,
+    origin: 'https://second.example.test',
+    tenantId: 'tenant-second',
+    label: 'Second server',
+    workspaces: [secondWorkspace],
+  };
+  const selectServer = jest.fn().mockResolvedValue(undefined);
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: { ...base.catalog, servers: [first, second] },
+    selectServer,
+  });
+  const view = await render(<WorkspacesScreen />);
+  expect(view.queryByText(secondWorkspace.title)).toBeNull();
+  fireEvent.changeText(
+    view.getByLabelText(
+      'Search projects, hosts, workspaces, and external tasks',
+    ),
+    'Needle',
+  );
+  const result = await view.findByLabelText(
+    `Open ${secondWorkspace.title} on ${first.hosts[0]!.label}`,
+  );
+  await act(async () => {
+    fireEvent.press(result);
+    await Promise.resolve();
+  });
+  expect(selectServer).toHaveBeenCalledWith(secondIdentity);
+  await waitFor(() =>
+    expect(mockRouterPush).toHaveBeenCalledWith({
+      pathname: '/workspace/[server]/[workspace]',
+      params: {
+        server: secondIdentity,
+        workspace: secondWorkspace.id,
+        revision: secondWorkspace.revision,
+      },
+    }),
+  );
+  expect(selectServer.mock.invocationCallOrder[0]).toBeLessThan(
+    mockRouterPush.mock.invocationCallOrder[0]!,
+  );
+});
+
+test('an exact live workspace deep link hands retained-session authority to its slot', async () => {
+  const base = workspaceValue();
+  const server = base.catalog.servers[0]!;
+  const workspace = server.workspaces[0]!;
+  const selectServer = jest.fn().mockResolvedValue(undefined);
+  mockUseWorkspaces.mockReturnValue({ ...base, selectServer });
+  mockUseMobileLifecycle.mockReturnValue({
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: `sha256:${'d'.repeat(64)}` },
+    },
+    workspaceGateway: null,
+  });
+  mockRouteParams = {
+    server: server.serverIdentity,
+    workspace: workspace.id,
+    revision: workspace.revision,
+  };
+
+  await render(<WorkspaceDetailScreen />);
+  await waitFor(() =>
+    expect(selectServer).toHaveBeenCalledWith(server.serverIdentity),
+  );
 });
 
 test('workspace detail exposes exact retained chat while mutations and terminal stay disabled', async () => {

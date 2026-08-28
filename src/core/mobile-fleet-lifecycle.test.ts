@@ -76,12 +76,41 @@ class FakeLifecycle {
   readonly invalidateGateways = jest.fn(() => this.state);
   private readonly listeners = new Set<(state: MobileLifecycleState) => void>();
   private state: MobileLifecycleState;
+  readonly workspaceGateway = {
+    authorizationScope: {
+      serverIdentity: '',
+      tenantId: 'tenant',
+      authorizationRevision: 1n,
+      principalGeneration: 1n,
+      delegationId: 'delegation',
+      expiresAtMs: 9_999_999_999_999n,
+      projectRoots: ['project'],
+      actions: ['query_work_contexts'],
+    },
+    reviewEffectKinds: [],
+    negotiate: jest.fn(),
+    loadProject: jest.fn(),
+    loadLineage: jest.fn(),
+    loadReview: jest.fn(),
+    executeReviewAction: jest.fn(),
+    pendingReviewReceipts: jest.fn(),
+    reconcileReviewAction: jest.fn(),
+    prepareMutation: jest.fn(),
+    confirmMutation: jest.fn(),
+    pendingMutationReceipts: jest.fn(),
+    reconcileMutation: jest.fn(),
+    submitWorkspaceIntent: jest.fn(),
+    getWorkspaceIntent: jest.fn(),
+    cancelWorkspaceIntent: jest.fn(),
+  };
 
   constructor(
     index: number,
     private readonly hydrateOperation: () => Promise<void>,
   ) {
     this.state = { phase: 'ready', profile: profile(index) };
+    this.workspaceGateway.authorizationScope.serverIdentity =
+      this.state.profile!.serverIdentity;
   }
 
   snapshot() {
@@ -108,7 +137,7 @@ class FakeLifecycle {
   }
 
   createWorkspaceGateway() {
-    return null;
+    return this.workspaceGateway as never;
   }
 }
 
@@ -162,6 +191,17 @@ test('hydrates ready servers with a two-server bound and exposes read-only proje
     'reconcile',
   ]);
   expect(readOnly[1]).not.toHaveProperty('attach');
+  const workspaceReads = fleet.readOnlyWorkspaceGateways();
+  expect(workspaceReads).toHaveLength(3);
+  expect(Object.keys(workspaceReads[1]!.gateway)).toEqual([
+    'authorizationScope',
+    'negotiate',
+    'loadProject',
+    'loadLineage',
+    'loadReview',
+  ]);
+  expect(workspaceReads[1]!.gateway).not.toHaveProperty('prepareMutation');
+  expect(workspaceReads[1]!.gateway).not.toHaveProperty('executeReviewAction');
   expect(fleet.createGateway()).toBe(fakes[0]!.gateway);
 
   active = 0;
