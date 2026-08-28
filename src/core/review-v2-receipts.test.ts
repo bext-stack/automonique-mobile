@@ -93,6 +93,29 @@ test('admits retained-agent delivery handles without persisting comment content'
   expect(encoded).not.toContain('comment body');
 });
 
+test('admits CI rerun custody without persisting the confirmation capability', async () => {
+  const store = createReviewV2ReceiptStore(
+    async () => familyDigest,
+    async () => authorizationDigest,
+  );
+  const rerun = handle({
+    authority_kind: 'ci',
+    authority_id: 'ci-github-actions',
+    action_kind: 'rerun_check',
+    action_digest: `sha256:${'e'.repeat(64)}`,
+    idempotency_key: 'review-check-rerun-1',
+  });
+  await expect(store.put(rerun)).resolves.toBe(true);
+  await expect(store.list()).resolves.toEqual([rerun]);
+  const encoded = [...values.values()][0]!;
+  expect(encoded).toContain('rerun_check');
+  expect(encoded).toContain('ci-github-actions');
+  expect(encoded).not.toContain('confirmation_digest');
+  await expect(
+    store.put({ ...rerun, authority_kind: 'review' }),
+  ).rejects.toThrow('review_receipt_handle_invalid');
+});
+
 test('copy-before-remove migrates exact legacy local handles into the expanded schema', async () => {
   const legacyKey = `automonique.mobile.review-v2-receipts.v1.${familyDigest}`;
   values.set(

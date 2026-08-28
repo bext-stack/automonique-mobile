@@ -89,12 +89,14 @@ test('notification coordinates are exact, bounded, and inert until live re-admis
     reviewRevision: '9',
     fileId: 'file-1',
     hunkId: 'hunk-1',
+    checkId: null,
   };
   const encoded = encodeReviewNotificationData(request);
   expect(Object.keys(encoded).sort()).toEqual(
     [
       'file_id',
       'hunk_id',
+      'check_id',
       'kind',
       'authorization_revision',
       'principal_generation',
@@ -123,6 +125,32 @@ test('notification coordinates are exact, bounded, and inert until live re-admis
       authorization_revision: '9',
       extra: 'forged',
     }),
+  ).toThrow('review_notification_invalid');
+});
+
+test('check attention notifications retain the exact rerun deep-link anchor', () => {
+  const request = {
+    serverIdentity: `sha256:${'a'.repeat(64)}` as ServerIdentity,
+    authorizationRevision: '8',
+    principalGeneration: '3',
+    workspaceId: 'workspace-35',
+    workspaceRevision: '4',
+    reviewRevision: '9',
+    fileId: null,
+    hunkId: null,
+    checkId: 'check-1',
+  };
+  const encoded = encodeReviewNotificationData(request);
+  expect(encoded).toMatchObject({
+    kind: 'automonique_review_attention_v3',
+    check_id: 'check-1',
+  });
+  expect(decodeReviewNotificationData(encoded)).toEqual(request);
+  expect(attentionNotificationKey({ target: 'review', request })).toContain(
+    'check-1',
+  );
+  expect(() =>
+    decodeReviewNotificationData({ ...encoded, file_id: 'file-1' }),
   ).toThrow('review_notification_invalid');
 });
 

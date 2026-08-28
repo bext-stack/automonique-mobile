@@ -648,13 +648,14 @@ test('notification anchors come only from the authoritative selected event', () 
   expect(reviewAttentionAnchor(commentSnapshot)).toEqual({
     fileId: 'file-1',
     hunkId: 'hunk-1',
+    checkId: null,
   });
   expect(
     reviewAttentionAnchor({
       ...commentSnapshot,
       comments: [],
     } as unknown as ReviewSnapshot),
-  ).toEqual({ fileId: null, hunkId: null });
+  ).toEqual({ fileId: null, hunkId: null, checkId: null });
 });
 
 test('deep links bind the live grant plus exact review, file, and hunk revisions', () => {
@@ -708,6 +709,43 @@ test('deep links bind the live grant plus exact review, file, and hunk revisions
       authorizationRevision: '999',
     }),
   ).toThrow('review_navigation_not_authorized');
+
+  const check = {
+    authority: { kind: 'ci' as const, id: 'ci-github-actions' },
+    freshness: {
+      observed_at_ms: 100n,
+      observed_revision: 4n,
+      state: 'fresh' as const,
+    },
+    id: 'check-1',
+    required: true,
+    state: 'failed' as const,
+  };
+  const checkSnapshot = {
+    ...review(),
+    checks: [check],
+  } as unknown as ReviewSnapshot;
+  expect(
+    admitReviewDeepLink(catalog, [detail(checkSnapshot)], {
+      ...request,
+      fileId: null,
+      hunkId: null,
+      checkId: check.id,
+    }),
+  ).toEqual({
+    pathname: '/workspace/[server]/[workspace]',
+    params: expect.objectContaining({
+      destination: 'review',
+      review_revision: '7',
+      check: 'check-1',
+    }),
+  });
+  expect(() =>
+    admitReviewDeepLink(catalog, [detail(checkSnapshot)], {
+      ...request,
+      checkId: check.id,
+    }),
+  ).toThrow('review_navigation_not_authorized');
 });
 
 test('local review actions require live exact revisions, delegated transport, and adapter support', () => {
@@ -719,7 +757,7 @@ test('local review actions require live exact revisions, delegated transport, an
   expect(
     reviewActionAvailability({
       action,
-      delegatedActions: ['execute_review_action'],
+      delegatedActions: ['execute_review_action', 'get_review_receipt'],
       effectKinds: ['approve_review'],
       live: true,
       projectStale: false,
@@ -738,6 +776,60 @@ test('local review actions require live exact revisions, delegated transport, an
       snapshot,
     }),
   ).toEqual({ enabled: false, reason: 'action_not_delegated' });
+});
+
+test('check rerun availability requires the exact separate grants and terminal fresh revision', () => {
+  const snapshot = {
+    ...review(),
+    checks: [
+      {
+        authority: { kind: 'ci', id: 'ci-github-actions' },
+        freshness: {
+          observed_at_ms: 1n,
+          observed_revision: 5n,
+          state: 'fresh',
+        },
+        id: 'check-1',
+        required: true,
+        state: 'failed',
+      },
+    ],
+  } as ReviewSnapshot;
+  const options = {
+    action: {
+      kind: 'rerun_check' as const,
+      payload: { check_id: 'check-1', expected_check_revision: 5n },
+    },
+    delegatedActions: [
+      'get_review_capabilities',
+      'rerun_check',
+      'get_review_receipt',
+    ],
+    effectKinds: ['rerun_check'] as const,
+    live: true,
+    projectStale: false,
+    exactReviewRevision: true,
+    snapshot,
+  };
+  expect(reviewActionAvailability(options)).toEqual({
+    enabled: true,
+    reason: 'available',
+  });
+  expect(
+    reviewActionAvailability({
+      ...options,
+      delegatedActions: ['execute_review_action', 'get_review_receipt'],
+    }),
+  ).toEqual({ enabled: false, reason: 'action_not_delegated' });
+  expect(
+    reviewActionAvailability({
+      ...options,
+      action: {
+        ...options.action,
+        payload: { ...options.action.payload, expected_check_revision: 4n },
+      },
+    }),
+  ).toEqual({ enabled: false, reason: 'target_already_settled' });
 });
 
 test('retained-agent comment delivery requires an exact unsent comment revision', () => {
@@ -765,7 +857,7 @@ test('retained-agent comment delivery requires an exact unsent comment revision'
       kind: 'send_comment_to_agent' as const,
       payload: { comment_id: 'comment-1', expected_comment_revision: 4n },
     },
-    delegatedActions: ['execute_review_action'],
+    delegatedActions: ['execute_review_action', 'get_review_receipt'],
     effectKinds: ['send_comment_to_agent'] as const,
     live: true,
     projectStale: false,

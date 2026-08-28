@@ -28,7 +28,7 @@ export interface AdmittedReviewNotification {
 }
 
 export type ReviewNotificationData = Readonly<Record<string, unknown>> & {
-  readonly kind: 'automonique_review_attention_v2';
+  readonly kind: 'automonique_review_attention_v3';
   readonly server_identity: string;
   readonly authorization_revision: string;
   readonly principal_generation: string;
@@ -37,6 +37,7 @@ export type ReviewNotificationData = Readonly<Record<string, unknown>> & {
   readonly review_revision: string;
   readonly file_id: string | null;
   readonly hunk_id: string | null;
+  readonly check_id: string | null;
 };
 
 export type SessionAttentionNotificationData = Readonly<
@@ -87,7 +88,7 @@ export function encodeReviewNotificationData(
   request: ReviewDeepLinkRequest,
 ): ReviewNotificationData {
   return {
-    kind: 'automonique_review_attention_v2',
+    kind: 'automonique_review_attention_v3',
     server_identity: request.serverIdentity,
     authorization_revision: request.authorizationRevision,
     principal_generation: request.principalGeneration,
@@ -96,6 +97,7 @@ export function encodeReviewNotificationData(
     review_revision: request.reviewRevision,
     file_id: request.fileId,
     hunk_id: request.hunkId,
+    check_id: request.checkId ?? null,
   };
 }
 
@@ -179,6 +181,7 @@ export function decodeAttentionNotificationData(
       },
     };
   }
+  const legacy = candidate.kind === 'automonique_review_attention_v2';
   const fields = [
     'kind',
     'server_identity',
@@ -189,13 +192,20 @@ export function decodeAttentionNotificationData(
     'review_revision',
     'file_id',
     'hunk_id',
+    ...(legacy ? [] : ['check_id']),
   ];
   if (
     !exactFields(candidate, fields) ||
-    candidate.kind !== 'automonique_review_attention_v2' ||
+    (!legacy && candidate.kind !== 'automonique_review_attention_v3') ||
     (candidate.file_id !== null && typeof candidate.file_id !== 'string') ||
     (candidate.hunk_id !== null && typeof candidate.hunk_id !== 'string') ||
-    (candidate.file_id === null && candidate.hunk_id !== null)
+    (candidate.file_id === null && candidate.hunk_id !== null) ||
+    (!legacy &&
+      candidate.check_id !== null &&
+      typeof candidate.check_id !== 'string') ||
+    (!legacy &&
+      candidate.check_id !== null &&
+      (candidate.file_id !== null || candidate.hunk_id !== null))
   ) {
     throw new Error('review_notification_invalid');
   }
@@ -210,6 +220,10 @@ export function decodeAttentionNotificationData(
       reviewRevision: revision(candidate.review_revision),
       fileId: candidate.file_id === null ? null : bounded(candidate.file_id),
       hunkId: candidate.hunk_id === null ? null : bounded(candidate.hunk_id),
+      checkId:
+        legacy || candidate.check_id === null
+          ? null
+          : bounded(candidate.check_id),
     },
   };
 }
@@ -223,6 +237,7 @@ export function attentionNotificationKey(
           decoded.request.reviewRevision,
           decoded.request.fileId ?? '',
           decoded.request.hunkId ?? '',
+          decoded.request.checkId ?? '',
         ]
       : [
           decoded.request.nodeKind,

@@ -23,6 +23,8 @@ import {
   type MutationReceipt,
   type PlatformNegotiationResponse,
   type PlatformV2Refusal,
+  type ReviewCapabilities,
+  type ReviewConfirmationDigest,
   type ProjectId as ProjectIdValue,
   type ReviewSnapshot,
   type ReviewAction,
@@ -56,8 +58,9 @@ import {
   type ReviewV2ReceiptStore,
 } from './review-v2-receipts';
 import {
-  MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS,
+  MOBILE_DIRECT_REVIEW_EFFECT_KINDS,
   unavailableReviewEffectCategory,
+  type MobileDirectReviewAction,
   type MobileSupportedReviewAction,
   type MobileSupportedReviewEffectKind,
 } from './mobile-review-effects';
@@ -152,6 +155,17 @@ export interface ReviewActionReconciliation {
   readonly projectionRefreshRequired: boolean;
 }
 
+/** One generation-bound, server-issued, inert check-rerun confirmation. */
+export interface PreparedCheckRerun {
+  readonly project: ProjectIdValue;
+  readonly workspace: ReviewWorkspaceIdentity;
+  readonly workspaceRevision: bigint;
+  readonly snapshotRevision: bigint;
+  readonly authority: ReviewAuthority;
+  readonly action: Extract<ReviewAction, { readonly kind: 'rerun_check' }>;
+  readonly confirmationDigest: ReviewConfirmationDigest;
+}
+
 export interface WorkspaceV2Gateway {
   readonly authorizationScope: WorkspaceV2AuthorizationScope;
   readonly reviewEffectKinds: readonly MobileSupportedReviewEffectKind[];
@@ -175,7 +189,21 @@ export interface WorkspaceV2Gateway {
     workspace: ReviewWorkspaceIdentity,
     expectedRevision: bigint,
     authority: ReviewAuthority,
-    action: MobileSupportedReviewAction,
+    action: MobileDirectReviewAction,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ReviewActionSubmission>;
+  previewCheckRerun(
+    project: string,
+    workspace: ReviewWorkspaceIdentity,
+    expectedWorkspaceRevision: bigint,
+    expectedRevision: bigint,
+    checkId: string,
+    expectedCheckRevision: bigint,
+    signal?: AbortSignal,
+  ): Promise<PreparedCheckRerun>;
+  confirmCheckRerun(
+    prepared: PreparedCheckRerun,
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<ReviewActionSubmission>;
@@ -273,6 +301,11 @@ interface WorkspaceV2Client {
     workspace: ReviewWorkspaceIdentity,
     signal?: AbortSignal,
   ): ReturnType<PlatformV2Client['getReview']>;
+  getReviewCapabilities(
+    project: ProjectIdValue,
+    workspace: ReviewWorkspaceIdentity,
+    signal?: AbortSignal,
+  ): ReturnType<PlatformV2Client['getReviewCapabilities']>;
   executeReviewAction(
     workspace: ReviewWorkspaceIdentity,
     expectedRevision: ReturnType<typeof WorkContextRevision>,
@@ -280,6 +313,14 @@ interface WorkspaceV2Client {
     idempotencyKey: ReturnType<typeof IdempotencyKey>,
     signal?: AbortSignal,
   ): ReturnType<PlatformV2Client['executeReviewAction']>;
+  executeConfirmedReviewAction(
+    workspace: ReviewWorkspaceIdentity,
+    expectedRevision: ReturnType<typeof WorkContextRevision>,
+    action: Extract<ReviewAction, { readonly kind: 'rerun_check' }>,
+    idempotencyKey: ReturnType<typeof IdempotencyKey>,
+    confirmationDigest: ReviewConfirmationDigest,
+    signal?: AbortSignal,
+  ): ReturnType<PlatformV2Client['executeConfirmedReviewAction']>;
   getReviewReceipt(
     project: ProjectIdValue,
     workspace: ReviewWorkspaceIdentity,
@@ -604,6 +645,7 @@ async function reviewActionDigest(
   expectedRevision: bigint,
   authority: ReviewAuthority,
   action: ReviewAction,
+  confirmationDigest: ReviewConfirmationDigest | null = null,
 ): Promise<string> {
   const canonical = JSON.stringify(
     {
@@ -612,6 +654,7 @@ async function reviewActionDigest(
       expectedRevision,
       authority,
       action,
+      confirmationDigest,
     },
     (_key, value: unknown) =>
       typeof value === 'bigint' ? value.toString() : value,
@@ -698,6 +741,7 @@ export function createWorkspaceV2Gateway(
     actions: [...options.authorization.actions],
   });
   const pendingPreviews = new WeakSet<PreparedWorkspaceMutation>();
+  const pendingCheckReruns = new WeakSet<PreparedCheckRerun>();
   const projectSnapshots = new Map<
     ProjectIdValue,
     readonly WorkContextRecord[]
@@ -713,6 +757,30 @@ export function createWorkspaceV2Gateway(
   };
   const receiptStore = options.receiptStore;
   const reviewReceiptStore = options.reviewReceiptStore;
+  const reviewEffectKinds: readonly MobileSupportedReviewEffectKind[] =
+    reviewReceiptStore === undefined
+      ? NO_MOBILE_REVIEW_EFFECT_KINDS
+      : Object.freeze([
+          ...((authorization.actions as readonly string[]).includes(
+            'execute_review_action',
+          ) &&
+          (authorization.actions as readonly string[]).includes(
+            'get_review_receipt',
+          )
+            ? MOBILE_DIRECT_REVIEW_EFFECT_KINDS
+            : []),
+          ...((authorization.actions as readonly string[]).includes(
+            'get_review_capabilities',
+          ) &&
+          (authorization.actions as readonly string[]).includes(
+            'rerun_check',
+          ) &&
+          (authorization.actions as readonly string[]).includes(
+            'get_review_receipt',
+          )
+            ? (['rerun_check'] as const)
+            : []),
+        ]);
 
   function requireDelegatedAction(action: string): void {
     if (!(authorization.actions as readonly string[]).includes(action)) {
@@ -780,6 +848,111 @@ export function createWorkspaceV2Gateway(
     }
   }
 
+  async function submitReviewEffect(options: {
+    readonly project: ProjectIdValue;
+    readonly workspace: ReviewWorkspaceIdentity;
+    readonly expectedRevision: bigint;
+    readonly authority: ReviewAuthority;
+    readonly action: MobileSupportedReviewAction;
+    readonly idempotencyKey: string;
+    readonly confirmationDigest: ReviewConfirmationDigest | null;
+    readonly signal: AbortSignal | undefined;
+    readonly send: (
+      idempotencyKey: ReturnType<typeof IdempotencyKey>,
+      signal: AbortSignal | undefined,
+    ) => ReturnType<PlatformV2Client['executeReviewAction']>;
+  }): Promise<ReviewActionSubmission> {
+    if (reviewReceiptStore === undefined) {
+      throw new WorkspaceV2GatewayError('review_effect_unavailable');
+    }
+    const idempotencyKey = IdempotencyKey(options.idempotencyKey);
+    const persistedAuthorizationDigest = await guardedReceiptOperation(() =>
+      authorizationDigest(),
+    );
+    const handle: ReviewV2ReceiptHandle = {
+      schema: REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
+      authorization_digest: persistedAuthorizationDigest,
+      project: options.project,
+      workspace_kind: options.workspace.kind as
+        'user_workspace' | 'attempt_workspace',
+      workspace_id: 'id' in options.workspace ? options.workspace.id : '',
+      expected_revision: options.expectedRevision.toString(),
+      authority_kind: options.authority.kind as 'review' | 'ci',
+      authority_id: options.authority.id,
+      actor_id: authorization.actor_id,
+      action_kind: options.action.kind,
+      action_digest: await reviewActionDigest(
+        options.workspace,
+        options.expectedRevision,
+        options.authority,
+        options.action,
+        options.confirmationDigest,
+      ),
+      idempotency_key: idempotencyKey,
+      created_at_ms: BigInt(now()).toString(),
+    };
+    let inserted = false;
+    try {
+      admitCurrentGeneration();
+      inserted = await reviewReceiptStore.put(handle);
+      admitCurrentGeneration();
+    } catch (error) {
+      if (inserted) {
+        await reviewReceiptStore.remove(idempotencyKey).catch(() => undefined);
+      }
+      throw new WorkspaceV2GatewayError('review_action_not_submitted', {
+        cause: error,
+      });
+    }
+    if (!inserted) {
+      return {
+        kind: 'ambiguous',
+        idempotencyKey,
+        receipt: null,
+        projectionRefreshRequired: true,
+      };
+    }
+    let invoked = false;
+    let response: Awaited<ReturnType<PlatformV2Client['executeReviewAction']>>;
+    try {
+      response = await guarded(options.signal, (combined) => {
+        invoked = true;
+        return options.send(idempotencyKey, combined);
+      });
+    } catch (error) {
+      if (!invoked) {
+        await reviewReceiptStore.remove(idempotencyKey).catch(() => undefined);
+        throw new WorkspaceV2GatewayError('review_action_not_submitted', {
+          cause: error,
+        });
+      }
+      return {
+        kind: 'ambiguous',
+        idempotencyKey,
+        receipt: null,
+        projectionRefreshRequired: true,
+      };
+    }
+    if (response.kind === 'platform_v2_refused') {
+      await guardedReceiptOperation(() =>
+        reviewReceiptStore.remove(idempotencyKey),
+      );
+      refusal(response.refusal);
+    }
+    const receipt = admitReviewReceiptForHandle(response.receipt, handle);
+    if (reviewReceiptSettled(receipt)) {
+      await guardedReceiptOperation(() =>
+        reviewReceiptStore.remove(idempotencyKey),
+      );
+    }
+    return {
+      kind: 'submitted',
+      idempotencyKey,
+      receipt,
+      projectionRefreshRequired: true,
+    };
+  }
+
   return {
     authorizationScope: deepFreeze({
       serverIdentity: authorization.server_identity,
@@ -791,16 +964,7 @@ export function createWorkspaceV2Gateway(
       projectRoots: [...authorization.project_roots],
       actions: [...authorization.actions],
     }),
-    reviewEffectKinds:
-      reviewReceiptStore !== undefined &&
-      (authorization.actions as readonly string[]).includes(
-        'execute_review_action',
-      ) &&
-      (authorization.actions as readonly string[]).includes(
-        'get_review_receipt',
-      )
-        ? MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS
-        : NO_MOBILE_REVIEW_EFFECT_KINDS,
+    reviewEffectKinds,
     async negotiate(signal) {
       // Negotiation does not itself confer an operation grant.
       requireNegotiatedV2(
@@ -955,8 +1119,8 @@ export function createWorkspaceV2Gateway(
         snapshot === undefined ||
         snapshot.revision !== WorkContextRevision(expectedRevision) ||
         !sameReviewAuthority(snapshot.review.authority, authority) ||
-        !MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS.includes(
-          action.kind as MobileSupportedReviewEffectKind,
+        !MOBILE_DIRECT_REVIEW_EFFECT_KINDS.includes(
+          action.kind as (typeof MOBILE_DIRECT_REVIEW_EFFECT_KINDS)[number],
         )
       ) {
         throw new WorkspaceV2GatewayError('review_target_revision_stale');
@@ -975,103 +1139,184 @@ export function createWorkspaceV2Gateway(
         },
         snapshot,
       );
-      const idempotencyKey = IdempotencyKey(idempotencyKeyValue);
-      const persistedAuthorizationDigest = await guardedReceiptOperation(() =>
-        authorizationDigest(),
-      );
-      const handle: ReviewV2ReceiptHandle = {
-        schema: REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
-        authorization_digest: persistedAuthorizationDigest,
+      return submitReviewEffect({
         project,
-        workspace_kind: workspace.kind as
-          'user_workspace' | 'attempt_workspace',
-        workspace_id: 'id' in workspace ? workspace.id : '',
-        expected_revision: expectedRevision.toString(),
-        authority_kind: 'review',
-        authority_id: authority.id,
-        actor_id: authorization.actor_id,
-        action_kind: action.kind,
-        action_digest: await reviewActionDigest(
-          workspace,
-          expectedRevision,
-          authority,
-          action,
-        ),
-        idempotency_key: idempotencyKey,
-        created_at_ms: BigInt(now()).toString(),
-      };
-      let inserted = false;
-      try {
-        admitCurrentGeneration();
-        inserted = await reviewReceiptStore.put(handle);
-        admitCurrentGeneration();
-      } catch (error) {
-        if (inserted) {
-          await reviewReceiptStore
-            .remove(idempotencyKey)
-            .catch(() => undefined);
-        }
-        throw new WorkspaceV2GatewayError('review_action_not_submitted', {
-          cause: error,
-        });
-      }
-      if (!inserted) {
-        return {
-          kind: 'ambiguous',
-          idempotencyKey,
-          receipt: null,
-          projectionRefreshRequired: true,
-        };
-      }
-      let invoked = false;
-      let response: Awaited<
-        ReturnType<WorkspaceV2Client['executeReviewAction']>
-      >;
-      try {
-        response = await guarded(signal, (combined) => {
-          invoked = true;
-          return options.client.executeReviewAction(
+        workspace,
+        expectedRevision,
+        authority,
+        action,
+        idempotencyKey: idempotencyKeyValue,
+        confirmationDigest: null,
+        signal,
+        send: (idempotencyKey, combined) =>
+          options.client.executeReviewAction(
             workspace,
             WorkContextRevision(expectedRevision),
             action,
             idempotencyKey,
             combined,
-          );
-        });
-      } catch (error) {
-        if (!invoked) {
-          await reviewReceiptStore
-            .remove(idempotencyKey)
-            .catch(() => undefined);
-          throw new WorkspaceV2GatewayError('review_action_not_submitted', {
-            cause: error,
-          });
-        }
-        return {
-          kind: 'ambiguous',
-          idempotencyKey,
-          receipt: null,
-          projectionRefreshRequired: true,
-        };
+          ),
+      });
+    },
+
+    async previewCheckRerun(
+      projectValue,
+      workspace,
+      expectedWorkspaceRevision,
+      expectedRevision,
+      checkId,
+      expectedCheckRevision,
+      signal,
+    ) {
+      requireDelegatedAction('get_review_capabilities');
+      requireDelegatedAction('rerun_check');
+      requireDelegatedAction('get_review_receipt');
+      if (reviewReceiptStore === undefined) {
+        throw new WorkspaceV2GatewayError('review_effect_unavailable');
       }
-      if (response.kind === 'platform_v2_refused') {
-        await guardedReceiptOperation(() =>
-          reviewReceiptStore.remove(idempotencyKey),
-        );
-        refusal(response.refusal);
+      const project = ProjectId(projectValue);
+      requireProject(project);
+      requireReviewWorkspaceInSnapshot(projectSnapshots, project, workspace);
+      if (
+        !('id' in workspace) ||
+        snapshotRecord(projectSnapshots, project, workspace.kind, workspace.id)
+          .revision !== WorkContextRevision(expectedWorkspaceRevision)
+      ) {
+        throw new WorkspaceV2GatewayError('workspace_target_revision_stale');
       }
-      const receipt = admitReviewReceiptForHandle(response.receipt, handle);
-      if (reviewReceiptSettled(receipt)) {
-        await guardedReceiptOperation(() =>
-          reviewReceiptStore.remove(idempotencyKey),
-        );
+      const snapshot = reviewSnapshots.get(
+        reviewSnapshotKey(project, workspace),
+      );
+      const check = snapshot?.checks.find(
+        (candidate) => candidate.id === checkId,
+      );
+      if (
+        snapshot === undefined ||
+        snapshot.revision !== WorkContextRevision(expectedRevision) ||
+        check === undefined ||
+        check.freshness.state !== 'fresh' ||
+        check.freshness.observed_revision !==
+          WorkContextRevision(expectedCheckRevision)
+      ) {
+        throw new WorkspaceV2GatewayError('review_target_revision_stale');
       }
-      return {
-        kind: 'submitted',
-        idempotencyKey,
-        receipt,
-        projectionRefreshRequired: true,
+      const response = await guarded(signal, (combined) =>
+        options.client.getReviewCapabilities(project, workspace, combined),
+      );
+      if (response.kind === 'platform_v2_refused') refusal(response.refusal);
+      const capabilities: ReviewCapabilities = response.capabilities;
+      const candidates = capabilities.rerunnable_checks.filter(
+        (candidate) =>
+          candidate.check_id === checkId &&
+          candidate.expected_check_revision ===
+            WorkContextRevision(expectedCheckRevision) &&
+          sameReviewAuthority(candidate.authority, check.authority),
+      );
+      if (
+        capabilities.project !== project ||
+        !sameWorkContextIdentity(capabilities.workspace, workspace) ||
+        capabilities.snapshot_revision !==
+          WorkContextRevision(expectedRevision) ||
+        candidates.length !== 1
+      ) {
+        throw new WorkspaceV2GatewayError('review_rerun_capability_stale');
+      }
+      const capability = candidates[0]!;
+      const action = {
+        kind: 'rerun_check' as const,
+        payload: {
+          check_id: checkId,
+          expected_check_revision: WorkContextRevision(expectedCheckRevision),
+        },
       };
+      validateReviewActionAgainstSnapshot(
+        {
+          schema: 'automonique.platform/review/v1',
+          platform_version: 2n,
+          actor: authorization.actor_id,
+          authentication: 'user_session',
+          authority: capability.authority,
+          workspace,
+          expected_revision: WorkContextRevision(expectedRevision),
+          idempotency_key: IdempotencyKey('mobile-rerun-preview'),
+          action,
+        },
+        snapshot,
+      );
+      const prepared = deepFreeze({
+        project,
+        workspace,
+        workspaceRevision: expectedWorkspaceRevision,
+        snapshotRevision: expectedRevision,
+        authority: capability.authority,
+        action,
+        confirmationDigest: capability.confirmation_digest,
+      });
+      pendingCheckReruns.add(prepared);
+      return prepared;
+    },
+
+    async confirmCheckRerun(prepared, idempotencyKeyValue, signal) {
+      if (!pendingCheckReruns.delete(prepared)) {
+        throw new WorkspaceV2GatewayError(
+          'review_confirmation_missing_or_replayed',
+        );
+      }
+      requireDelegatedAction('rerun_check');
+      requireDelegatedAction('get_review_receipt');
+      requireProject(prepared.project);
+      requireReviewWorkspaceInSnapshot(
+        projectSnapshots,
+        prepared.project,
+        prepared.workspace,
+      );
+      if (
+        !('id' in prepared.workspace) ||
+        snapshotRecord(
+          projectSnapshots,
+          prepared.project,
+          prepared.workspace.kind,
+          prepared.workspace.id,
+        ).revision !== WorkContextRevision(prepared.workspaceRevision)
+      ) {
+        throw new WorkspaceV2GatewayError('workspace_target_revision_stale');
+      }
+      const snapshot = reviewSnapshots.get(
+        reviewSnapshotKey(prepared.project, prepared.workspace),
+      );
+      const check = snapshot?.checks.find(
+        (candidate) => candidate.id === prepared.action.payload.check_id,
+      );
+      if (
+        snapshot === undefined ||
+        snapshot.revision !== WorkContextRevision(prepared.snapshotRevision) ||
+        check === undefined ||
+        check.freshness.state !== 'fresh' ||
+        check.freshness.observed_revision !==
+          prepared.action.payload.expected_check_revision ||
+        !sameReviewAuthority(check.authority, prepared.authority)
+      ) {
+        throw new WorkspaceV2GatewayError('review_target_revision_stale');
+      }
+      return submitReviewEffect({
+        project: prepared.project,
+        workspace: prepared.workspace,
+        expectedRevision: prepared.snapshotRevision,
+        authority: prepared.authority,
+        action: prepared.action,
+        idempotencyKey: idempotencyKeyValue,
+        confirmationDigest: prepared.confirmationDigest,
+        signal,
+        send: (idempotencyKey, combined) =>
+          options.client.executeConfirmedReviewAction(
+            prepared.workspace,
+            WorkContextRevision(prepared.snapshotRevision),
+            prepared.action,
+            idempotencyKey,
+            prepared.confirmationDigest,
+            combined,
+          ),
+      });
     },
 
     async pendingReviewReceipts() {

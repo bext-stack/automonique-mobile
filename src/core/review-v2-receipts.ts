@@ -26,14 +26,15 @@ export interface ReviewV2ReceiptHandle {
   readonly workspace_kind: 'user_workspace' | 'attempt_workspace';
   readonly workspace_id: string;
   readonly expected_revision: string;
-  readonly authority_kind: 'review';
+  readonly authority_kind: 'review' | 'ci';
   readonly authority_id: string;
   readonly actor_id: string;
   readonly action_kind:
     | 'add_comment'
     | 'approve_review'
     | 'send_comment_to_agent'
-    | 'batch_send_comments_to_agent';
+    | 'batch_send_comments_to_agent'
+    | 'rerun_check';
   readonly action_digest: string;
   readonly idempotency_key: string;
   readonly created_at_ms: string;
@@ -84,6 +85,7 @@ function admitReceiptHandle(
     | typeof REVIEW_V2_RECEIPT_HANDLE_SCHEMA
     | typeof LEGACY_REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
   actionKinds: readonly ReviewV2ReceiptHandle['action_kind'][],
+  authorityKinds: readonly ReviewV2ReceiptHandle['authority_kind'][],
 ): ReviewV2ReceiptHandle | LegacyReviewV2ReceiptHandle {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('review_receipt_handle_invalid');
@@ -111,7 +113,9 @@ function admitReceiptHandle(
     !['user_workspace', 'attempt_workspace'].includes(
       String(candidate.workspace_kind),
     ) ||
-    candidate.authority_kind !== 'review' ||
+    !authorityKinds.includes(
+      candidate.authority_kind as ReviewV2ReceiptHandle['authority_kind'],
+    ) ||
     !actionKinds.includes(
       candidate.action_kind as ReviewV2ReceiptHandle['action_kind'],
     )
@@ -120,9 +124,14 @@ function admitReceiptHandle(
   }
   const authorizationDigest = bounded(candidate.authorization_digest, 71);
   const actionDigest = bounded(candidate.action_digest, 71);
+  const actionKind =
+    candidate.action_kind as ReviewV2ReceiptHandle['action_kind'];
+  const authorityKind =
+    candidate.authority_kind as ReviewV2ReceiptHandle['authority_kind'];
   if (
     !/^sha256:[0-9a-f]{64}$/u.test(authorizationDigest) ||
-    !/^sha256:[0-9a-f]{64}$/u.test(actionDigest)
+    !/^sha256:[0-9a-f]{64}$/u.test(actionDigest) ||
+    (actionKind === 'rerun_check') !== (authorityKind === 'ci')
   ) {
     throw new Error('review_receipt_handle_invalid');
   }
@@ -134,10 +143,10 @@ function admitReceiptHandle(
       candidate.workspace_kind as ReviewV2ReceiptHandle['workspace_kind'],
     workspace_id: bounded(candidate.workspace_id),
     expected_revision: decimal(candidate.expected_revision),
-    authority_kind: 'review',
+    authority_kind: authorityKind,
     authority_id: bounded(candidate.authority_id),
     actor_id: bounded(candidate.actor_id),
-    action_kind: candidate.action_kind as ReviewV2ReceiptHandle['action_kind'],
+    action_kind: actionKind,
     action_digest: actionDigest,
     idempotency_key: IdempotencyKey(bounded(candidate.idempotency_key)),
     created_at_ms: decimal(candidate.created_at_ms),
@@ -147,21 +156,29 @@ function admitReceiptHandle(
 export function admitReviewV2ReceiptHandle(
   value: unknown,
 ): ReviewV2ReceiptHandle {
-  return admitReceiptHandle(value, REVIEW_V2_RECEIPT_HANDLE_SCHEMA, [
-    'add_comment',
-    'approve_review',
-    'send_comment_to_agent',
-    'batch_send_comments_to_agent',
-  ]) as ReviewV2ReceiptHandle;
+  return admitReceiptHandle(
+    value,
+    REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
+    [
+      'add_comment',
+      'approve_review',
+      'send_comment_to_agent',
+      'batch_send_comments_to_agent',
+      'rerun_check',
+    ],
+    ['review', 'ci'],
+  ) as ReviewV2ReceiptHandle;
 }
 
 function admitLegacyReviewV2ReceiptHandle(
   value: unknown,
 ): LegacyReviewV2ReceiptHandle {
-  return admitReceiptHandle(value, LEGACY_REVIEW_V2_RECEIPT_HANDLE_SCHEMA, [
-    'add_comment',
-    'approve_review',
-  ]) as LegacyReviewV2ReceiptHandle;
+  return admitReceiptHandle(
+    value,
+    LEGACY_REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
+    ['add_comment', 'approve_review'],
+    ['review'],
+  ) as LegacyReviewV2ReceiptHandle;
 }
 
 export function reviewReceiptSettled(receipt: ReviewActionReceipt): boolean {

@@ -1319,7 +1319,11 @@ test('cold-start and already-background refreshes admit and schedule exact notif
     content: {
       title: 'Automonique needs you',
       body: 'Open Automonique to inspect the current bounded request.',
-      data: notificationData,
+      data: {
+        ...notificationData,
+        kind: 'automonique_review_attention_v3',
+        check_id: null,
+      },
     },
     trigger: null,
   });

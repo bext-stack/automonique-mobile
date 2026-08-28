@@ -3,6 +3,7 @@
 import { ReviewActionKind_VALUES } from '@automonique/sdk';
 
 import {
+  MOBILE_DIRECT_REVIEW_EFFECT_KINDS,
   MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS,
   MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES,
   unavailableReviewEffectCategory,
@@ -14,7 +15,11 @@ test('the mobile effect audit classifies every canonical review action exactly o
     'approve_review',
     'send_comment_to_agent',
     'batch_send_comments_to_agent',
+    'rerun_check',
   ]);
+  expect(MOBILE_DIRECT_REVIEW_EFFECT_KINDS).toEqual(
+    MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS.slice(0, -1),
+  );
   expect(Object.isFrozen(MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS)).toBe(true);
   expect(Object.isFrozen(MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES)).toBe(
     true,
@@ -27,9 +32,7 @@ test('the mobile effect audit classifies every canonical review action exactly o
   ).toEqual([...ReviewActionKind_VALUES].sort());
   expect(unavailableReviewEffectCategory('add_comment')).toBeNull();
   expect(unavailableReviewEffectCategory('send_comment_to_agent')).toBeNull();
-  expect(unavailableReviewEffectCategory('rerun_check')).toBe(
-    'platform_v2_review_ci_adapter_unavailable',
-  );
+  expect(unavailableReviewEffectCategory('rerun_check')).toBeNull();
   expect(unavailableReviewEffectCategory('merge_pull_request')).toBe(
     'platform_v2_review_pull_request_adapter_unavailable',
   );

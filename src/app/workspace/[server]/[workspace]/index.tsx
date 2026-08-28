@@ -33,11 +33,13 @@ import {
 } from '@/core/workspace-storage';
 import type { WorkspaceCatalogDetail } from '@/core/workspace-v2-catalog';
 import type {
+  PreparedCheckRerun,
   PreparedWorkspaceMutation,
   WorkspaceMutationReconciliation,
 } from '@/core/workspace-v2-gateway';
 import {
   MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES,
+  type MobileDirectReviewAction,
   type MobileSupportedReviewAction,
 } from '@/core/mobile-review-effects';
 import { useMobile } from '@/providers/mobile-provider';
@@ -236,6 +238,7 @@ function ReviewControlSurface({
   exactReviewRevision,
   selectedFile,
   selectedHunk,
+  selectedCheck,
 }: {
   readonly detail: WorkspaceCatalogDetail;
   readonly server: ScopedServerProfile;
@@ -243,11 +246,14 @@ function ReviewControlSurface({
   readonly exactReviewRevision: boolean;
   readonly selectedFile: string | undefined;
   readonly selectedHunk: string | undefined;
+  readonly selectedCheck: string | undefined;
 }) {
   const palette = usePalette();
   const {
     status,
     executeReviewAction,
+    previewCheckRerun,
+    confirmCheckRerun,
     reconcileReviewAction,
     reviewBusy,
     reviewReceipts,
@@ -266,6 +272,7 @@ function ReviewControlSurface({
     readonly completed: () => Promise<void>;
     readonly cancelled: () => void;
     readonly idempotencyKey: string;
+    readonly rerunPreview: PreparedCheckRerun | null;
     readonly phase: 'confirm' | 'reconcile' | 'cleanup' | 'terminal';
     readonly outcome: string | null;
   } | null>(null);
@@ -346,13 +353,19 @@ function ReviewControlSurface({
     });
   const submit = async (action: LocalReviewAction) => {
     if (pending === null) throw new Error('review_confirmation_missing');
+    if (action.kind === 'rerun_check') {
+      if (pending.rerunPreview === null) {
+        throw new Error('review_confirmation_missing');
+      }
+      return confirmCheckRerun(pending.rerunPreview, pending.idempotencyKey);
+    }
     return executeReviewAction({
       projectId: workspace.projectId,
       workspaceId: workspace.id,
       workspaceRevision: workspace.revision,
       reviewRevision: review.revision,
       authority: snapshot.review.authority,
-      action,
+      action: action as MobileDirectReviewAction,
       idempotencyKey: pending.idempotencyKey,
     });
   };
@@ -361,6 +374,7 @@ function ReviewControlSurface({
     summary: string,
     completed: () => Promise<void> = async () => undefined,
     cancelled: () => void = () => undefined,
+    rerunPreview: PreparedCheckRerun | null = null,
   ) => {
     if (pending !== null || reviewBusy) {
       cancelled();
@@ -373,9 +387,45 @@ function ReviewControlSurface({
       completed,
       cancelled,
       idempotencyKey: `mobile-review-${Crypto.randomUUID()}`,
+      rerunPreview,
       phase: 'confirm',
       outcome: null,
     });
+  };
+  const prepareCheckRerun = async (
+    action: Extract<LocalReviewAction, { readonly kind: 'rerun_check' }>,
+  ): Promise<void> => {
+    if (pending !== null || reviewBusy || confirmationBusy) return;
+    setConfirmationBusy(true);
+    setReviewError(null);
+    try {
+      const preview = await previewCheckRerun({
+        projectId: workspace.projectId,
+        workspaceId: workspace.id,
+        workspaceRevision: workspace.revision,
+        reviewRevision: review.revision,
+        checkId: action.payload.check_id,
+        expectedCheckRevision: action.payload.expected_check_revision,
+      });
+      setPending({
+        action,
+        summary: `Rerun check ${action.payload.check_id} at exact check revision ${action.payload.expected_check_revision.toString()}. The server advertised this exact CI target to the authenticated actor; confirming persists receipt custody before the one allowed provider request.`,
+        completed: async () => undefined,
+        cancelled: () => undefined,
+        idempotencyKey: `mobile-review-${Crypto.randomUUID()}`,
+        rerunPreview: preview,
+        phase: 'confirm',
+        outcome: null,
+      });
+    } catch (error) {
+      setReviewError(
+        error instanceof Error
+          ? error.message
+          : 'review_rerun_preview_unavailable',
+      );
+    } finally {
+      setConfirmationBusy(false);
+    }
   };
   const cancelPending = () => {
     if (pending?.phase === 'reconcile' || pending?.phase === 'cleanup') return;
@@ -789,6 +839,19 @@ function ReviewControlSurface({
             Receipt key {pending.idempotencyKey} · state {pending.phase}
             {pending.outcome === null ? '' : ` · outcome ${pending.outcome}`}
           </Text>
+          {pending.action.kind === 'rerun_check' &&
+            pending.rerunPreview !== null && (
+              <View accessibilityLabel="Exact check rerun preview">
+                <Text style={[styles.meta, { color: palette.text }]}>
+                  Server-issued inert preview
+                </Text>
+                <Text style={[styles.meta, { color: palette.textMuted }]}>
+                  Check {pending.action.payload.check_id} · check revision{' '}
+                  {pending.action.payload.expected_check_revision.toString()} ·
+                  CI authority {pending.rerunPreview.authority.id}
+                </Text>
+              </View>
+            )}
           {pending.action.kind === 'batch_send_comments_to_agent' && (
             <View accessibilityLabel="Exact batch review targets">
               <Text style={[styles.meta, { color: palette.text }]}>
@@ -928,9 +991,11 @@ function ReviewControlSurface({
       <Text style={[styles.subtitle, { color: palette.textMuted }]}>
         Draft state is explicit: local drafts are not sent to an agent. Git
         stage, unstage, and commit remain unavailable. Persisted comments can be
-        sent only through the exact retained-agent actions above. CI and
-        pull-request effect families are shown below with the server adapter
-        category that keeps each control inert.
+        sent only through the exact retained-agent actions above. Pull-request
+        effects are shown below with the server adapter category that keeps each
+        control inert. Check reruns appear only when the server delegates the
+        separate capability-read and rerun grants; tapping one fetches an inert
+        exact preview before confirmation.
       </Text>
       {snapshot.comments.map((comment) => (
         <View key={comment.id} style={styles.commentRow}>
@@ -980,18 +1045,60 @@ function ReviewControlSurface({
           })()}
         </View>
       ))}
-      {snapshot.checks.map((check) => (
-        <View key={check.id} style={styles.commentRow}>
-          <Text style={{ color: palette.textMuted }}>
-            Check {check.id}: {check.state} ·{' '}
-            {check.required ? 'required' : 'optional'}
-          </Text>
-          <UnavailableReviewEffect
-            kind="rerun_check"
-            label={`Rerun check ${check.id}`}
-          />
-        </View>
-      ))}
+      {snapshot.checks.map((check) => {
+        const action = {
+          kind: 'rerun_check' as const,
+          payload: {
+            check_id: check.id,
+            expected_check_revision: check.freshness.observed_revision,
+          },
+        };
+        const actionAvailability = availability(action);
+        const enabled =
+          actionAvailability.enabled &&
+          !reviewBusy &&
+          !confirmationBusy &&
+          pending === null;
+        return (
+          <View
+            key={check.id}
+            accessibilityLabel={`Check ${check.id} exact revision ${check.freshness.observed_revision.toString()}`}
+            style={[
+              styles.commentRow,
+              selectedCheck === check.id && {
+                borderColor: palette.accent,
+                borderWidth: 1,
+                borderRadius: 12,
+                padding: 10,
+              },
+            ]}
+          >
+            <Text style={{ color: palette.textMuted }}>
+              Check {check.id}: {check.state} ·{' '}
+              {check.required ? 'required' : 'optional'} · revision{' '}
+              {check.freshness.observed_revision.toString()}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !enabled }}
+              accessibilityLabel={`Preview exact rerun for check ${check.id}${actionAvailability.enabled ? '' : `, unavailable: ${actionAvailability.reason.replaceAll('_', ' ')}`}`}
+              disabled={!enabled}
+              onPress={() => void prepareCheckRerun(action)}
+              style={[
+                styles.reviewAction,
+                {
+                  borderColor: palette.accent,
+                  opacity: enabled ? 1 : 0.48,
+                },
+              ]}
+            >
+              <Text style={{ color: palette.accent, fontWeight: '800' }}>
+                {confirmationBusy ? 'Loading preview…' : 'Preview exact rerun'}
+              </Text>
+            </Pressable>
+          </View>
+        );
+      })}
       <Text style={{ color: palette.textMuted }}>
         Pull request: {snapshot.pull_request.id ?? 'not reported'} ·{' '}
         {snapshot.pull_request.state} · {snapshot.pull_request.readiness}
@@ -1416,6 +1523,7 @@ export default function WorkspaceDetailScreen() {
     review_revision?: string;
     file?: string;
     hunk?: string;
+    check?: string;
   }>();
   const palette = usePalette();
   const {
@@ -1776,6 +1884,7 @@ export default function WorkspaceDetailScreen() {
                   reviewRevision: params.review_revision ?? '',
                   fileId: params.file ?? null,
                   hunkId: params.hunk ?? null,
+                  checkId: params.check ?? null,
                 });
                 exactReviewRoute = true;
               } catch {
@@ -1788,6 +1897,7 @@ export default function WorkspaceDetailScreen() {
                   exactReviewRevision
                   selectedFile={params.file}
                   selectedHunk={params.hunk}
+                  selectedCheck={params.check}
                   server={server}
                   workspace={workspace}
                 />
