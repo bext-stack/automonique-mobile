@@ -74,6 +74,12 @@ test('uses protected screens instead of a render-time redirect when unpaired', a
   expect(view.getByTestId('screen-settings')).toBeTruthy();
   expect(view.getByTestId('screen-(tabs)')).toBeTruthy();
   expect(view.getByTestId('screen-session/[id]')).toBeTruthy();
+  expect(
+    view.getByTestId('screen-workspace/[server]/[workspace]/index'),
+  ).toBeTruthy();
+  expect(
+    view.getByTestId('screen-workspace/[server]/[workspace]/session/[session]'),
+  ).toBeTruthy();
 });
 
 test('admits operational screens only for a ready credential', async () => {

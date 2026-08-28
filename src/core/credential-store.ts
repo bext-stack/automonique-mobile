@@ -191,6 +191,7 @@ function expectedWorkspaceAuthorization(
     credentialId: authorization.credential_id,
     credentialRevision: authorization.credential_revision,
     authorizationRevision: authorization.authorization_revision,
+    expiresAtMs: authorization.expires_at_ms,
     now,
   };
 }

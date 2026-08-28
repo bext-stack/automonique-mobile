@@ -12,7 +12,17 @@ to one server profile. Cached profiles reopen stale and retain only
 production lifecycle constructs a generation-scoped authenticated v2 gateway.
 It negotiates v2 before reads, consumes exact project-root queries, exposes
 typed lineage and read-only review snapshots, and performs create/resume only
-through an ephemeral server preview and a separate confirmation. Persisted
+through an ephemeral server preview and a separate confirmation. The
+`WorkspaceProvider` joins only typed Platform v2 relations into a durable
+catalog. Linear indexed selection applies coherent global ceilings to projects,
+hosts, workspaces, and retained sessions before strict admission; detail fanout
+is capped at 32 workspaces with concurrency two. Every omission class and
+partial project/lineage/review coverage is reported. It retains historical
+server scopes as cached reads while only the current credential generation can
+be active.
+Production screens expose discovery, exact workspace detail, and revision-bound
+retained-session jumps. Review destinations require a current `get_review`
+projection; terminal and all workspace mutations remain unavailable. Persisted
 authorization tombstones pin omitted or
 revoked identities to their tenant, origin, and last authorization revision.
 Bounded per-object revision tombstones also retain workspace, attempt, and
@@ -21,9 +31,13 @@ object revision.
 The provider does not infer project roots or v2 actions from the v1 session
 scope. It reads the dedicated server-issued delegated bearer principal with
 exact roots, per-action grants, identity/revisions, generation, and expiry,
-then persists only the strictly admitted document with the secure credential
-generation. A missing or invalid document disables the workspace gateway.
-Production UI/cache integration and live acceptance remain distinct work.
+then requires its expiry to equal the enclosing Platform v1 authorization
+exactly and persists only the strictly admitted document with the secure
+credential generation. A missing document disables the workspace gateway; a
+present mismatched document moves the lifecycle to a non-operational recovery
+state.
+Concurrent active multi-server credentials and live acceptance remain distinct
+work.
 
 ## System boundary
 
@@ -31,7 +45,7 @@ Production UI/cache integration and live acceptance remain distinct work.
 screens
    │ high-level reads and actions only
    ▼
-ProductionMobileProvider / MobileProvider
+ProductionMobileProvider / MobileProvider / WorkspaceProvider
    │
    ├── MobileAutomoniqueGateway ──┬── createMockGateway (tests only)
    │                              │     deterministic adverse-state contract
@@ -220,17 +234,17 @@ mobile actions in the first slice.
 
 ## Persistence boundaries
 
-| Data                                     | Store                 | Ceiling/lifetime                                                 | Rule                                                           |
-| ---------------------------------------- | --------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
-| Scoped access and refresh credentials    | OS Secure Store       | Server expiry/rotation/revocation                                | Never Async Storage; pairing proof is never persisted          |
-| v2 receipt migration coordinates         | OS Secure Store       | Current/expired credential family; fixed digest only             | Non-authority; cannot construct a gateway or mutation          |
-| Endpoint, actor, expiry, server identity | Async Storage profile | One active profile                                               | Metadata only; endpoint must pass HTTPS policy                 |
-| Endpoint draft                           | Async Storage         | One draft; 2 KiB                                                 | Re-admitted on load; validation makes no network call          |
-| Read projection                          | Async Storage         | 256 KiB; 100 sessions; 1,000 events; 100 approvals; 200 receipts | Schema-admitted and always restored stale/read-only            |
-| Workspace companion projection           | Async Storage         | 256 KiB; 8 servers; 64 server and 1,024 object tombstones        | Exact-scope admitted; restored stale with read authority only  |
-| Workspace create/resume draft            | Async Storage         | 32 inert typed drafts                                            | Never contains or restores an authority preview                |
-| Message draft                            | Async Storage         | One draft per session; negotiated UTF-8 follow-up byte ceiling   | Re-admitted on load; never submitted in the background         |
-| Reconciliation handle                    | Async Storage         | 20 handles; 16 KiB encoded set                                   | Action, exact target and key only; never an executable command |
+| Data                                     | Store                 | Ceiling/lifetime                                                 | Rule                                                             |
+| ---------------------------------------- | --------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Scoped access and refresh credentials    | OS Secure Store       | Server expiry/rotation/revocation                                | Never Async Storage; pairing proof is never persisted            |
+| v2 receipt migration coordinates         | OS Secure Store       | Current/expired credential family; fixed digest only             | Non-authority; cannot construct a gateway or mutation            |
+| Endpoint, actor, expiry, server identity | Async Storage profile | One active profile                                               | Metadata only; endpoint must pass HTTPS policy                   |
+| Endpoint draft                           | Async Storage         | One draft; 2 KiB                                                 | Re-admitted on load; validation makes no network call            |
+| Read projection                          | Async Storage         | 256 KiB; 100 sessions; 1,000 events; 100 approvals; 200 receipts | Schema-admitted and always restored stale/read-only              |
+| Workspace companion projection           | Async Storage         | 256 KiB; 8 servers; 64 server and 1,024 object tombstones        | Exact-scope admitted; restored stale with read authority only    |
+| Workspace task-context draft             | Async Storage         | 32 inert server/workspace/revision-scoped drafts                 | Purged on server revocation; never restores an authority preview |
+| Message draft                            | Async Storage         | One draft per session; negotiated UTF-8 follow-up byte ceiling   | Re-admitted on load; never submitted in the background           |
+| Reconciliation handle                    | Async Storage         | 20 handles; 16 KiB encoded set                                   | Action, exact target and key only; never an executable command   |
 
 Provider credentials, raw provider/tool output, routing policy, and an offline
 mutation queue never cross or live inside the mobile boundary.

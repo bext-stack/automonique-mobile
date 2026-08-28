@@ -97,6 +97,23 @@ Remaining tracked work is grouped in the
   - External evidence gate: provide an approved non-production HTTPS origin,
     an operator-authorized one-time pairing offer, and bounded test data.
 
+## Implemented — read-only workspace companion
+
+- [x] **[MOB-134 — Add the production workspace companion](https://github.com/bext-stack/automonique-mobile/issues/34).**
+  - The production provider consumes delegated Platform v2 project roots and
+    typed work-context relations into a bounded, durable, revision-fenced
+    server catalog.
+  - Project/host/workspace discovery, separate external/orchestration status,
+    freshness, unread attention, exact retained-session links, and current
+    review-backed files/preview/source-control destinations are present.
+  - Partial detail coverage is explicit; cached and offline state is read-only;
+    revocation retains server/object tombstones; task notes are scoped to an
+    exact workspace revision.
+  - Create/resume and terminal remain visibly unavailable until separately
+    granted production UI adapters exist. Concurrent active multi-server
+    credentials, live-server acceptance, and device evidence remain external
+    gates.
+
 ## Native release readiness
 
 - [ ] **[MOB-200 — Run reproducible EAS Android and iOS simulator builds](https://github.com/bext-stack/automonique-mobile/issues/6).**

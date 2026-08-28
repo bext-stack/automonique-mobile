@@ -204,6 +204,7 @@ async function fetchWorkspaceAuthorization(
       credentialId: connection.authorization.credential_id,
       credentialRevision: connection.authorization.credential_revision,
       authorizationRevision: connection.authorization.authorization_revision,
+      expiresAtMs: connection.authorization.expires_at_ms,
       now,
     },
   );
@@ -246,6 +247,28 @@ function withoutWorkspaceAuthorization(
   const { workspaceAuthorization: _workspaceAuthorization, ...current } =
     connection;
   return current;
+}
+
+function workspaceAuthorizationInvalid(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message === 'mobile_v2_authorization_invalid'
+  );
+}
+
+function admitCurrentWorkspaceAuthorization(
+  connection: ScopedConnection,
+  now: number,
+): void {
+  if (connection.workspaceAuthorization === undefined) return;
+  admitDelegatedMobileV2Authorization(connection.workspaceAuthorization, {
+    serverIdentity: connection.authorization.server_identity,
+    credentialId: connection.authorization.credential_id,
+    credentialRevision: connection.authorization.credential_revision,
+    authorizationRevision: connection.authorization.authorization_revision,
+    expiresAtMs: connection.authorization.expires_at_ms,
+    now,
+  });
 }
 
 async function migrateLegacyReceiptCustody(
@@ -417,6 +440,19 @@ export class MobileLifecycleCoordinator {
       return this.state;
     }
     let connection = stored.connection;
+    try {
+      admitCurrentWorkspaceAuthorization(connection, this.now());
+    } catch (error) {
+      if (!this.isCurrent(operation.generation)) return this.state;
+      connection = withoutWorkspaceAuthorization(connection);
+      this.connection = connection;
+      this.publish({
+        phase: 'recovery_required',
+        profile: connection.profile,
+        reason: failureReason(error),
+      });
+      return this.state;
+    }
     if (
       stored.kind === 'active' &&
       connection.workspaceAuthorization === undefined
@@ -438,7 +474,16 @@ export class MobileLifecycleCoordinator {
           workspaceAuthorization,
           this.now(),
         );
-      } catch {
+      } catch (error) {
+        if (workspaceAuthorizationInvalid(error)) {
+          this.connection = connection;
+          this.publish({
+            phase: 'recovery_required',
+            profile: connection.profile,
+            reason: failureReason(error),
+          });
+          return this.state;
+        }
         // An offline authorization refresh cannot widen persisted authority.
         // The web bridge reauthorizes the stored generation on every request.
       }
@@ -518,7 +563,8 @@ export class MobileLifecycleCoordinator {
           workspaceAuthorization,
           this.now(),
         );
-      } catch {
+      } catch (error) {
+        if (workspaceAuthorizationInvalid(error)) throw error;
         connection = withoutWorkspaceAuthorization(connection);
       }
       if (!this.isCurrent(operation.generation)) {
@@ -619,6 +665,7 @@ export class MobileLifecycleCoordinator {
         credentialId: connection.authorization.credential_id,
         credentialRevision: connection.authorization.credential_revision,
         authorizationRevision: connection.authorization.authorization_revision,
+        expiresAtMs: connection.authorization.expires_at_ms,
         now: this.now(),
       },
     );
@@ -665,7 +712,9 @@ export class MobileLifecycleCoordinator {
             this.connection !== connection ||
             this.generation !== generation ||
             gatewayFingerprint(connection) !== expectedFingerprint ||
-            workspaceAuthorization.expires_at_ms <= BigInt(this.now())
+            workspaceAuthorization.expires_at_ms <= BigInt(this.now()) ||
+            workspaceAuthorization.expires_at_ms !==
+              connection.authorization.expires_at_ms
           ) {
             throw new Error('gateway_generation_replaced');
           }
@@ -748,7 +797,8 @@ export class MobileLifecycleCoordinator {
             workspaceAuthorization,
             this.now(),
           );
-        } catch {
+        } catch (error) {
+          if (workspaceAuthorizationInvalid(error)) throw error;
           rotated = withoutWorkspaceAuthorization(rotated);
         }
       } catch (error) {

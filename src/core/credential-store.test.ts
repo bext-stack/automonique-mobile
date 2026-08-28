@@ -268,6 +268,27 @@ test('persists and reloads only an exactly admitted server-issued v2 grant', asy
   ).rejects.toThrow('mobile_v2_authorization_invalid');
 });
 
+test.each([
+  ['equal', 0, true],
+  ['shorter', -1, false],
+  ['longer', 1, false],
+] as const)(
+  '%s delegated expiry is persisted only when equal to the v1 generation',
+  async (_label, delta, accepted) => {
+    const connection = await saveIssuedConnection(DISCOVERY, issued(), NOW);
+    const value = {
+      ...workspaceAuthorization(),
+      expires_at_ms: connection.authorization.expires_at_ms + BigInt(delta),
+    };
+    const operation = saveWorkspaceAuthorization(connection, value, NOW);
+    if (accepted) await expect(operation).resolves.toBeDefined();
+    else
+      await expect(operation).rejects.toThrow(
+        'mobile_v2_authorization_invalid',
+      );
+  },
+);
+
 test('loads the exact legacy v3 secure generation without inventing a v2 grant', async () => {
   await saveIssuedConnection(DISCOVERY, issued(), NOW);
   const legacy = JSON.parse(secureValue!) as Record<string, unknown>;

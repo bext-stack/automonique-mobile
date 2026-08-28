@@ -99,7 +99,13 @@ test('deep links bind server, workspace revision and retained session', () => {
       workspaceRevision: decimalRevision('12'),
       destination: 'chat',
       sessionId: 'session-34',
-      sessionRevision: decimalRevision('9'),
+      sessionRelationRevision: decimalRevision('9'),
+      retainedTarget: {
+        coordinate:
+          workspaceCompanionFixture.servers[0]!.workspaces[0]!.sessions[0]!
+            .target,
+        revision: decimalRevision('14'),
+      },
     }),
   ).toEqual({
     pathname: '/workspace/[server]/[workspace]/session/[session]',
@@ -109,7 +115,10 @@ test('deep links bind server, workspace revision and retained session', () => {
       revision: '12',
       destination: 'chat',
       session: 'session-34',
-      session_revision: '9',
+      relation_revision: '9',
+      session_revision: '14',
+      session_authority: 'automonique',
+      session_kind: 'session',
     },
     readOnly: true,
   });
@@ -121,7 +130,13 @@ test('deep links bind server, workspace revision and retained session', () => {
       workspaceRevision: decimalRevision('11'),
       destination: 'chat',
       sessionId: 'session-34',
-      sessionRevision: decimalRevision('9'),
+      sessionRelationRevision: decimalRevision('9'),
+      retainedTarget: {
+        coordinate:
+          workspaceCompanionFixture.servers[0]!.workspaces[0]!.sessions[0]!
+            .target,
+        revision: decimalRevision('14'),
+      },
     }),
   ).toThrow('workspace_navigation_not_authorized');
 
@@ -132,7 +147,61 @@ test('deep links bind server, workspace revision and retained session', () => {
       workspaceRevision: decimalRevision('12'),
       destination: 'chat',
       sessionId: 'session-34',
-      sessionRevision: decimalRevision('8'),
+      sessionRelationRevision: decimalRevision('8'),
+      retainedTarget: {
+        coordinate:
+          workspaceCompanionFixture.servers[0]!.workspaces[0]!.sessions[0]!
+            .target,
+        revision: decimalRevision('14'),
+      },
+    }),
+  ).toThrow('workspace_navigation_not_authorized');
+});
+
+test('catalog admission refuses an invented retained-session authority', () => {
+  const forged = JSON.parse(JSON.stringify(workspaceCompanionFixture));
+  forged.servers[0].workspaces[0].sessions[0].target.authority =
+    'invented-authority';
+  expect(() => admitWorkspaceCompanionCatalog(forged)).toThrow(
+    'workspace_companion_invalid',
+  );
+});
+
+test('offline cache retains exact chat reads but drops review-backed destination authority', () => {
+  const cached = {
+    ...workspaceCompanionFixture,
+    phase: 'stale' as const,
+    servers: workspaceCompanionFixture.servers.map((server) => ({
+      ...server,
+      authorization: 'cached' as const,
+      actions: ['workspace_read' as const],
+    })),
+  };
+  expect(
+    admitWorkspaceDeepLink(cached, {
+      serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      workspaceId: 'workspace-34',
+      workspaceRevision: decimalRevision('12'),
+      destination: 'chat',
+      sessionId: 'session-34',
+      sessionRelationRevision: decimalRevision('9'),
+      retainedTarget: {
+        coordinate:
+          workspaceCompanionFixture.servers[0]!.workspaces[0]!.sessions[0]!
+            .target,
+        revision: decimalRevision('14'),
+      },
+    }),
+  ).toMatchObject({ readOnly: true });
+  expect(() =>
+    admitWorkspaceDeepLink(cached, {
+      serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+      workspaceId: 'workspace-34',
+      workspaceRevision: decimalRevision('12'),
+      destination: 'files',
+      sessionId: null,
+      sessionRelationRevision: null,
+      retainedTarget: null,
     }),
   ).toThrow('workspace_navigation_not_authorized');
 });
@@ -427,7 +496,8 @@ test('workspace visibility never infers terminal authority', () => {
       workspaceRevision: decimalRevision('12'),
       destination: 'terminal',
       sessionId: null,
-      sessionRevision: null,
+      sessionRelationRevision: null,
+      retainedTarget: null,
     }),
   ).toThrow('workspace_terminal_not_authorized');
 });
@@ -454,7 +524,8 @@ test('terminal navigation requires both an exact grant and separate live action'
       workspaceRevision: decimalRevision('12'),
       destination: 'terminal',
       sessionId: null,
-      sessionRevision: null,
+      sessionRelationRevision: null,
+      retainedTarget: null,
     }),
   ).toMatchObject({ readOnly: false });
 
@@ -467,7 +538,8 @@ test('terminal navigation requires both an exact grant and separate live action'
         workspaceRevision: decimalRevision('12'),
         destination: 'terminal',
         sessionId: null,
-        sessionRevision: null,
+        sessionRelationRevision: null,
+        retainedTarget: null,
       },
     ),
   ).toThrow('workspace_terminal_not_authorized');

@@ -18,7 +18,12 @@ test('fixture-driven cards expose separate task and orchestration states', () =>
     orchestrationStatus: 'review',
     attemptState: 'waiting',
     retainedSessionId: 'session-34',
-    retainedSessionRevision: '9',
+    retainedSessionTarget: {
+      authority: 'automonique',
+      kind: 'session',
+      id: 'session-34',
+    },
+    retainedSessionRelationRevision: '9',
     repositoryLabel: 'bext-stack/automonique-mobile',
     branchLabel: 'feat/workspace-companion-34',
     unreadAttention: 2,
@@ -50,18 +55,21 @@ test('selects an eligible retained session deterministically', () => {
           {
             ...workspace.sessions[0]!,
             id: 'lost-first',
+            target: { ...workspace.sessions[0]!.target, id: 'lost-first' },
             revision: decimalRevision('99'),
             state: 'lost' as const,
           },
           {
             ...workspace.sessions[0]!,
             id: 'waiting-newer',
+            target: { ...workspace.sessions[0]!.target, id: 'waiting-newer' },
             revision: decimalRevision('11'),
             state: 'waiting' as const,
           },
           {
             ...workspace.sessions[0]!,
             id: 'active-current',
+            target: { ...workspace.sessions[0]!.target, id: 'active-current' },
             revision: decimalRevision('10'),
             state: 'active' as const,
           },
@@ -72,7 +80,12 @@ test('selects an eligible retained session deterministically', () => {
 
   expect(presentWorkspaceCatalog(catalog)[0]).toMatchObject({
     retainedSessionId: 'active-current',
-    retainedSessionRevision: '10',
+    retainedSessionTarget: {
+      authority: 'automonique',
+      kind: 'session',
+      id: 'active-current',
+    },
+    retainedSessionRelationRevision: '10',
   });
 });
 

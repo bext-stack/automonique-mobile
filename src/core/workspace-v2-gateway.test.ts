@@ -266,6 +266,33 @@ async function negotiate(gateway: ReturnType<typeof gatewayFor>['gateway']) {
   await gateway.negotiate();
 }
 
+test('exposes only immutable non-secret coordinates for catalog projection', () => {
+  const { gateway } = gatewayFor([]);
+  expect(gateway.authorizationScope).toMatchObject({
+    serverIdentity: `sha256:${'a'.repeat(64)}`,
+    tenantId: 'tenant-mobile',
+    authorizationRevision: 1n,
+    projectRoots: [project],
+  });
+  expect(Object.isFrozen(gateway.authorizationScope)).toBe(true);
+  expect(Object.isFrozen(gateway.authorizationScope.projectRoots)).toBe(true);
+  expect(gateway.authorizationScope).not.toHaveProperty('token');
+  expect(gateway.authorizationScope).not.toHaveProperty('actorId');
+});
+
+test('an expired delegated generation refuses catalog reads before transport', async () => {
+  const { gateway, adapter } = gatewayFor(
+    [],
+    70_000,
+    memoryReceiptStore(),
+    delegatedAuthorization(1_500),
+  );
+  await expect(gateway.negotiate()).rejects.toMatchObject({
+    category: 'mobile_v2_authorization_expired',
+  });
+  expect(adapter.pendingSteps).toBe(0);
+});
+
 function createIntent(): Extract<
   WorkContextMutationIntent,
   { readonly kind: 'create_user_workspace' }

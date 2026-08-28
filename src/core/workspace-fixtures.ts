@@ -26,6 +26,8 @@ export const workspaceCompanionFixture: WorkspaceCompanionCatalog = {
       tenantId: 'tenant-delivery',
       authorization: 'active',
       authorizationRevision: decimalRevision('8'),
+      principalGeneration: decimalRevision('3'),
+      staleProjectIds: [],
       actions: [
         'workspace_read',
         'workspace_create_preview',
@@ -43,7 +45,7 @@ export const workspaceCompanionFixture: WorkspaceCompanionCatalog = {
         },
       ],
       projects: [
-        { id: 'project-mobile', hostId: 'host-fr-1', label: 'Mobile' },
+        { id: 'project-mobile', hostIds: ['host-fr-1'], label: 'Mobile' },
       ],
       workspaces: [
         {
@@ -67,6 +69,11 @@ export const workspaceCompanionFixture: WorkspaceCompanionCatalog = {
           sessions: [
             {
               id: 'session-34',
+              target: {
+                authority: 'automonique',
+                kind: 'session',
+                id: 'session-34',
+              },
               revision: decimalRevision('9'),
               title: 'Implement companion foundation',
               state: 'waiting',

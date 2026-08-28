@@ -29,6 +29,7 @@ const expected = {
   credentialId: 'credential-mobile',
   credentialRevision: 3n,
   authorizationRevision: 5n,
+  expiresAtMs: BigInt(NOW + 60_000),
   now: NOW,
 };
 
@@ -60,6 +61,24 @@ test('admits and process-locally fingerprints the entire delegated principal', (
     'get_mutation_receipt',
   );
 });
+
+test.each([
+  ['equal', 0, true],
+  ['shorter', -1, false],
+  ['longer', 1, false],
+] as const)(
+  '%s delegated expiry is admitted only when equal to the enclosing v1 grant',
+  (_label, delta, admitted) => {
+    const candidate = {
+      ...document(),
+      expires_at_ms: expected.expiresAtMs + BigInt(delta),
+    };
+    const operation = () =>
+      admitDelegatedMobileV2Authorization(candidate, expected);
+    if (admitted) expect(operation).not.toThrow();
+    else expect(operation).toThrow('mobile_v2_authorization_invalid');
+  },
+);
 
 test('derives a fixed cryptographic persistence digest without exposing authority', async () => {
   const admitted = admitDelegatedMobileV2Authorization(document(), expected);
@@ -98,7 +117,7 @@ test('keeps one delegation receipt family stable across token rotation but not r
 test('derives only fixed migration coordinates from an expired grant', async () => {
   const metadata = await deriveMobileV2ReceiptMigrationMetadata(
     { ...document(), expires_at_ms: BigInt(NOW) },
-    expected,
+    { ...expected, expiresAtMs: BigInt(NOW) },
   );
   expect(metadata).toEqual({
     schema: 'automonique.mobile-platform-v2-receipt-migration/v1',

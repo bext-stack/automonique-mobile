@@ -18,6 +18,10 @@ import type { WorkspaceV2Gateway } from '@/core/workspace-v2-gateway';
 import type { MobilePairingOffer } from '@automonique/sdk';
 
 import { MobileProvider } from './mobile-provider';
+import {
+  revokeWorkspaceCatalogCache,
+  WorkspaceProvider,
+} from './workspace-provider';
 
 interface LifecycleContextValue {
   readonly state: MobileLifecycleState;
@@ -62,6 +66,50 @@ const INITIAL_GATEWAY: GatewayGeneration = {
   gateway: unavailableGateway('mobile_pairing_required'),
   workspaceGateway: null,
 };
+
+async function revokeCredentialGeneration(
+  state: MobileLifecycleState,
+): Promise<void> {
+  const identity = state.profile?.serverIdentity;
+  const authorizationRevision = state.profile?.authorizationRevision;
+  let cleanupResult: Promise<{ readonly error?: unknown }> = Promise.resolve(
+    {},
+  );
+  if (identity !== undefined && authorizationRevision !== undefined) {
+    try {
+      // This call establishes the generation fence and aborts active workspace
+      // operations synchronously, before either durable cleanup or remote
+      // credential revocation can yield.
+      cleanupResult = revokeWorkspaceCatalogCache(
+        identity,
+        authorizationRevision,
+      ).then(
+        () => ({}),
+        (error: unknown) => ({ error }),
+      );
+    } catch (error) {
+      cleanupResult = Promise.resolve({ error });
+    }
+  }
+  let lifecycleError: unknown;
+  try {
+    // Workspace storage failure must never suppress remote-first revocation.
+    // The lifecycle publishes `revoking` synchronously and replaces all live
+    // gateways before its first remote await.
+    await mobileLifecycle.revoke();
+  } catch (error) {
+    lifecycleError = error;
+  }
+  const { error: cleanupError } = await cleanupResult;
+  if (lifecycleError !== undefined && cleanupError !== undefined) {
+    throw new AggregateError(
+      [lifecycleError, cleanupError],
+      'credential_and_workspace_revoke_failed',
+    );
+  }
+  if (lifecycleError !== undefined) throw lifecycleError;
+  if (cleanupError !== undefined) throw cleanupError;
+}
 
 /** Production composition root. Mock gateways must be passed explicitly in tests. */
 export function ProductionMobileProvider({ children }: PropsWithChildren) {
@@ -137,7 +185,9 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
         refreshCredential: async () => {
           await mobileLifecycle.refresh();
         },
-        revokeCredential: () => mobileLifecycle.revoke(),
+        revokeCredential: async () => {
+          await revokeCredentialGeneration(state);
+        },
         pair: async (offer) => {
           await mobileLifecycle.pair(offer);
         },
@@ -149,7 +199,13 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
         gateway={generation.gateway}
         storageScope={generation.scope}
       >
-        {children}
+        <WorkspaceProvider
+          gateway={generation.workspaceGateway}
+          generationKey={generation.key}
+          profile={state.profile}
+        >
+          {children}
+        </WorkspaceProvider>
       </MobileProvider>
     </LifecycleContext.Provider>
   );
