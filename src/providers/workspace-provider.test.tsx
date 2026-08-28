@@ -120,6 +120,54 @@ function Probe() {
   );
 }
 
+function MutationProbe() {
+  const {
+    pendingWorkspaceMutationReceipts,
+    prepareWorkspaceMutation,
+    workspaceMutationBusy,
+  } = useWorkspaces();
+  const request = {
+    projectId: 'project-mobile',
+    workspaceId: 'workspace-34',
+    workspaceRevision: '12',
+    externalWorkItem: {
+      provider: 'GitHub',
+      key: '#34',
+      title: 'Add a read-mostly workspace companion',
+    },
+  } as const;
+  return (
+    <>
+      <Probe />
+      <Text testID="mutation-state">
+        {workspaceMutationBusy ? 'busy' : 'idle'}:
+        {pendingWorkspaceMutationReceipts.length}
+      </Text>
+      <Pressable
+        accessibilityLabel="Prepare exact create attempt"
+        onPress={() =>
+          void prepareWorkspaceMutation({
+            ...request,
+            kind: 'create_attempt',
+            idempotencyKey: 'mobile-create-34',
+          }).catch(() => undefined)
+        }
+      />
+      <Pressable
+        accessibilityLabel="Prepare exact resume attempt"
+        onPress={() =>
+          void prepareWorkspaceMutation({
+            ...request,
+            kind: 'resume_attempt',
+            targetId: 'attempt-34-a',
+            idempotencyKey: 'mobile-resume-34',
+          }).catch(() => undefined)
+        }
+      />
+    </>
+  );
+}
+
 const encoded = encodeWorkspaceCompanionCache({
   schema: 'automonique.mobile-workspace-cache/v1',
   catalog: workspaceCompanionFixture,
@@ -343,6 +391,178 @@ test('a slot generation switch aborts an in-flight fan-out before publishing it'
   });
   await waitFor(() => expect(oldAborted).toBe(true));
   await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
+});
+
+test('selected full gateway prepares exact create and resume intents while pending receipts stay lookup-only', async () => {
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  const server = workspaceCompanionFixture.servers[0]!;
+  mockBuildWorkspaceServerCatalog.mockResolvedValue(catalogBuild(server));
+  const prepareMutation = jest
+    .fn()
+    .mockResolvedValue({ project: 'project-mobile' });
+  const pendingHandle = {
+    project: 'project-mobile',
+    idempotency_key: 'mobile-pending-34',
+  };
+  const pendingMutationReceipts = jest.fn().mockResolvedValue([pendingHandle]);
+  const reconcileMutation = jest.fn();
+  const selectedGateway = {
+    authorizationScope: {
+      serverIdentity: server.serverIdentity,
+      tenantId: server.tenantId,
+      authorizationRevision: 8n,
+      principalGeneration: 3n,
+      delegationId: 'delegation-mobile',
+      expiresAtMs: BigInt(Date.now() + 60_000),
+      projectRoots: ['project-mobile'],
+      actions: ['prepare_mutation', 'get_mutation_receipt'],
+    },
+    reviewEffectKinds: [],
+    negotiate: jest.fn(),
+    loadProject: jest.fn(),
+    loadLineage: jest.fn(),
+    loadReview: jest.fn(),
+    prepareMutation,
+    pendingMutationReceipts,
+    reconcileMutation,
+  };
+  const view = await render(
+    <WorkspaceProvider
+      gateway={selectedGateway as never}
+      generationKey="mutation-selected"
+      profile={
+        {
+          origin: server.origin,
+          serverIdentity: server.serverIdentity,
+        } as never
+      }
+    >
+      <MutationProbe />
+    </WorkspaceProvider>,
+  );
+  await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
+  expect(view.getByTestId('mutation-state')).toHaveTextContent('idle:1');
+  expect(reconcileMutation).not.toHaveBeenCalled();
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Prepare exact create attempt'));
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(prepareMutation).toHaveBeenCalledTimes(1));
+  expect(prepareMutation).toHaveBeenLastCalledWith(
+    'project-mobile',
+    expect.objectContaining({
+      kind: 'create_attempt_workspace',
+      label: 'GitHub #34',
+      requested_authority: {
+        credentials: [],
+        filesystem: [],
+        models: [],
+        network: [],
+        providers: [],
+        tools: [],
+      },
+      user_workspace: {
+        identity: { kind: 'user_workspace', id: 'workspace-34' },
+        revision: 12n,
+      },
+    }),
+    'mobile-create-34',
+    expect.any(AbortSignal),
+  );
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Prepare exact resume attempt'));
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(prepareMutation).toHaveBeenCalledTimes(2));
+  expect(prepareMutation).toHaveBeenLastCalledWith(
+    'project-mobile',
+    {
+      kind: 'resume_attempt_workspace',
+      requested_authority: {
+        credentials: [],
+        filesystem: [],
+        models: [],
+        network: [],
+        providers: [],
+        tools: [],
+      },
+      target: {
+        identity: { kind: 'attempt_workspace', id: 'attempt-34-a' },
+        revision: 4n,
+      },
+    },
+    'mobile-resume-34',
+    expect.any(AbortSignal),
+  );
+  expect(reconcileMutation).not.toHaveBeenCalled();
+});
+
+test('a selected slot generation switch aborts an in-flight workspace mutation', async () => {
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  const server = workspaceCompanionFixture.servers[0]!;
+  mockBuildWorkspaceServerCatalog.mockResolvedValue(catalogBuild(server));
+  let mutationSignal: AbortSignal | null = null;
+  const oldGateway = {
+    authorizationScope: {
+      serverIdentity: server.serverIdentity,
+      tenantId: server.tenantId,
+      authorizationRevision: 8n,
+      principalGeneration: 3n,
+      delegationId: 'delegation-old',
+      expiresAtMs: BigInt(Date.now() + 60_000),
+      projectRoots: ['project-mobile'],
+      actions: ['prepare_mutation'],
+    },
+    reviewEffectKinds: [],
+    negotiate: jest.fn(),
+    loadProject: jest.fn(),
+    loadLineage: jest.fn(),
+    loadReview: jest.fn(),
+    prepareMutation: jest.fn(
+      (_project, _intent, _key, signal: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          mutationSignal = signal;
+          signal.addEventListener(
+            'abort',
+            () => reject(new Error('old_mutation_aborted')),
+            { once: true },
+          );
+        }),
+    ),
+  };
+  const profile = {
+    origin: server.origin,
+    serverIdentity: server.serverIdentity,
+  } as never;
+  const view = await render(
+    <WorkspaceProvider
+      gateway={oldGateway as never}
+      generationKey="mutation-old"
+      profile={profile}
+    >
+      <MutationProbe />
+    </WorkspaceProvider>,
+  );
+  await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
+  fireEvent.press(view.getByLabelText('Prepare exact create attempt'));
+  await waitFor(() => expect(mutationSignal).not.toBeNull());
+  await act(async () => {
+    view.rerender(
+      <WorkspaceProvider
+        gateway={null}
+        generationKey="mutation-new"
+        profile={null}
+        readOnlyServers={[]}
+      >
+        <MutationProbe />
+      </WorkspaceProvider>,
+    );
+    await Promise.resolve();
+  });
+  expect(mutationSignal!.aborted).toBe(true);
+  await waitFor(() =>
+    expect(view.getByTestId('mutation-state')).toHaveTextContent('idle:0'),
+  );
 });
 
 test('credential revocation durably removes only the exact server scope', async () => {

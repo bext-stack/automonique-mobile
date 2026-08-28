@@ -5,6 +5,18 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { PreparedWorkspaceMutation } from '@/core/workspace-v2-gateway';
 import { usePalette } from '@/theme/palette';
 
+export interface WorkspaceMutationAuthorityPreview {
+  readonly serverIdentity: string;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly workspaceRevision: string;
+  readonly externalWorkItem: {
+    readonly provider: string;
+    readonly key: string;
+    readonly title: string;
+  };
+}
+
 const AUTHORITY_AXES = [
   'filesystem',
   'network',
@@ -16,11 +28,13 @@ const AUTHORITY_AXES = [
 
 export function WorkspaceMutationConfirmation({
   prepared,
+  authorityPreview,
   busy = false,
   onConfirm,
   onDeny,
 }: {
   readonly prepared: PreparedWorkspaceMutation;
+  readonly authorityPreview: WorkspaceMutationAuthorityPreview;
   readonly busy?: boolean;
   readonly onConfirm: () => void;
   readonly onDeny: () => void;
@@ -57,6 +71,18 @@ export function WorkspaceMutationConfirmation({
         </Text>
         <Text style={[styles.detail, { color: palette.text }]}>
           Project · {prepared.project}
+        </Text>
+        <Text style={[styles.detail, { color: palette.text }]}>
+          Server · {authorityPreview.serverIdentity}
+        </Text>
+        <Text style={[styles.detail, { color: palette.text }]}>
+          Workspace · {authorityPreview.workspaceId} revision{' '}
+          {authorityPreview.workspaceRevision}
+        </Text>
+        <Text style={[styles.detail, { color: palette.text }]}>
+          External task · {authorityPreview.externalWorkItem.provider} /{' '}
+          {authorityPreview.externalWorkItem.key} ·{' '}
+          {authorityPreview.externalWorkItem.title}
         </Text>
         <Text style={[styles.detail, { color: palette.text }]}>
           Result · {preview.resulting.label} ({preview.resulting.lifecycle})
