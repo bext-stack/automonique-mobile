@@ -1119,7 +1119,9 @@ export function WorkspaceProvider({
           admittedMutationReceiptKeys.current.add(result.idempotencyKey);
         }
         if (result.kind === 'ambiguous' || result.kind === 'submitted') {
-          await refresh();
+          // Submission is authoritative. Projection refresh must never
+          // replace it with an error or invite a replay of the one-shot call.
+          await refresh().catch(() => undefined);
         }
         return result;
       } finally {
@@ -1178,7 +1180,10 @@ export function WorkspaceProvider({
         }
         if (result.kind === 'settled') {
           admittedMutationReceiptKeys.current.delete(idempotencyKey);
-          await refresh();
+          // A settled receipt may already have removed its durable handle.
+          // Preserve that authoritative result even if projection refresh
+          // cannot publish the new catalog yet.
+          await refresh().catch(() => undefined);
         }
         return result;
       } finally {

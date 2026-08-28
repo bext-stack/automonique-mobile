@@ -2,6 +2,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { useState } from 'react';
 import { AppState, Pressable, Text } from 'react-native';
 
 import {
@@ -162,6 +163,41 @@ function MutationProbe() {
             targetId: 'attempt-34-a',
             idempotencyKey: 'mobile-resume-34',
           }).catch(() => undefined)
+        }
+      />
+    </>
+  );
+}
+
+function MutationResultProbe() {
+  const { confirmWorkspaceMutation, reconcileWorkspaceMutation } =
+    useWorkspaces();
+  const [result, setResult] = useState('none');
+  return (
+    <>
+      <Probe />
+      <Text testID="authoritative-mutation-result">{result}</Text>
+      <Pressable
+        accessibilityLabel="Confirm prepared workspace mutation"
+        onPress={() =>
+          void confirmWorkspaceMutation(
+            { project: 'project-mobile' } as never,
+            'grant',
+          ).then((value) =>
+            setResult(
+              value.kind === 'submitted'
+                ? `${value.kind}:${value.receipt.outcome}`
+                : value.kind,
+            ),
+          )
+        }
+      />
+      <Pressable
+        accessibilityLabel="Reconcile durable workspace mutation"
+        onPress={() =>
+          void reconcileWorkspaceMutation('mobile-pending-34').then((value) =>
+            setResult(`${value.kind}:${value.receipt.outcome}`),
+          )
         }
       />
     </>
@@ -563,6 +599,153 @@ test('a selected slot generation switch aborts an in-flight workspace mutation',
   await waitFor(() =>
     expect(view.getByTestId('mutation-state')).toHaveTextContent('idle:0'),
   );
+});
+
+test.each([
+  [
+    'submitted',
+    {
+      kind: 'submitted',
+      idempotencyKey: 'mobile-submit-34',
+      receipt: { outcome: 'conflict' },
+      projectionRefreshRequired: true,
+    },
+    'submitted:conflict',
+  ],
+  [
+    'ambiguous',
+    {
+      kind: 'ambiguous',
+      idempotencyKey: 'mobile-submit-34',
+      projectionRefreshRequired: true,
+    },
+    'ambiguous',
+  ],
+] as const)(
+  'failed projection refresh cannot replace an authoritative %s result',
+  async (_kind, authoritativeResult, renderedResult) => {
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    const server = workspaceCompanionFixture.servers[0]!;
+    mockBuildWorkspaceServerCatalog.mockResolvedValue(catalogBuild(server));
+    const confirmMutation = jest.fn().mockResolvedValue(authoritativeResult);
+    const gateway = {
+      authorizationScope: {
+        serverIdentity: server.serverIdentity,
+        tenantId: server.tenantId,
+        authorizationRevision: 8n,
+        principalGeneration: 3n,
+        delegationId: 'delegation-submit',
+        expiresAtMs: BigInt(Date.now() + 60_000),
+        projectRoots: ['project-mobile'],
+        actions: [],
+      },
+      reviewEffectKinds: [],
+      negotiate: jest.fn(),
+      loadProject: jest.fn(),
+      loadLineage: jest.fn(),
+      loadReview: jest.fn(),
+      confirmMutation,
+    };
+    const view = await render(
+      <WorkspaceProvider
+        gateway={gateway as never}
+        generationKey="authoritative-submit"
+        profile={
+          {
+            origin: server.origin,
+            serverIdentity: server.serverIdentity,
+          } as never
+        }
+      >
+        <MutationResultProbe />
+      </WorkspaceProvider>,
+    );
+    await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
+    mockBuildWorkspaceServerCatalog.mockRejectedValue(
+      new Error('projection_refresh_failed'),
+    );
+    await act(async () => {
+      fireEvent.press(
+        view.getByLabelText('Confirm prepared workspace mutation'),
+      );
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(
+        view.getByTestId('authoritative-mutation-result'),
+      ).toHaveTextContent(renderedResult),
+    );
+    expect(confirmMutation).toHaveBeenCalledTimes(1);
+  },
+);
+
+test('failed projection refresh cannot replace an authoritative settled receipt', async () => {
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  const server = workspaceCompanionFixture.servers[0]!;
+  mockBuildWorkspaceServerCatalog.mockResolvedValue(catalogBuild(server));
+  const handle = {
+    project: 'project-mobile',
+    idempotency_key: 'mobile-pending-34',
+  };
+  const pendingMutationReceipts = jest
+    .fn()
+    .mockResolvedValueOnce([handle])
+    .mockResolvedValue([]);
+  const reconcileMutation = jest.fn().mockResolvedValue({
+    kind: 'settled',
+    handle,
+    receipt: { outcome: 'completed' },
+    projectionRefreshRequired: true,
+  });
+  const gateway = {
+    authorizationScope: {
+      serverIdentity: server.serverIdentity,
+      tenantId: server.tenantId,
+      authorizationRevision: 8n,
+      principalGeneration: 3n,
+      delegationId: 'delegation-reconcile',
+      expiresAtMs: BigInt(Date.now() + 60_000),
+      projectRoots: ['project-mobile'],
+      actions: ['get_mutation_receipt'],
+    },
+    reviewEffectKinds: [],
+    negotiate: jest.fn(),
+    loadProject: jest.fn(),
+    loadLineage: jest.fn(),
+    loadReview: jest.fn(),
+    pendingMutationReceipts,
+    reconcileMutation,
+  };
+  const view = await render(
+    <WorkspaceProvider
+      gateway={gateway as never}
+      generationKey="authoritative-reconcile"
+      profile={
+        {
+          origin: server.origin,
+          serverIdentity: server.serverIdentity,
+        } as never
+      }
+    >
+      <MutationResultProbe />
+    </WorkspaceProvider>,
+  );
+  await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
+  mockBuildWorkspaceServerCatalog.mockRejectedValue(
+    new Error('projection_refresh_failed'),
+  );
+  await act(async () => {
+    fireEvent.press(
+      view.getByLabelText('Reconcile durable workspace mutation'),
+    );
+    await Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(view.getByTestId('authoritative-mutation-result')).toHaveTextContent(
+      'settled:completed',
+    ),
+  );
+  expect(reconcileMutation).toHaveBeenCalledTimes(1);
 });
 
 test('credential revocation durably removes only the exact server scope', async () => {
