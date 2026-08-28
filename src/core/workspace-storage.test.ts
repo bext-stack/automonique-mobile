@@ -8,9 +8,11 @@ import type { ServerIdentity } from './workspace-companion';
 import { decimalRevision } from './types';
 import {
   loadWorkspaceCatalogCache,
+  loadReviewDrafts,
   loadWorkspaceDraft,
   MAX_WORKSPACE_DRAFTS,
   persistWorkspaceCatalogCache,
+  persistReviewDraft,
   persistWorkspaceDraft,
   registerWorkspaceOperation,
   revokeWorkspaceServerStorage,
@@ -95,6 +97,55 @@ test('workspace drafts are bounded and keyed by exact server, authorization, and
       workspaceRevision: decimalRevision('1'),
     }),
   ).resolves.toBe(`draft-${MAX_WORKSPACE_DRAFTS}`);
+});
+
+test('review drafts are line-anchored and isolated by principal, workspace, and review revisions', async () => {
+  const serverIdentity = identity('9');
+  const base = {
+    serverIdentity,
+    authorizationRevision: decimalRevision('14'),
+    principalGeneration: decimalRevision('2'),
+    projectId: 'project-mobile',
+    workspaceId: 'workspace-review',
+    workspaceRevision: decimalRevision('5'),
+    reviewRevision: decimalRevision('7'),
+    fileId: 'file-a',
+    hunkId: 'hunk-a',
+    side: 'new' as const,
+    line: decimalRevision('12'),
+  };
+  await persistReviewDraft(base, 'line twelve', 100);
+  await persistReviewDraft(
+    { ...base, line: decimalRevision('13') },
+    'line thirteen',
+    101,
+  );
+
+  await expect(
+    loadReviewDrafts({
+      serverIdentity,
+      authorizationRevision: decimalRevision('14'),
+      principalGeneration: decimalRevision('2'),
+      projectId: 'project-mobile',
+      workspaceId: 'workspace-review',
+      workspaceRevision: decimalRevision('5'),
+      reviewRevision: decimalRevision('7'),
+    }),
+  ).resolves.toMatchObject([
+    { text: 'line thirteen', line: '13' },
+    { text: 'line twelve', line: '12' },
+  ]);
+  await expect(
+    loadReviewDrafts({
+      serverIdentity,
+      authorizationRevision: decimalRevision('14'),
+      principalGeneration: decimalRevision('3'),
+      projectId: 'project-mobile',
+      workspaceId: 'workspace-review',
+      workspaceRevision: decimalRevision('5'),
+      reviewRevision: decimalRevision('7'),
+    }),
+  ).resolves.toEqual([]);
 });
 
 test('same workspace revision remains isolated across authorization revisions', async () => {
@@ -208,6 +259,22 @@ test('revocation aborts active work and purges catalog plus indexed drafts', asy
     },
     'private task context',
   );
+  await persistReviewDraft(
+    {
+      serverIdentity,
+      authorizationRevision: decimalRevision('10'),
+      principalGeneration: decimalRevision('1'),
+      projectId: 'project-mobile',
+      workspaceId: 'workspace-sensitive',
+      workspaceRevision: decimalRevision('2'),
+      reviewRevision: decimalRevision('3'),
+      fileId: 'file-sensitive',
+      hunkId: 'hunk-sensitive',
+      side: 'new',
+      line: decimalRevision('1'),
+    },
+    'private review comment',
+  );
   const controller = new AbortController();
   registerWorkspaceOperation(serverIdentity, controller);
 
@@ -225,6 +292,17 @@ test('revocation aborts active work and purges catalog plus indexed drafts', asy
       workspaceRevision: decimalRevision('2'),
     }),
   ).resolves.toBe('');
+  await expect(
+    loadReviewDrafts({
+      serverIdentity,
+      authorizationRevision: decimalRevision('10'),
+      principalGeneration: decimalRevision('1'),
+      projectId: 'project-mobile',
+      workspaceId: 'workspace-sensitive',
+      workspaceRevision: decimalRevision('2'),
+      reviewRevision: decimalRevision('3'),
+    }),
+  ).resolves.toEqual([]);
 });
 
 test('a revocation queued behind an in-flight write wins and fences later old writes', async () => {

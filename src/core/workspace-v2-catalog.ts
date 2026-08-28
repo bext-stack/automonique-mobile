@@ -35,9 +35,18 @@ export interface WorkspaceReviewFileProjection {
   readonly conflict: string;
   readonly previewKind: string;
   readonly sanitized: boolean;
+  readonly hunks: readonly {
+    readonly id: string;
+    readonly oldStart: string;
+    readonly oldLines: string;
+    readonly newStart: string;
+    readonly newLines: string;
+    readonly preview: string;
+  }[];
 }
 
 export interface WorkspaceReviewProjection {
+  readonly snapshot: ReviewSnapshot;
   readonly revision: string;
   readonly attentionState: string;
   readonly unread: number;
@@ -46,6 +55,14 @@ export interface WorkspaceReviewProjection {
   readonly pullRequestId: string | null;
   readonly reviewDecision: string;
   readonly deliveryState: string;
+  readonly attentionReason: string | null;
+  readonly comments: ReviewSnapshot['comments'];
+  readonly checks: ReviewSnapshot['checks'];
+  readonly proposals: ReviewSnapshot['proposals'];
+  readonly reviewAuthority: ReviewSnapshot['review']['authority'];
+  readonly reviewFreshness: ReviewSnapshot['review']['freshness'];
+  readonly pullRequest: ReviewSnapshot['pull_request'];
+  readonly delivery: ReviewSnapshot['delivery'];
 }
 
 export interface WorkspaceCatalogDetail {
@@ -53,6 +70,7 @@ export interface WorkspaceCatalogDetail {
   readonly workspaceId: string;
   readonly workspaceRevision: string;
   readonly lineageAvailable: boolean;
+  readonly lineage: LineageProjection | null;
   readonly review: WorkspaceReviewProjection | null;
 }
 
@@ -224,6 +242,7 @@ function boundedUnread(value: bigint): number {
 
 function reviewProjection(review: ReviewSnapshot): WorkspaceReviewProjection {
   return {
+    snapshot: review,
     revision: review.revision.toString(),
     attentionState: review.attention.state,
     unread: boundedUnread(review.attention.unread),
@@ -235,11 +254,27 @@ function reviewProjection(review: ReviewSnapshot): WorkspaceReviewProjection {
       conflict: file.conflict,
       previewKind: file.preview.kind,
       sanitized: file.preview.sanitized,
+      hunks: file.hunks.map((hunk) => ({
+        id: hunk.id,
+        oldStart: hunk.old_start.toString(),
+        oldLines: hunk.old_lines.toString(),
+        newStart: hunk.new_start.toString(),
+        newLines: hunk.new_lines.toString(),
+        preview: hunk.preview,
+      })),
     })),
     pullRequestState: review.pull_request.state,
     pullRequestId: review.pull_request.id,
     reviewDecision: review.review.decision,
     deliveryState: review.delivery.state,
+    attentionReason: review.attention.reason,
+    comments: review.comments,
+    checks: review.checks,
+    proposals: review.proposals,
+    reviewAuthority: review.review.authority,
+    reviewFreshness: review.review.freshness,
+    pullRequest: review.pull_request,
+    delivery: review.delivery,
   };
 }
 
@@ -631,6 +666,7 @@ export async function buildWorkspaceServerCatalog(
       workspaceRevision: graph.workspace.revision.toString(),
       lineageAvailable:
         detail?.lineage !== null && detail?.lineage !== undefined,
+      lineage: detail?.lineage ?? null,
       review: reviewRead,
     });
     const navigation: CompanionWorkspace['navigation'] = [
@@ -647,6 +683,10 @@ export async function buildWorkspaceServerCatalog(
         : [
             {
               destination: 'files' as const,
+              revision: decimalRevision(graph.workspace.revision.toString()),
+            },
+            {
+              destination: 'review' as const,
               revision: decimalRevision(graph.workspace.revision.toString()),
             },
           ]),

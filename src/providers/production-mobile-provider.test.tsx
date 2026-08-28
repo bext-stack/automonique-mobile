@@ -25,6 +25,23 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   },
 }));
 
+jest.mock('expo-notifications', () => ({
+  AndroidImportance: { DEFAULT: 3 },
+  PermissionStatus: { GRANTED: 'granted' },
+  addNotificationResponseReceivedListener: jest.fn(() => ({
+    remove: jest.fn(),
+  })),
+  getPermissionsAsync: jest.fn(() =>
+    Promise.resolve({ status: 'undetermined', canAskAgain: true }),
+  ),
+  requestPermissionsAsync: jest.fn(() =>
+    Promise.resolve({ status: 'denied', canAskAgain: false }),
+  ),
+  scheduleNotificationAsync: jest.fn(() => Promise.resolve('notification')),
+  setNotificationChannelAsync: jest.fn(() => Promise.resolve()),
+  setNotificationHandler: jest.fn(() => Promise.resolve()),
+}));
+
 jest.mock('@/core/mobile-lifecycle', () => ({
   mobileLifecycle: {
     snapshot: jest.fn(),
