@@ -200,6 +200,7 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
         storageScope={generation.scope}
       >
         <WorkspaceProvider
+          key={generation.key}
           gateway={generation.workspaceGateway}
           generationKey={generation.key}
           profile={state.profile}

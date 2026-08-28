@@ -15,6 +15,7 @@ import {
   WorkContextRevision,
   WorkspaceIntentId,
   mutationPreviewDigest,
+  validateReviewActionAgainstSnapshot,
   decodeWorkContextMutationApproval,
   type LineageProjection,
   type MutationApproval,
@@ -24,6 +25,9 @@ import {
   type PlatformV2Refusal,
   type ProjectId as ProjectIdValue,
   type ReviewSnapshot,
+  type ReviewAction,
+  type ReviewActionReceipt,
+  type ReviewAuthority,
   type ReviewWorkspaceIdentity,
   type UserWorkspaceId as UserWorkspaceIdValue,
   type WorkContextMutationIntent,
@@ -31,6 +35,7 @@ import {
   type WorkspaceIntent,
   type WorkspaceIntentOutcome,
 } from '@automonique/sdk';
+import * as Crypto from 'expo-crypto';
 import {
   mobileV2AuthorizationDigest,
   type DelegatedMobileV2Authorization,
@@ -43,6 +48,13 @@ import {
   type WorkspaceV2ReceiptHandle,
   type WorkspaceV2ReceiptStore,
 } from './workspace-v2-receipts';
+import {
+  REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
+  admitReviewReceiptForHandle,
+  reviewReceiptSettled,
+  type ReviewV2ReceiptHandle,
+  type ReviewV2ReceiptStore,
+} from './review-v2-receipts';
 
 const ALL_WORK_CONTEXT_KINDS = [
   'project',
@@ -117,11 +129,25 @@ export interface WorkspaceV2AuthorizationScope {
   readonly delegationId: string;
   readonly expiresAtMs: bigint;
   readonly projectRoots: readonly string[];
-  readonly actions: readonly MobileV2Action[];
+  readonly actions: readonly string[];
+}
+
+export interface ReviewActionSubmission {
+  readonly kind: 'submitted' | 'ambiguous';
+  readonly idempotencyKey: string;
+  readonly receipt: ReviewActionReceipt | null;
+  readonly projectionRefreshRequired: true;
+}
+
+export interface ReviewActionReconciliation {
+  readonly handle: ReviewV2ReceiptHandle;
+  readonly receipt: ReviewActionReceipt;
+  readonly projectionRefreshRequired: boolean;
 }
 
 export interface WorkspaceV2Gateway {
   readonly authorizationScope: WorkspaceV2AuthorizationScope;
+  readonly reviewEffectKinds: readonly ('add_comment' | 'approve_review')[];
   negotiate(signal?: AbortSignal): Promise<void>;
   loadProject(
     project: string,
@@ -137,6 +163,23 @@ export interface WorkspaceV2Gateway {
     workspace: ReviewWorkspaceIdentity,
     signal?: AbortSignal,
   ): Promise<ReviewSnapshot>;
+  executeReviewAction(
+    project: string,
+    workspace: ReviewWorkspaceIdentity,
+    expectedRevision: bigint,
+    authority: ReviewAuthority,
+    action: Extract<
+      ReviewAction,
+      { readonly kind: 'add_comment' | 'approve_review' }
+    >,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ReviewActionSubmission>;
+  pendingReviewReceipts(): Promise<readonly ReviewV2ReceiptHandle[]>;
+  reconcileReviewAction(
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ReviewActionReconciliation>;
   prepareMutation(
     project: string,
     intent: WorkspaceLifecycleIntent,
@@ -213,6 +256,19 @@ interface WorkspaceV2Client {
     workspace: ReviewWorkspaceIdentity,
     signal?: AbortSignal,
   ): ReturnType<PlatformV2Client['getReview']>;
+  executeReviewAction(
+    workspace: ReviewWorkspaceIdentity,
+    expectedRevision: ReturnType<typeof WorkContextRevision>,
+    action: ReviewAction,
+    idempotencyKey: ReturnType<typeof IdempotencyKey>,
+    signal?: AbortSignal,
+  ): ReturnType<PlatformV2Client['executeReviewAction']>;
+  getReviewReceipt(
+    project: ProjectIdValue,
+    workspace: ReviewWorkspaceIdentity,
+    idempotencyKey: ReturnType<typeof IdempotencyKey>,
+    signal?: AbortSignal,
+  ): ReturnType<PlatformV2Client['getReviewReceipt']>;
   prepareMutation(
     key: ReturnType<typeof IdempotencyKey>,
     intent: WorkContextMutationIntent,
@@ -253,6 +309,7 @@ interface WorkspaceV2GatewayOptions {
   readonly now?: () => number;
   readonly operationGuard?: WorkspaceV2OperationGuard;
   readonly receiptStore: WorkspaceV2ReceiptStore;
+  readonly reviewReceiptStore?: ReviewV2ReceiptStore;
 }
 
 export interface WorkspaceV2OperationGuard {
@@ -508,6 +565,50 @@ function sameWorkContextIdentity(
   return false;
 }
 
+function sameReviewAuthority(
+  left: ReviewAuthority,
+  right: ReviewAuthority,
+): boolean {
+  return left.kind === right.kind && left.id === right.id;
+}
+
+function reviewSnapshotKey(
+  project: ProjectIdValue,
+  workspace: ReviewWorkspaceIdentity,
+): string {
+  if (!('id' in workspace)) {
+    throw new WorkspaceV2GatewayError('workspace_target_outside_project');
+  }
+  return `${project}\u0000${workspace.kind}\u0000${workspace.id}`;
+}
+
+async function reviewActionDigest(
+  workspace: ReviewWorkspaceIdentity,
+  expectedRevision: bigint,
+  authority: ReviewAuthority,
+  action: ReviewAction,
+): Promise<string> {
+  const canonical = JSON.stringify(
+    {
+      schema: 'automonique.mobile-review-action-digest/v1',
+      workspace,
+      expectedRevision,
+      authority,
+      action,
+    },
+    (_key, value: unknown) =>
+      typeof value === 'bigint' ? value.toString() : value,
+  );
+  const digest = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    canonical,
+  );
+  if (!/^[0-9a-f]{64}$/u.test(digest)) {
+    throw new WorkspaceV2GatewayError('review_action_digest_invalid');
+  }
+  return `sha256:${digest}`;
+}
+
 function requireMutationAncestry(
   snapshots: ReadonlyMap<ProjectIdValue, readonly WorkContextRecord[]>,
   project: ProjectIdValue,
@@ -584,6 +685,7 @@ export function createWorkspaceV2Gateway(
     ProjectIdValue,
     readonly WorkContextRecord[]
   >();
+  const reviewSnapshots = new Map<string, ReviewSnapshot>();
   let digestPromise: Promise<string> | null = null;
   const authorizationDigest = (): Promise<string> => {
     digestPromise ??= (
@@ -593,11 +695,16 @@ export function createWorkspaceV2Gateway(
     return digestPromise;
   };
   const receiptStore = options.receiptStore;
+  const reviewReceiptStore = options.reviewReceiptStore;
 
-  function requireAction(action: MobileV2Action): void {
-    if (!authorization.actions.includes(action)) {
+  function requireDelegatedAction(action: string): void {
+    if (!(authorization.actions as readonly string[]).includes(action)) {
       throw new WorkspaceV2GatewayError('mobile_v2_action_unauthorized');
     }
+  }
+
+  function requireAction(action: MobileV2Action): void {
+    requireDelegatedAction(action);
   }
 
   function requireProject(project: ProjectIdValue): void {
@@ -667,6 +774,16 @@ export function createWorkspaceV2Gateway(
       projectRoots: [...authorization.project_roots],
       actions: [...authorization.actions],
     }),
+    reviewEffectKinds:
+      reviewReceiptStore !== undefined &&
+      (authorization.actions as readonly string[]).includes(
+        'execute_review_action',
+      ) &&
+      (authorization.actions as readonly string[]).includes(
+        'get_review_receipt',
+      )
+        ? ['add_comment', 'approve_review']
+        : [],
     async negotiate(signal) {
       // Negotiation does not itself confer an operation grant.
       requireNegotiatedV2(
@@ -788,7 +905,206 @@ export function createWorkspaceV2Gateway(
       if (!sameWorkContextIdentity(response.review.workspace, workspace)) {
         throw new WorkspaceV2GatewayError('workspace_review_mismatch');
       }
-      return response.review;
+      const snapshot = deepFreeze(response.review);
+      reviewSnapshots.set(reviewSnapshotKey(project, workspace), snapshot);
+      return snapshot;
+    },
+
+    async executeReviewAction(
+      projectValue,
+      workspace,
+      expectedRevision,
+      authority,
+      action,
+      idempotencyKeyValue,
+      signal,
+    ) {
+      requireDelegatedAction('execute_review_action');
+      requireDelegatedAction('get_review_receipt');
+      if (reviewReceiptStore === undefined) {
+        throw new WorkspaceV2GatewayError('review_effect_unavailable');
+      }
+      const project = ProjectId(projectValue);
+      requireProject(project);
+      requireReviewWorkspaceInSnapshot(projectSnapshots, project, workspace);
+      const snapshot = reviewSnapshots.get(
+        reviewSnapshotKey(project, workspace),
+      );
+      if (
+        snapshot === undefined ||
+        snapshot.revision !== WorkContextRevision(expectedRevision) ||
+        !sameReviewAuthority(snapshot.review.authority, authority) ||
+        !['add_comment', 'approve_review'].includes(action.kind)
+      ) {
+        throw new WorkspaceV2GatewayError('review_target_revision_stale');
+      }
+      validateReviewActionAgainstSnapshot(
+        {
+          schema: 'automonique.platform/review/v1',
+          platform_version: 2n,
+          actor: authorization.actor_id,
+          authentication: 'user_session',
+          authority,
+          workspace,
+          expected_revision: WorkContextRevision(expectedRevision),
+          idempotency_key: IdempotencyKey(idempotencyKeyValue),
+          action,
+        },
+        snapshot,
+      );
+      const idempotencyKey = IdempotencyKey(idempotencyKeyValue);
+      const persistedAuthorizationDigest = await guardedReceiptOperation(() =>
+        authorizationDigest(),
+      );
+      const handle: ReviewV2ReceiptHandle = {
+        schema: REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
+        authorization_digest: persistedAuthorizationDigest,
+        project,
+        workspace_kind: workspace.kind as
+          'user_workspace' | 'attempt_workspace',
+        workspace_id: 'id' in workspace ? workspace.id : '',
+        expected_revision: expectedRevision.toString(),
+        authority_kind: 'review',
+        authority_id: authority.id,
+        actor_id: authorization.actor_id,
+        action_kind: action.kind,
+        action_digest: await reviewActionDigest(
+          workspace,
+          expectedRevision,
+          authority,
+          action,
+        ),
+        idempotency_key: idempotencyKey,
+        created_at_ms: BigInt(now()).toString(),
+      };
+      let inserted = false;
+      try {
+        admitCurrentGeneration();
+        inserted = await reviewReceiptStore.put(handle);
+        admitCurrentGeneration();
+      } catch (error) {
+        if (inserted) {
+          await reviewReceiptStore
+            .remove(idempotencyKey)
+            .catch(() => undefined);
+        }
+        throw new WorkspaceV2GatewayError('review_action_not_submitted', {
+          cause: error,
+        });
+      }
+      if (!inserted) {
+        return {
+          kind: 'ambiguous',
+          idempotencyKey,
+          receipt: null,
+          projectionRefreshRequired: true,
+        };
+      }
+      let invoked = false;
+      let response: Awaited<
+        ReturnType<WorkspaceV2Client['executeReviewAction']>
+      >;
+      try {
+        response = await guarded(signal, (combined) => {
+          invoked = true;
+          return options.client.executeReviewAction(
+            workspace,
+            WorkContextRevision(expectedRevision),
+            action,
+            idempotencyKey,
+            combined,
+          );
+        });
+      } catch (error) {
+        if (!invoked) {
+          await reviewReceiptStore
+            .remove(idempotencyKey)
+            .catch(() => undefined);
+          throw new WorkspaceV2GatewayError('review_action_not_submitted', {
+            cause: error,
+          });
+        }
+        return {
+          kind: 'ambiguous',
+          idempotencyKey,
+          receipt: null,
+          projectionRefreshRequired: true,
+        };
+      }
+      if (response.kind === 'platform_v2_refused') {
+        await guardedReceiptOperation(() =>
+          reviewReceiptStore.remove(idempotencyKey),
+        );
+        refusal(response.refusal);
+      }
+      const receipt = admitReviewReceiptForHandle(response.receipt, handle);
+      if (reviewReceiptSettled(receipt)) {
+        await guardedReceiptOperation(() =>
+          reviewReceiptStore.remove(idempotencyKey),
+        );
+      }
+      return {
+        kind: 'submitted',
+        idempotencyKey,
+        receipt,
+        projectionRefreshRequired: true,
+      };
+    },
+
+    async pendingReviewReceipts() {
+      requireDelegatedAction('get_review_receipt');
+      if (reviewReceiptStore === undefined) {
+        throw new WorkspaceV2GatewayError('review_effect_unavailable');
+      }
+      const handles = await guardedReceiptOperation(() =>
+        reviewReceiptStore.list(),
+      );
+      return handles.filter((handle) =>
+        authorization.project_roots.includes(ProjectId(handle.project)),
+      );
+    },
+
+    async reconcileReviewAction(idempotencyKeyValue, signal) {
+      requireDelegatedAction('get_review_receipt');
+      if (reviewReceiptStore === undefined) {
+        throw new WorkspaceV2GatewayError('review_effect_unavailable');
+      }
+      const idempotencyKey = IdempotencyKey(idempotencyKeyValue);
+      const handles = await guardedReceiptOperation(() =>
+        reviewReceiptStore.list(),
+      );
+      const handle = handles.find(
+        (candidate) => candidate.idempotency_key === idempotencyKey,
+      );
+      if (handle === undefined) {
+        throw new WorkspaceV2GatewayError('review_receipt_handle_missing');
+      }
+      const project = ProjectId(handle.project);
+      requireProject(project);
+      const workspace: ReviewWorkspaceIdentity = {
+        kind: handle.workspace_kind,
+        id: handle.workspace_id,
+      } as ReviewWorkspaceIdentity;
+      const response = await guarded(signal, (combined) =>
+        options.client.getReviewReceipt(
+          project,
+          workspace,
+          idempotencyKey,
+          combined,
+        ),
+      );
+      if (response.kind === 'platform_v2_refused') refusal(response.refusal);
+      const receipt = admitReviewReceiptForHandle(response.receipt, handle);
+      if (reviewReceiptSettled(receipt)) {
+        await guardedReceiptOperation(() =>
+          reviewReceiptStore.remove(idempotencyKey),
+        );
+      }
+      return {
+        handle,
+        receipt,
+        projectionRefreshRequired: reviewReceiptSettled(receipt),
+      };
     },
 
     async prepareMutation(projectValue, intent, keyValue, signal) {
@@ -1117,6 +1433,7 @@ export interface AuthorizedWorkspaceV2GatewayOptions {
   readonly token: () => string | Promise<string>;
   readonly operationGuard?: WorkspaceV2OperationGuard;
   readonly receiptStore: WorkspaceV2ReceiptStore;
+  readonly reviewReceiptStore?: ReviewV2ReceiptStore;
 }
 
 /** Production constructor. The bearer and raw transport stay behind the SDK. */
@@ -1140,6 +1457,9 @@ export function createAuthorizedWorkspaceV2Gateway(
       ? {}
       : { operationGuard: options.operationGuard }),
     receiptStore: options.receiptStore,
+    ...(options.reviewReceiptStore === undefined
+      ? {}
+      : { reviewReceiptStore: options.reviewReceiptStore }),
   });
 }
 

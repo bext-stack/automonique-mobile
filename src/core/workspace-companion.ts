@@ -29,7 +29,7 @@ export type WorkspaceAction =
   | 'workspace_resume_preview'
   | 'terminal_relay';
 export type WorkspaceDestination =
-  'chat' | 'files' | 'preview' | 'source_control' | 'terminal';
+  'chat' | 'files' | 'preview' | 'review' | 'source_control' | 'terminal';
 
 export interface CompanionFreshness {
   readonly state: 'fresh' | 'delayed' | 'unknown';
@@ -235,6 +235,7 @@ const DESTINATIONS: readonly WorkspaceDestination[] = [
   'chat',
   'files',
   'preview',
+  'review',
   'source_control',
   'terminal',
 ];

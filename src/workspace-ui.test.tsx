@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import type { ReactNode } from 'react';
 
 import WorkspacesScreen from './app/(tabs)/workspaces';
@@ -57,12 +57,75 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   },
 }));
 
+const reviewSnapshot = {
+  schema: 'automonique.platform/review/v2',
+  platform_version: 2n,
+  revision: 7n,
+  workspace: { kind: 'user_workspace', id: 'workspace-34' },
+  attention: {
+    reason: 'approval_required',
+    source_revision: 3n,
+    state: 'needs_you',
+    unread: 2n,
+  },
+  attention_events: [
+    {
+      id: 'attention-approval-1',
+      origin: {
+        authority: { kind: 'review', id: 'review-local' },
+        id: null,
+        kind: 'review',
+        revision: 3n,
+      },
+      reason: 'approval_required',
+      unread: 2n,
+    },
+  ],
+  files: [],
+  checks: [],
+  comments: [],
+  proposals: [],
+  review: {
+    authority: { kind: 'review', id: 'review-local' },
+    decision: 'changes_requested',
+    freshness: {
+      observed_at_ms: 1n,
+      observed_revision: 3n,
+      state: 'fresh',
+    },
+  },
+  pull_request: {
+    authority: { kind: 'pull_request', id: 'pr-local' },
+    freshness: {
+      observed_at_ms: 1n,
+      observed_revision: 1n,
+      state: 'fresh',
+    },
+    head_revision: 'abc',
+    id: '34',
+    readiness: 'ready',
+    state: 'open',
+  },
+  delivery: {
+    authority: { kind: 'delivery', id: 'delivery-local' },
+    freshness: {
+      observed_at_ms: 1n,
+      observed_revision: 1n,
+      state: 'fresh',
+    },
+    id: null,
+    state: 'not_delivered',
+  },
+};
+
 const detail = {
   serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
   workspaceId: 'workspace-34',
   workspaceRevision: '12',
   lineageAvailable: true,
+  lineage: null,
   review: {
+    snapshot: reviewSnapshot,
     revision: '7',
     attentionState: 'needs_you',
     unread: 2,
@@ -75,12 +138,30 @@ const detail = {
         conflict: 'none',
         previewKind: 'text',
         sanitized: true,
+        hunks: [
+          {
+            id: 'hunk-1',
+            oldStart: '1',
+            oldLines: '1',
+            newStart: '1',
+            newLines: '1',
+            preview: '-old\n+new',
+          },
+        ],
       },
     ],
     pullRequestState: 'open',
     pullRequestId: '34',
     reviewDecision: 'changes_requested',
     deliveryState: 'not_started',
+    attentionReason: 'approval_required',
+    comments: [],
+    checks: [],
+    proposals: [],
+    reviewAuthority: reviewSnapshot.review.authority,
+    reviewFreshness: reviewSnapshot.review.freshness,
+    pullRequest: reviewSnapshot.pull_request,
+    delivery: reviewSnapshot.delivery,
   },
 };
 
@@ -148,9 +229,163 @@ beforeEach(() => {
       phase: 'ready',
       profile: { serverIdentity: WORKSPACE_FIXTURE_IDENTITY },
     },
+    workspaceGateway: null,
   });
   mockUseWorkspaces.mockReturnValue(workspaceValue());
   mockRouteParams = {};
+});
+
+test('review route shows bounded sanitized hunks and keeps unsupported mutations explicitly disabled', async () => {
+  const base = workspaceValue();
+  const server = base.catalog.servers[0]!;
+  const workspace = server.workspaces[0]!;
+  const withReview = {
+    ...workspace,
+    navigation: [
+      ...workspace.navigation,
+      { destination: 'review', revision: workspace.revision },
+    ],
+  };
+  const catalog = {
+    ...base.catalog,
+    servers: [
+      {
+        ...server,
+        workspaces: [withReview],
+      },
+    ],
+  };
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog,
+    reviewBusy: false,
+    reviewReceipts: [],
+    executeReviewAction: jest.fn(),
+    findWorkspace: () => withReview,
+  });
+  mockUseMobileLifecycle.mockReturnValue({
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: WORKSPACE_FIXTURE_IDENTITY },
+    },
+    workspaceGateway: {
+      authorizationScope: { actions: ['get_review'] },
+      reviewEffectKinds: [],
+    },
+  });
+  mockRouteParams = {
+    server: WORKSPACE_FIXTURE_IDENTITY,
+    workspace: 'workspace-34',
+    revision: '12',
+    destination: 'review',
+    review_revision: '7',
+    file: 'file-1',
+    hunk: 'hunk-1',
+  };
+  const view = await render(<WorkspaceDetailScreen />);
+  await waitFor(() =>
+    expect(view.getByLabelText(/Sanitized diff preview/)).toBeTruthy(),
+  );
+  expect(view.getByText('-old\n+new')).toBeTruthy();
+  expect(view.getByLabelText(/Approve review, unavailable/)).toBeDisabled();
+  expect(view.getByLabelText(/Batch send comments/)).toBeDisabled();
+  expect(view.getByText(/local drafts are not sent to an agent/)).toBeTruthy();
+});
+
+test('review approval requires an exact preview before one revision-bound mutation', async () => {
+  const base = workspaceValue();
+  const server = base.catalog.servers[0]!;
+  const workspace = server.workspaces[0]!;
+  const withReview = {
+    ...workspace,
+    navigation: [
+      ...workspace.navigation,
+      { destination: 'review', revision: workspace.revision },
+    ],
+  };
+  const executeReviewAction = jest.fn().mockResolvedValue({
+    schema: 'automonique.platform/review-action-receipt/v2',
+    idempotency_key: 'mobile-review-test',
+    actor: 'mobile-actor',
+    outcome: 'completed',
+    reconciliation: 'final',
+    revision: 8n,
+    current_revision: null,
+  });
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: {
+      ...base.catalog,
+      servers: [
+        {
+          ...server,
+          workspaces: [withReview],
+        },
+      ],
+    },
+    reviewBusy: false,
+    reviewReceipts: [],
+    executeReviewAction,
+    findWorkspace: () => withReview,
+  });
+  mockUseMobileLifecycle.mockReturnValue({
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: WORKSPACE_FIXTURE_IDENTITY },
+    },
+    workspaceGateway: {
+      authorizationScope: {
+        actions: ['get_review', 'execute_review_action'],
+      },
+      reviewEffectKinds: ['add_comment', 'approve_review'],
+    },
+  });
+  mockRouteParams = {
+    server: WORKSPACE_FIXTURE_IDENTITY,
+    workspace: workspace.id,
+    revision: workspace.revision,
+    destination: 'review',
+    review_revision: detail.review.revision,
+  };
+
+  const view = await render(<WorkspaceDetailScreen />);
+  await waitFor(() =>
+    expect(view.getByLabelText('Approve review')).not.toBeDisabled(),
+  );
+  fireEvent.press(view.getByLabelText('Approve review'));
+
+  expect(executeReviewAction).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(
+      view.getByLabelText('Exact review action confirmation'),
+    ).toBeTruthy(),
+  );
+  expect(
+    view.getByText(
+      `Workspace ${workspace.id} · workspace revision ${workspace.revision} · review revision ${detail.review.revision} · action approve review`,
+    ),
+  ).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Confirm exact review action'));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(executeReviewAction).toHaveBeenCalledTimes(1));
+  expect(executeReviewAction).toHaveBeenCalledWith(
+    expect.objectContaining({
+      projectId: workspace.projectId,
+      workspaceId: workspace.id,
+      workspaceRevision: workspace.revision,
+      reviewRevision: detail.review.revision,
+      authority: reviewSnapshot.review.authority,
+      action: {
+        kind: 'approve_review',
+        payload: { expected_review_revision: 3n },
+      },
+      idempotencyKey: expect.stringMatching(/^mobile-review-/u),
+    }),
+  );
 });
 
 test('discovery keeps external and orchestration status separate and labels partial coverage', async () => {

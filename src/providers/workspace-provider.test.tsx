@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { render, waitFor } from '@testing-library/react-native';
-import { Text } from 'react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { AppState, Pressable, Text } from 'react-native';
 
 import {
   decodeWorkspaceCompanionCache,
@@ -19,6 +19,48 @@ import {
   WorkspaceProvider,
 } from './workspace-provider';
 
+const mockNotificationGetPermissions = jest.fn();
+const mockNotificationRequestPermissions = jest.fn();
+const mockNotificationSchedule = jest.fn();
+const mockNotificationRouterPush = jest.fn();
+const mockBuildWorkspaceServerCatalog = jest.fn();
+let mockNotificationResponse:
+  | ((response: {
+      notification: { request: { content: { data: unknown } } };
+    }) => void)
+  | null = null;
+let mockAppStateChange: ((state: string) => void) | null = null;
+
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ push: mockNotificationRouterPush }),
+}));
+jest.mock('@/core/workspace-v2-catalog', () => {
+  const actual = jest.requireActual('@/core/workspace-v2-catalog');
+  return {
+    ...actual,
+    buildWorkspaceServerCatalog: (...args: readonly unknown[]) =>
+      mockBuildWorkspaceServerCatalog(...args),
+  };
+});
+jest.mock('expo-notifications', () => ({
+  AndroidImportance: { DEFAULT: 3 },
+  PermissionStatus: { GRANTED: 'granted' },
+  addNotificationResponseReceivedListener: jest.fn(
+    (listener: typeof mockNotificationResponse) => {
+      mockNotificationResponse = listener;
+      return { remove: jest.fn() };
+    },
+  ),
+  getPermissionsAsync: (...args: readonly unknown[]) =>
+    mockNotificationGetPermissions(...args),
+  requestPermissionsAsync: (...args: readonly unknown[]) =>
+    mockNotificationRequestPermissions(...args),
+  scheduleNotificationAsync: (...args: readonly unknown[]) =>
+    mockNotificationSchedule(...args),
+  setNotificationChannelAsync: jest.fn(() => Promise.resolve()),
+  setNotificationHandler: jest.fn(() => Promise.resolve()),
+}));
+
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,
   default: {
@@ -29,12 +71,24 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 function Probe() {
-  const { catalog, status } = useWorkspaces();
+  const {
+    catalog,
+    notificationPermission,
+    requestReviewNotificationPermission,
+    status,
+  } = useWorkspaces();
   return (
-    <Text testID="workspace-probe">
-      {status.phase}:{catalog.servers.length}:
-      {catalog.servers[0]?.authorization ?? 'none'}
-    </Text>
+    <>
+      <Text testID="workspace-probe">
+        {status.phase}:{catalog.servers.length}:
+        {catalog.servers[0]?.authorization ?? 'none'}
+      </Text>
+      <Text testID="notification-permission">{notificationPermission}</Text>
+      <Pressable
+        accessibilityLabel="Request review notifications"
+        onPress={() => void requestReviewNotificationPermission()}
+      />
+    </>
   );
 }
 
@@ -46,9 +100,31 @@ const encoded = encodeWorkspaceCompanionCache({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockNotificationResponse = null;
+  mockAppStateChange = null;
+  mockNotificationGetPermissions.mockResolvedValue({
+    status: 'undetermined',
+    canAskAgain: true,
+  });
+  mockNotificationRequestPermissions.mockResolvedValue({
+    status: 'granted',
+    canAskAgain: false,
+  });
+  mockNotificationSchedule.mockResolvedValue('notification-1');
+  mockBuildWorkspaceServerCatalog.mockReset();
+  jest
+    .spyOn(AppState, 'addEventListener')
+    .mockImplementation((_event, listener) => {
+      mockAppStateChange = listener as (state: string) => void;
+      return { remove: jest.fn() };
+    });
   jest.mocked(AsyncStorage.getItem).mockResolvedValue(encoded);
   jest.mocked(AsyncStorage.setItem).mockResolvedValue(undefined);
   jest.mocked(AsyncStorage.removeItem).mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 
 test('cold cache remains visible but read-only when no current delegated gateway exists', async () => {
@@ -76,4 +152,259 @@ test('credential revocation durably removes only the exact server scope', async 
   expect(decoded.catalog.serverTombstones[0]?.serverIdentity).toBe(
     WORKSPACE_FIXTURE_IDENTITY,
   );
+});
+
+test('notification permission is requested only after an explicit operator gesture', async () => {
+  const view = await render(
+    <WorkspaceProvider
+      gateway={null}
+      generationKey="notification-permission"
+      profile={null}
+    >
+      <Probe />
+    </WorkspaceProvider>,
+  );
+  await waitFor(() =>
+    expect(view.getByTestId('notification-permission')).toHaveTextContent(
+      'undetermined',
+    ),
+  );
+  expect(mockNotificationRequestPermissions).not.toHaveBeenCalled();
+
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Request review notifications'));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  await waitFor(() =>
+    expect(mockNotificationRequestPermissions).toHaveBeenCalledTimes(1),
+  );
+  await waitFor(() =>
+    expect(view.getByTestId('notification-permission')).toHaveTextContent(
+      'granted',
+    ),
+  );
+});
+
+test('revoked or unavailable state rejects notification delivery and navigation', async () => {
+  mockNotificationGetPermissions.mockResolvedValue({
+    status: 'granted',
+    canAskAgain: false,
+  });
+  const view = await render(
+    <WorkspaceProvider
+      gateway={null}
+      generationKey="revoked-notification"
+      profile={null}
+    >
+      <Probe />
+    </WorkspaceProvider>,
+  );
+  await waitFor(() =>
+    expect(view.getByText('unavailable:1:cached')).toBeTruthy(),
+  );
+  expect(mockNotificationResponse).not.toBeNull();
+  expect(mockAppStateChange).not.toBeNull();
+
+  mockNotificationResponse!({
+    notification: {
+      request: {
+        content: {
+          data: {
+            kind: 'automonique_review_attention',
+            server_identity: WORKSPACE_FIXTURE_IDENTITY,
+            workspace_id: 'workspace-34',
+            workspace_revision: '12',
+            review_revision: '7',
+            file_id: null,
+            hunk_id: null,
+          },
+        },
+      },
+    },
+  });
+  mockAppStateChange!('background');
+
+  expect(mockNotificationRouterPush).not.toHaveBeenCalled();
+  expect(mockNotificationSchedule).not.toHaveBeenCalled();
+});
+
+test('current background Needs You state schedules one content-free exact notification', async () => {
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  mockNotificationGetPermissions.mockResolvedValue({
+    status: 'granted',
+    canAskAgain: false,
+  });
+  const baseServer = workspaceCompanionFixture.servers[0]!;
+  const liveServer = {
+    ...baseServer,
+    authorizationRevision: '9' as typeof baseServer.authorizationRevision,
+  };
+  const baseWorkspace = baseServer.workspaces[0]!;
+  const workspace = {
+    ...baseWorkspace,
+    navigation: [
+      ...baseWorkspace.navigation,
+      { destination: 'review', revision: baseWorkspace.revision },
+    ],
+  };
+  const snapshot = {
+    schema: 'automonique.platform/review/v2',
+    platform_version: 2n,
+    revision: 7n,
+    workspace: { kind: 'user_workspace', id: workspace.id },
+    attention: {
+      reason: 'approval_required',
+      source_revision: 3n,
+      state: 'needs_you',
+      unread: 1n,
+    },
+    attention_events: [],
+    files: [],
+    checks: [],
+    comments: [],
+    proposals: [],
+    review: {
+      authority: { kind: 'review', id: 'review-local' },
+      decision: 'pending',
+      freshness: {
+        observed_at_ms: 1n,
+        observed_revision: 3n,
+        state: 'fresh',
+      },
+    },
+    pull_request: {
+      authority: { kind: 'pull_request', id: 'pull-request-local' },
+      freshness: {
+        observed_at_ms: 1n,
+        observed_revision: 1n,
+        state: 'fresh',
+      },
+      head_revision: 'abc',
+      id: '35',
+      readiness: 'ready',
+      state: 'open',
+    },
+    delivery: {
+      authority: { kind: 'delivery', id: 'delivery-local' },
+      freshness: {
+        observed_at_ms: 1n,
+        observed_revision: 1n,
+        state: 'fresh',
+      },
+      id: null,
+      state: 'not_delivered',
+    },
+  };
+  mockBuildWorkspaceServerCatalog.mockResolvedValue({
+    profile: { ...liveServer, workspaces: [workspace] },
+    details: [
+      {
+        serverIdentity: liveServer.serverIdentity,
+        workspaceId: workspace.id,
+        workspaceRevision: workspace.revision,
+        lineageAvailable: false,
+        lineage: null,
+        review: {
+          snapshot,
+          revision: '7',
+          attentionState: 'needs_you',
+          unread: 1,
+          files: [],
+          pullRequestState: 'open',
+          pullRequestId: '35',
+          reviewDecision: 'pending',
+          deliveryState: 'not_delivered',
+          attentionReason: 'approval_required',
+          comments: [],
+          checks: [],
+          proposals: [],
+          reviewAuthority: snapshot.review.authority,
+          reviewFreshness: snapshot.review.freshness,
+          pullRequest: snapshot.pull_request,
+          delivery: snapshot.delivery,
+        },
+      },
+    ],
+    coverage: 'complete',
+    omittedDetailCount: 0,
+    omittedProjectCount: 0,
+    omittedHostCount: 0,
+    omittedWorkspaceCount: 0,
+    omittedSessionCount: 0,
+    failedProjectCount: 0,
+    failedDetailCount: 0,
+    successfulProjectIds: [workspace.projectId],
+    failedProjectIds: [],
+  });
+  const gateway = {
+    authorizationScope: {
+      serverIdentity: liveServer.serverIdentity,
+      actions: ['get_review'],
+    },
+    reviewEffectKinds: [],
+  };
+
+  const view = await render(
+    <WorkspaceProvider
+      gateway={gateway as never}
+      generationKey="live-notification"
+      profile={{ origin: liveServer.origin } as never}
+    >
+      <Probe />
+    </WorkspaceProvider>,
+  );
+  await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
+  expect(mockAppStateChange).not.toBeNull();
+
+  mockAppStateChange!('background');
+
+  await waitFor(() =>
+    expect(mockNotificationSchedule).toHaveBeenCalledTimes(1),
+  );
+  expect(mockNotificationSchedule).toHaveBeenCalledWith({
+    content: {
+      title: 'Automonique needs you',
+      body: 'Open the current review to inspect the bounded request.',
+      data: {
+        kind: 'automonique_review_attention',
+        server_identity: liveServer.serverIdentity,
+        workspace_id: workspace.id,
+        workspace_revision: workspace.revision,
+        review_revision: '7',
+        file_id: null,
+        hunk_id: null,
+      },
+    },
+    trigger: null,
+  });
+
+  mockAppStateChange!('background');
+  expect(mockNotificationSchedule).toHaveBeenCalledTimes(1);
+
+  const notificationData =
+    mockNotificationSchedule.mock.calls[0]![0].content.data;
+  mockNotificationResponse!({
+    notification: { request: { content: { data: notificationData } } },
+  });
+  expect(mockNotificationRouterPush).toHaveBeenCalledWith({
+    pathname: '/workspace/[server]/[workspace]',
+    params: {
+      server: liveServer.serverIdentity,
+      workspace: workspace.id,
+      revision: workspace.revision,
+      destination: 'review',
+      review_revision: '7',
+    },
+  });
+
+  mockNotificationResponse!({
+    notification: {
+      request: {
+        content: { data: { ...notificationData, review_revision: '6' } },
+      },
+    },
+  });
+  expect(mockNotificationRouterPush).toHaveBeenCalledTimes(1);
 });

@@ -13,9 +13,13 @@ import { decimalRevision, type DecimalRevision } from './types';
 
 const WORKSPACE_CACHE_KEY = 'automonique.mobile.workspace-catalog.v1';
 const WORKSPACE_DRAFTS_KEY = 'automonique.mobile.workspace-drafts.v1';
+const REVIEW_DRAFTS_KEY = 'automonique.mobile.review-drafts.v1';
 export const MAX_WORKSPACE_DRAFT_BYTES = 4_096;
 export const MAX_WORKSPACE_DRAFTS = 32;
 const MAX_WORKSPACE_DRAFT_ENVELOPE_BYTES = 160 * 1024;
+export const MAX_REVIEW_DRAFT_BYTES = 4_096;
+export const MAX_REVIEW_DRAFTS = 64;
+const MAX_REVIEW_DRAFT_ENVELOPE_BYTES = 320 * 1024;
 
 export interface WorkspaceDraftScope {
   readonly serverIdentity: ServerIdentity;
@@ -34,6 +38,30 @@ interface WorkspaceDraftEnvelope {
   readonly drafts: readonly StoredWorkspaceDraft[];
 }
 
+export interface ReviewDraftScope {
+  readonly serverIdentity: ServerIdentity;
+  readonly authorizationRevision: DecimalRevision;
+  readonly principalGeneration: DecimalRevision;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly workspaceRevision: DecimalRevision;
+  readonly reviewRevision: DecimalRevision;
+  readonly fileId: string;
+  readonly hunkId: string;
+  readonly side: 'old' | 'new';
+  readonly line: DecimalRevision;
+}
+
+export interface StoredReviewDraft extends ReviewDraftScope {
+  readonly text: string;
+  readonly updatedAtMs: string;
+}
+
+interface ReviewDraftEnvelope {
+  readonly schema: 'automonique.mobile-review-drafts/v1';
+  readonly drafts: readonly StoredReviewDraft[];
+}
+
 const encoder = new TextEncoder();
 const revocationFences = new Map<string, bigint>();
 const activeOperations = new Map<string, Set<AbortController>>();
@@ -50,6 +78,22 @@ function serialized<T>(operation: () => Promise<T>): Promise<T> {
 
 function draftKey(scope: WorkspaceDraftScope): string {
   return `${scope.serverIdentity}\u0000${scope.authorizationRevision}\u0000${scope.workspaceId}\u0000${scope.workspaceRevision}`;
+}
+
+function reviewDraftKey(scope: ReviewDraftScope): string {
+  return [
+    scope.serverIdentity,
+    scope.authorizationRevision,
+    scope.principalGeneration,
+    scope.projectId,
+    scope.workspaceId,
+    scope.workspaceRevision,
+    scope.reviewRevision,
+    scope.fileId,
+    scope.hunkId,
+    scope.side,
+    scope.line,
+  ].join('\u0000');
 }
 
 function boundedText(value: unknown, maximum: number): string {
@@ -132,6 +176,106 @@ function encodeDrafts(drafts: readonly StoredWorkspaceDraft[]): string {
     throw new Error('workspace_draft_invalid');
   }
   decodeDrafts(encoded);
+  return encoded;
+}
+
+function decodeReviewDrafts(encoded: string | null): ReviewDraftEnvelope {
+  if (encoded === null) {
+    return { schema: 'automonique.mobile-review-drafts/v1', drafts: [] };
+  }
+  if (encoder.encode(encoded).byteLength > MAX_REVIEW_DRAFT_ENVELOPE_BYTES) {
+    throw new Error('review_draft_invalid');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(encoded);
+  } catch {
+    throw new Error('review_draft_invalid');
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('review_draft_invalid');
+  }
+  const value = parsed as Record<string, unknown>;
+  if (
+    Object.keys(value).length !== 2 ||
+    value.schema !== 'automonique.mobile-review-drafts/v1' ||
+    !Array.isArray(value.drafts) ||
+    value.drafts.length > MAX_REVIEW_DRAFTS
+  ) {
+    throw new Error('review_draft_invalid');
+  }
+  const keys = new Set<string>();
+  const drafts = value.drafts.map((entry): StoredReviewDraft => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error('review_draft_invalid');
+    }
+    const candidate = entry as Record<string, unknown>;
+    const fields = [
+      'serverIdentity',
+      'authorizationRevision',
+      'principalGeneration',
+      'projectId',
+      'workspaceId',
+      'workspaceRevision',
+      'reviewRevision',
+      'fileId',
+      'hunkId',
+      'side',
+      'line',
+      'text',
+      'updatedAtMs',
+    ];
+    if (
+      Object.keys(candidate).length !== fields.length ||
+      fields.some((field) => !Object.hasOwn(candidate, field)) ||
+      typeof candidate.serverIdentity !== 'string' ||
+      !/^sha256:[a-f0-9]{64}$/u.test(candidate.serverIdentity) ||
+      !['old', 'new'].includes(String(candidate.side)) ||
+      typeof candidate.updatedAtMs !== 'string' ||
+      !/^[1-9][0-9]{0,18}$/u.test(candidate.updatedAtMs)
+    ) {
+      throw new Error('review_draft_invalid');
+    }
+    const draft: StoredReviewDraft = {
+      serverIdentity: candidate.serverIdentity as ServerIdentity,
+      authorizationRevision: decimalRevision(
+        boundedText(candidate.authorizationRevision, 19),
+      ),
+      principalGeneration: decimalRevision(
+        boundedText(candidate.principalGeneration, 19),
+      ),
+      projectId: boundedText(candidate.projectId, 256),
+      workspaceId: boundedText(candidate.workspaceId, 256),
+      workspaceRevision: decimalRevision(
+        boundedText(candidate.workspaceRevision, 19),
+      ),
+      reviewRevision: decimalRevision(
+        boundedText(candidate.reviewRevision, 19),
+      ),
+      fileId: boundedText(candidate.fileId, 256),
+      hunkId: boundedText(candidate.hunkId, 256),
+      side: candidate.side as 'old' | 'new',
+      line: decimalRevision(boundedText(candidate.line, 19)),
+      text: boundedText(candidate.text, MAX_REVIEW_DRAFT_BYTES),
+      updatedAtMs: candidate.updatedAtMs,
+    };
+    const key = reviewDraftKey(draft);
+    if (keys.has(key)) throw new Error('review_draft_invalid');
+    keys.add(key);
+    return draft;
+  });
+  return { schema: 'automonique.mobile-review-drafts/v1', drafts };
+}
+
+function encodeReviewDrafts(drafts: readonly StoredReviewDraft[]): string {
+  const encoded = JSON.stringify({
+    schema: 'automonique.mobile-review-drafts/v1',
+    drafts: drafts.slice(0, MAX_REVIEW_DRAFTS),
+  });
+  if (encoder.encode(encoded).byteLength > MAX_REVIEW_DRAFT_ENVELOPE_BYTES) {
+    throw new Error('review_draft_invalid');
+  }
+  decodeReviewDrafts(encoded);
   return encoded;
 }
 
@@ -222,17 +366,36 @@ export function revokeWorkspaceServerStorage(
         }),
       );
     }
-    let envelope: WorkspaceDraftEnvelope;
+    let envelope: WorkspaceDraftEnvelope = {
+      schema: 'automonique.mobile-workspace-drafts/v2',
+      drafts: [],
+    };
     try {
       envelope = decodeDrafts(await AsyncStorage.getItem(WORKSPACE_DRAFTS_KEY));
     } catch {
       await AsyncStorage.removeItem(WORKSPACE_DRAFTS_KEY);
-      return;
     }
     await AsyncStorage.setItem(
       WORKSPACE_DRAFTS_KEY,
       encodeDrafts(
         envelope.drafts.filter(
+          (draft) => draft.serverIdentity !== serverIdentity,
+        ),
+      ),
+    );
+    let reviewEnvelope: ReviewDraftEnvelope;
+    try {
+      reviewEnvelope = decodeReviewDrafts(
+        await AsyncStorage.getItem(REVIEW_DRAFTS_KEY),
+      );
+    } catch {
+      await AsyncStorage.removeItem(REVIEW_DRAFTS_KEY);
+      return;
+    }
+    await AsyncStorage.setItem(
+      REVIEW_DRAFTS_KEY,
+      encodeReviewDrafts(
+        reviewEnvelope.drafts.filter(
           (draft) => draft.serverIdentity !== serverIdentity,
         ),
       ),
@@ -300,5 +463,68 @@ export function persistWorkspaceDraft(
       )
       .slice(0, MAX_WORKSPACE_DRAFTS);
     await AsyncStorage.setItem(WORKSPACE_DRAFTS_KEY, encodeDrafts(drafts));
+  });
+}
+
+export function loadReviewDrafts(
+  scope: Omit<ReviewDraftScope, 'fileId' | 'hunkId' | 'side' | 'line'>,
+): Promise<readonly StoredReviewDraft[]> {
+  return serialized(async () => {
+    if (generationRevoked(scope.serverIdentity, scope.authorizationRevision)) {
+      return [];
+    }
+    let envelope: ReviewDraftEnvelope;
+    try {
+      envelope = decodeReviewDrafts(
+        await AsyncStorage.getItem(REVIEW_DRAFTS_KEY),
+      );
+    } catch {
+      await AsyncStorage.removeItem(REVIEW_DRAFTS_KEY);
+      return [];
+    }
+    return envelope.drafts.filter(
+      (draft) =>
+        draft.serverIdentity === scope.serverIdentity &&
+        draft.authorizationRevision === scope.authorizationRevision &&
+        draft.principalGeneration === scope.principalGeneration &&
+        draft.projectId === scope.projectId &&
+        draft.workspaceId === scope.workspaceId &&
+        draft.workspaceRevision === scope.workspaceRevision &&
+        draft.reviewRevision === scope.reviewRevision,
+    );
+  });
+}
+
+export function persistReviewDraft(
+  scope: ReviewDraftScope,
+  text: string,
+  now = Date.now(),
+): Promise<void> {
+  boundedText(text, MAX_REVIEW_DRAFT_BYTES);
+  return serialized(async () => {
+    if (generationRevoked(scope.serverIdentity, scope.authorizationRevision)) {
+      throw new Error('workspace_generation_revoked');
+    }
+    let envelope: ReviewDraftEnvelope;
+    try {
+      envelope = decodeReviewDrafts(
+        await AsyncStorage.getItem(REVIEW_DRAFTS_KEY),
+      );
+    } catch {
+      envelope = { schema: 'automonique.mobile-review-drafts/v1', drafts: [] };
+    }
+    const retained = envelope.drafts.filter(
+      (draft) => reviewDraftKey(draft) !== reviewDraftKey(scope),
+    );
+    const drafts = (
+      text.length === 0
+        ? retained
+        : [{ ...scope, text, updatedAtMs: BigInt(now).toString() }, ...retained]
+    )
+      .sort((left, right) =>
+        BigInt(right.updatedAtMs) > BigInt(left.updatedAtMs) ? 1 : -1,
+      )
+      .slice(0, MAX_REVIEW_DRAFTS);
+    await AsyncStorage.setItem(REVIEW_DRAFTS_KEY, encodeReviewDrafts(drafts));
   });
 }
