@@ -534,7 +534,7 @@ test('unsupported typed review families stay inert with exact adapter categories
       'Send comment comment-1 revision 4 to retained agent',
       'effect unavailable',
     ],
-    ['Rerun check check-1', 'platform_v2_review_ci_adapter_unavailable'],
+    ['Preview exact rerun for check check-1', 'action not delegated'],
     [
       'Open pull request',
       'platform_v2_review_pull_request_adapter_unavailable',
@@ -555,6 +555,140 @@ test('unsupported typed review families stay inert with exact adapter categories
   }
   expect(executeReviewAction).not.toHaveBeenCalled();
   expect(view.queryByLabelText('Exact review action confirmation')).toBeNull();
+});
+
+test('check rerun fetches an inert server preview before a separate confirmed submission', async () => {
+  const base = workspaceValue();
+  const server = base.catalog.servers[0]!;
+  const workspace = server.workspaces[0]!;
+  const withReview = {
+    ...workspace,
+    navigation: [
+      ...workspace.navigation,
+      { destination: 'review' as const, revision: workspace.revision },
+    ],
+  };
+  const check = {
+    authority: { kind: 'ci' as const, id: 'ci-github-actions' },
+    freshness: {
+      observed_at_ms: 1n,
+      observed_revision: 5n,
+      state: 'fresh' as const,
+    },
+    id: 'check-1',
+    required: true,
+    state: 'failed' as const,
+  };
+  const snapshot = { ...detail.review.snapshot, checks: [check] };
+  const rerunDetail = {
+    ...detail,
+    review: { ...detail.review, snapshot, checks: snapshot.checks },
+  };
+  const preview = Object.freeze({
+    project: workspace.projectId,
+    workspace: { kind: 'user_workspace' as const, id: workspace.id },
+    workspaceRevision: BigInt(workspace.revision),
+    snapshotRevision: BigInt(detail.review.revision),
+    authority: check.authority,
+    action: {
+      kind: 'rerun_check' as const,
+      payload: {
+        check_id: check.id,
+        expected_check_revision: check.freshness.observed_revision,
+      },
+    },
+    confirmationDigest: 'ab'.repeat(32) as never,
+    receiptCorrelationDigest: 'cd'.repeat(32) as never,
+  });
+  const previewCheckRerun = jest.fn().mockResolvedValue(preview);
+  const confirmCheckRerun = jest.fn().mockImplementation((_preview, key) =>
+    Promise.resolve({
+      kind: 'submitted',
+      idempotencyKey: key,
+      receipt: {
+        idempotency_key: key,
+        outcome: 'accepted',
+        reconciliation: 'poll_receipt',
+      },
+      projectionRefreshRequired: true,
+    }),
+  );
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: {
+      ...base.catalog,
+      servers: [{ ...server, workspaces: [withReview] }],
+    },
+    details: [rerunDetail],
+    reviewBusy: false,
+    reviewReceipts: [],
+    pendingReviewReceipts: [],
+    previewCheckRerun,
+    confirmCheckRerun,
+    executeReviewAction: jest.fn(),
+    reconcileReviewAction: jest.fn(),
+    findWorkspace: () => withReview,
+    findDetail: () => rerunDetail,
+  });
+  mockUseMobileLifecycle.mockReturnValue({
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: WORKSPACE_FIXTURE_IDENTITY },
+    },
+    workspaceGateway: {
+      authorizationScope: {
+        serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+        actions: [
+          'get_review',
+          'get_review_capabilities',
+          'rerun_check',
+          'get_review_receipt',
+        ],
+      },
+      reviewEffectKinds: ['rerun_check'],
+    },
+  });
+  mockRouteParams = {
+    server: WORKSPACE_FIXTURE_IDENTITY,
+    workspace: workspace.id,
+    revision: workspace.revision,
+    destination: 'review',
+    review_revision: detail.review.revision,
+    check: check.id,
+  };
+
+  const view = await render(<WorkspaceDetailScreen />);
+  const previewButton = view.getByLabelText(
+    'Preview exact rerun for check check-1',
+  );
+  expect(previewButton).not.toBeDisabled();
+  expect(confirmCheckRerun).not.toHaveBeenCalled();
+  await act(async () => {
+    fireEvent.press(previewButton);
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(previewCheckRerun).toHaveBeenCalledTimes(1));
+  expect(previewCheckRerun).toHaveBeenCalledWith({
+    projectId: workspace.projectId,
+    workspaceId: workspace.id,
+    workspaceRevision: workspace.revision,
+    reviewRevision: detail.review.revision,
+    checkId: 'check-1',
+    expectedCheckRevision: 5n,
+  });
+  expect(view.getByLabelText('Exact check rerun preview')).toBeTruthy();
+  expect(confirmCheckRerun).not.toHaveBeenCalled();
+
+  await act(async () => {
+    fireEvent.press(view.getByLabelText('Confirm exact review action'));
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(confirmCheckRerun).toHaveBeenCalledTimes(1));
+  expect(confirmCheckRerun).toHaveBeenCalledWith(
+    preview,
+    expect.stringMatching(/^mobile-review-/u),
+  );
+  expect(view.getByLabelText('Reconcile exact review receipt')).toBeTruthy();
 });
 
 test('retained-agent batch delivery previews and submits every exact persisted comment revision', async () => {
@@ -1190,7 +1324,7 @@ test('workspace review refuses a full gateway selected for another server', asyn
     workspaceGateway: {
       authorizationScope: {
         serverIdentity: `sha256:${'f'.repeat(64)}`,
-        actions: ['get_review', 'execute_review_action'],
+        actions: ['get_review', 'execute_review_action', 'get_review_receipt'],
       },
       reviewEffectKinds: ['add_comment', 'approve_review'],
     },
@@ -1276,7 +1410,7 @@ test('review approval requires an exact preview before one revision-bound mutati
     workspaceGateway: {
       authorizationScope: {
         serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
-        actions: ['get_review', 'execute_review_action'],
+        actions: ['get_review', 'execute_review_action', 'get_review_receipt'],
       },
       reviewEffectKinds: ['add_comment', 'approve_review'],
     },
@@ -1392,7 +1526,7 @@ test('a completed comment with failed local cleanup can only retry local cleanup
     workspaceGateway: {
       authorizationScope: {
         serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
-        actions: ['get_review', 'execute_review_action'],
+        actions: ['get_review', 'execute_review_action', 'get_review_receipt'],
       },
       reviewEffectKinds: ['add_comment', 'approve_review'],
     },

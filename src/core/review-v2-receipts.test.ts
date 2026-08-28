@@ -40,6 +40,8 @@ function handle(
     action_digest: `sha256:${'c'.repeat(64)}`,
     idempotency_key: 'review-action-1',
     created_at_ms: '1000',
+    expected_workspace_revision: null,
+    receipt_correlation_digest: null,
     ...overrides,
   };
 }
@@ -93,15 +95,55 @@ test('admits retained-agent delivery handles without persisting comment content'
   expect(encoded).not.toContain('comment body');
 });
 
+test('admits only complete correlated CI rerun custody without persisting the confirmation capability', async () => {
+  const store = createReviewV2ReceiptStore(
+    async () => familyDigest,
+    async () => authorizationDigest,
+  );
+  const rerun = handle({
+    authority_kind: 'ci',
+    authority_id: 'ci-github-actions',
+    action_kind: 'rerun_check',
+    action_digest: `sha256:${'e'.repeat(64)}`,
+    idempotency_key: 'review-check-rerun-1',
+    expected_workspace_revision: '9',
+    receipt_correlation_digest: 'cd'.repeat(32),
+  });
+  await expect(store.put(rerun)).resolves.toBe(true);
+  await expect(store.list()).resolves.toEqual([rerun]);
+  const encoded = [...values.values()][0]!;
+  expect(encoded).toContain('rerun_check');
+  expect(encoded).toContain('ci-github-actions');
+  expect(encoded).not.toContain('confirmation_digest');
+  expect(encoded).toContain('receipt_correlation_digest');
+  for (const partial of [
+    { expected_workspace_revision: null },
+    { receipt_correlation_digest: null },
+    { expected_workspace_revision: '0' },
+    { receipt_correlation_digest: 'CD'.repeat(32) },
+  ]) {
+    await expect(store.put({ ...rerun, ...partial })).rejects.toThrow(
+      'review_receipt_handle_invalid',
+    );
+  }
+  await expect(
+    store.put({ ...rerun, authority_kind: 'review' }),
+  ).rejects.toThrow('review_receipt_handle_invalid');
+});
+
 test('copy-before-remove migrates exact legacy local handles into the expanded schema', async () => {
   const legacyKey = `automonique.mobile.review-v2-receipts.v1.${familyDigest}`;
+  const { expected_workspace_revision, receipt_correlation_digest, ...legacy } =
+    handle();
+  void expected_workspace_revision;
+  void receipt_correlation_digest;
   values.set(
     legacyKey,
     JSON.stringify({
       schema: 'automonique.mobile-review-v2-receipt-index/v1',
       handles: [
         {
-          ...handle(),
+          ...legacy,
           schema: 'automonique.mobile-review-v2-receipt-handle/v1',
           action_kind: 'approve_review',
         },
@@ -117,9 +159,43 @@ test('copy-before-remove migrates exact legacy local handles into the expanded s
   expect(AsyncStorage.removeItem).toHaveBeenCalledWith(legacyKey);
   expect(
     [...values.values()].some((encoded) =>
-      encoded.includes('mobile-review-v2-receipt-index/v2'),
+      encoded.includes('mobile-review-v2-receipt-index/v3'),
     ),
   ).toBe(true);
+});
+
+test('terminalizes uncorrelated v2 rerun handles while migrating safe generic receipts', async () => {
+  const legacyKey = `automonique.mobile.review-v2-receipts.v2.${familyDigest}`;
+  const { expected_workspace_revision, receipt_correlation_digest, ...base } =
+    handle();
+  void expected_workspace_revision;
+  void receipt_correlation_digest;
+  values.set(
+    legacyKey,
+    JSON.stringify({
+      schema: 'automonique.mobile-review-v2-receipt-index/v2',
+      handles: [
+        { ...base, schema: 'automonique.mobile-review-v2-receipt-handle/v2' },
+        {
+          ...base,
+          schema: 'automonique.mobile-review-v2-receipt-handle/v2',
+          authority_kind: 'ci',
+          authority_id: 'ci-github-actions',
+          action_kind: 'rerun_check',
+          idempotency_key: 'legacy-uncorrelated-rerun',
+        },
+      ],
+    }),
+  );
+  const store = createReviewV2ReceiptStore(
+    async () => familyDigest,
+    async () => authorizationDigest,
+  );
+  await expect(store.list()).resolves.toEqual([handle()]);
+  expect(values.has(legacyKey)).toBe(false);
+  expect(JSON.stringify([...values.values()])).not.toContain(
+    'legacy-uncorrelated-rerun',
+  );
 });
 
 test('rejects handles from another authorization generation', async () => {
@@ -154,5 +230,17 @@ test('receipts reconcile the exact idempotency key, actor, and forward revision'
   ).toThrow('review_receipt_mismatch');
   expect(() =>
     admitReviewReceiptForHandle({ ...receipt, revision: 7n }, handle()),
+  ).toThrow('review_receipt_mismatch');
+
+  const rerun = handle({
+    authority_kind: 'ci',
+    authority_id: 'ci-github-actions',
+    action_kind: 'rerun_check',
+    expected_workspace_revision: '9',
+    receipt_correlation_digest: 'cd'.repeat(32),
+  });
+  expect(admitReviewReceiptForHandle(receipt, rerun)).toBe(receipt);
+  expect(() =>
+    admitReviewReceiptForHandle({ ...receipt, revision: 9n }, rerun),
   ).toThrow('review_receipt_mismatch');
 });

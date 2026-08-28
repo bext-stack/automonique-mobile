@@ -13,6 +13,8 @@ import {
   PlatformV2Client,
   ProjectId,
   ReceiptId,
+  ReviewConfirmationDigest,
+  ReviewReceiptCorrelationDigest,
   ResourceId,
   SupportedPlatformVersionNumber,
   WorkSessionId,
@@ -59,10 +61,12 @@ import {
   migrateLegacyWorkspaceV2Receipts,
 } from './workspace-v2-receipt-storage';
 import {
+  REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
   type ReviewV2ReceiptHandle,
   type ReviewV2ReceiptStore,
 } from './review-v2-receipts';
 import {
+  MOBILE_DIRECT_REVIEW_EFFECT_KINDS,
   MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES,
   unavailableReviewEffectCategory,
 } from './mobile-review-effects';
@@ -118,6 +122,32 @@ const emptyAuthority = {
   tools: [],
 } as const;
 const authorizationDigest = `sha256:${'c'.repeat(64)}`;
+const rerunReceiptCorrelationDigest = ReviewReceiptCorrelationDigest(
+  'cd'.repeat(32),
+);
+
+function correlatedRerunHandle(
+  overrides: Partial<ReviewV2ReceiptHandle> = {},
+): ReviewV2ReceiptHandle {
+  return {
+    schema: REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
+    authorization_digest: authorizationDigest,
+    project,
+    workspace_kind: 'user_workspace',
+    workspace_id: userWorkspaceIdentity.id,
+    expected_revision: '7',
+    authority_kind: 'ci',
+    authority_id: 'ci-github-actions',
+    actor_id: 'operator-mobile',
+    action_kind: 'rerun_check',
+    action_digest: `sha256:${'e'.repeat(64)}`,
+    idempotency_key: 'mobile-check-rerun-recovery',
+    created_at_ms: '1500',
+    expected_workspace_revision: '9',
+    receipt_correlation_digest: rerunReceiptCorrelationDigest,
+    ...overrides,
+  };
+}
 
 function delegatedAuthorization(now = 1_500): DelegatedMobileV2Authorization {
   return {
@@ -321,7 +351,7 @@ async function negotiate(gateway: ReturnType<typeof gatewayFor>['gateway']) {
 function reviewSnapshot(): ReviewSnapshot {
   return {
     schema: 'automonique.platform/review/v2',
-    platform_version: 2n,
+    platform_version: 2n as const,
     revision: 7n,
     workspace: userWorkspaceIdentity,
     attention: {
@@ -430,6 +460,25 @@ function reviewSnapshotWithAgentComment(): ReviewSnapshot {
   } as ReviewSnapshot;
 }
 
+function reviewSnapshotWithFailedCheck(): ReviewSnapshot {
+  return {
+    ...reviewSnapshot(),
+    checks: [
+      {
+        authority: { kind: 'ci', id: 'ci-github-actions' },
+        freshness: {
+          observed_at_ms: 1_500n,
+          observed_revision: 5n,
+          state: 'fresh',
+        },
+        id: 'check-1',
+        required: true,
+        state: 'failed',
+      },
+    ],
+  } as ReviewSnapshot;
+}
+
 function reviewAuthorization(now = 1_500): DelegatedMobileV2Authorization {
   return delegatedAuthorization(now);
 }
@@ -521,6 +570,7 @@ test('executes and durably reconciles an authority-bound review action', async (
     'approve_review',
     'send_comment_to_agent',
     'batch_send_comments_to_agent',
+    'rerun_check',
   ]);
   expect(Object.isFrozen(gateway.reviewEffectKinds)).toBe(true);
   await gateway.loadProject(project);
@@ -546,6 +596,8 @@ test('executes and durably reconciles an authority-bound review action', async (
     authority_id: 'review-local',
     actor_id: 'operator-mobile',
     action_kind: 'approve_review',
+    expected_workspace_revision: null,
+    receipt_correlation_digest: null,
   });
   await expect(gateway.pendingReviewReceipts()).resolves.toHaveLength(1);
   await expect(
@@ -918,6 +970,517 @@ test('refuses stale review revisions, mismatched authorities, and undelegated ef
   ).rejects.toMatchObject({ category: 'mobile_v2_action_unauthorized' });
 });
 
+test('fetches an inert exact rerun capability and persists custody before the separate confirmation', async () => {
+  const snapshot = reviewSnapshotWithFailedCheck();
+  const check = snapshot.checks[0]!;
+  const confirmationDigest = ReviewConfirmationDigest('ab'.repeat(32));
+  const receiptCorrelationDigest = rerunReceiptCorrelationDigest;
+  const idempotencyKey = IdempotencyKey('mobile-check-rerun-1');
+  const action = {
+    kind: 'rerun_check' as const,
+    payload: {
+      check_id: check.id,
+      expected_check_revision: check.freshness.observed_revision,
+    },
+  };
+  const reviewStore = memoryReviewReceiptStore();
+  const { gateway, adapter } = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(9n),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review',
+          request: { project, workspace: userWorkspaceIdentity },
+        },
+        result: { kind: 'review_result', review: snapshot },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review_capabilities',
+          request: { project, workspace: userWorkspaceIdentity },
+        },
+        result: {
+          kind: 'review_capabilities',
+          capabilities: {
+            schema: PLATFORM_SCHEMA_V2,
+            project,
+            workspace: userWorkspaceIdentity,
+            snapshot_revision: WorkContextRevision(7n),
+            workspace_revision: WorkContextRevision(9n),
+            rerunnable_checks: [
+              {
+                authority: check.authority,
+                check_id: check.id,
+                confirmation_digest: confirmationDigest,
+                receipt_correlation_digest: receiptCorrelationDigest,
+                expected_check_revision: WorkContextRevision(
+                  check.freshness.observed_revision,
+                ),
+              },
+            ],
+          },
+        },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'execute_review_action',
+          request: {
+            workspace: userWorkspaceIdentity,
+            expected_revision: WorkContextRevision(7n),
+            action,
+            confirmation_digest: confirmationDigest,
+            expected_workspace_revision: WorkContextRevision(9n),
+            receipt_correlation_digest: receiptCorrelationDigest,
+            idempotency_key: idempotencyKey,
+          },
+        },
+        result: {
+          kind: 'review_receipt',
+          receipt: {
+            schema: 'automonique.platform/review/v1',
+            platform_version: 2n,
+            receipt_id: 'check-rerun-receipt-1',
+            action_id: 'check-rerun-action-1',
+            actor: 'operator-mobile',
+            idempotency_key: idempotencyKey,
+            outcome: 'accepted',
+            reconciliation: 'poll_receipt',
+            revision: null,
+            current_revision: null,
+          },
+        },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review_receipt',
+          lookup: {
+            project,
+            workspace: userWorkspaceIdentity,
+            idempotency_key: idempotencyKey,
+            receipt_correlation_digest: receiptCorrelationDigest,
+          },
+        },
+        result: {
+          kind: 'review_receipt',
+          receipt: {
+            schema: 'automonique.platform/review/v1',
+            platform_version: 2n,
+            receipt_id: 'check-rerun-receipt-1',
+            action_id: 'check-rerun-action-1',
+            actor: 'operator-mobile',
+            idempotency_key: idempotencyKey,
+            outcome: 'completed',
+            reconciliation: 'final',
+            revision: 8n,
+            current_revision: null,
+          },
+        },
+      },
+    ],
+    1_500,
+    memoryReceiptStore(),
+    reviewAuthorization(),
+    undefined,
+    authorizationDigest,
+    reviewStore,
+  );
+  await negotiate(gateway);
+  expect(gateway.reviewEffectKinds).toContain('rerun_check');
+  await gateway.loadProject(project);
+  await gateway.loadReview(project, userWorkspaceIdentity);
+
+  const preview = await gateway.previewCheckRerun(
+    project,
+    userWorkspaceIdentity,
+    9n,
+    7n,
+    check.id,
+    check.freshness.observed_revision,
+  );
+  expect(preview).toMatchObject({
+    project,
+    workspaceRevision: 9n,
+    snapshotRevision: 7n,
+    authority: check.authority,
+    action,
+    confirmationDigest,
+    receiptCorrelationDigest,
+  });
+  expect(Object.isFrozen(preview)).toBe(true);
+  expect(reviewStore.handles).toEqual([]);
+
+  await expect(
+    gateway.confirmCheckRerun(preview, idempotencyKey),
+  ).resolves.toMatchObject({
+    kind: 'submitted',
+    receipt: { outcome: 'accepted' },
+  });
+  expect(reviewStore.handles).toEqual([
+    expect.objectContaining({
+      expected_revision: '7',
+      authority_kind: 'ci',
+      authority_id: 'ci-github-actions',
+      action_kind: 'rerun_check',
+      idempotency_key: idempotencyKey,
+      expected_workspace_revision: '9',
+      receipt_correlation_digest: receiptCorrelationDigest,
+    }),
+  ]);
+  expect(JSON.stringify(reviewStore.handles)).not.toContain(confirmationDigest);
+  await expect(
+    gateway.confirmCheckRerun(preview, 'mobile-check-rerun-replay'),
+  ).rejects.toMatchObject({
+    category: 'review_confirmation_missing_or_replayed',
+  });
+  await expect(
+    gateway.reconcileReviewAction(idempotencyKey),
+  ).resolves.toMatchObject({
+    receipt: { outcome: 'completed', revision: 8n },
+    projectionRefreshRequired: true,
+  });
+  expect(reviewStore.handles).toEqual([]);
+  expect(adapter.pendingSteps).toBe(0);
+});
+
+test('restart recovery keeps accepted rerun custody correlated until terminal completion without replay', async () => {
+  const handle = correlatedRerunHandle();
+  const reviewStore = memoryReviewReceiptStore();
+  reviewStore.handles.push(handle);
+  const acceptedReceipt = {
+    schema: 'automonique.platform/review/v1' as const,
+    platform_version: 2n as const,
+    receipt_id: 'check-rerun-receipt-recovery',
+    action_id: 'check-rerun-action-recovery',
+    actor: handle.actor_id,
+    idempotency_key: IdempotencyKey(handle.idempotency_key),
+    outcome: 'accepted' as const,
+    reconciliation: 'poll_receipt' as const,
+    revision: null,
+    current_revision: null,
+  };
+  const { gateway, adapter } = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review_receipt',
+          lookup: {
+            project,
+            workspace: userWorkspaceIdentity,
+            idempotency_key: IdempotencyKey(handle.idempotency_key),
+            receipt_correlation_digest: rerunReceiptCorrelationDigest,
+          },
+        },
+        result: { kind: 'review_receipt', receipt: acceptedReceipt },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review_receipt',
+          lookup: {
+            project,
+            workspace: userWorkspaceIdentity,
+            idempotency_key: IdempotencyKey(handle.idempotency_key),
+            receipt_correlation_digest: rerunReceiptCorrelationDigest,
+          },
+        },
+        result: {
+          kind: 'review_receipt',
+          receipt: {
+            ...acceptedReceipt,
+            outcome: 'completed',
+            reconciliation: 'final',
+            revision: 8n,
+          },
+        },
+      },
+    ],
+    1_500,
+    memoryReceiptStore(),
+    reviewAuthorization(),
+    undefined,
+    authorizationDigest,
+    reviewStore,
+  );
+  await negotiate(gateway);
+  await expect(
+    gateway.reconcileReviewAction(handle.idempotency_key),
+  ).resolves.toMatchObject({
+    receipt: { outcome: 'accepted' },
+    projectionRefreshRequired: false,
+  });
+  expect(reviewStore.handles).toEqual([handle]);
+  await expect(
+    gateway.reconcileReviewAction(handle.idempotency_key),
+  ).resolves.toMatchObject({
+    receipt: { outcome: 'completed', revision: 8n },
+    projectionRefreshRequired: true,
+  });
+  expect(reviewStore.handles).toEqual([]);
+  expect(adapter.requests).toHaveLength(2);
+  expect(
+    adapter.requests.every(
+      (request) =>
+        request.kind === 'get_review_receipt' &&
+        request.lookup.receipt_correlation_digest ===
+          rerunReceiptCorrelationDigest,
+    ),
+  ).toBe(true);
+  expect(
+    adapter.requests.some(
+      (request) => request.kind === 'execute_review_action',
+    ),
+  ).toBe(false);
+  expect(adapter.pendingSteps).toBe(0);
+});
+
+test('partial correlated rerun handles fail before transport and never fall back to generic lookup', async () => {
+  const reviewStore = memoryReviewReceiptStore();
+  reviewStore.handles.push(
+    correlatedRerunHandle({ receipt_correlation_digest: null }),
+  );
+  const { gateway, adapter } = gatewayFor(
+    [],
+    1_500,
+    memoryReceiptStore(),
+    reviewAuthorization(),
+    undefined,
+    authorizationDigest,
+    reviewStore,
+  );
+  await expect(
+    gateway.reconcileReviewAction('mobile-check-rerun-recovery'),
+  ).rejects.toThrow('review_receipt_handle_invalid');
+  expect(adapter.requests).toEqual([]);
+  expect(adapter.pendingSteps).toBe(0);
+});
+
+test('refuses stale or ambiguous rerun capabilities before durable custody', async () => {
+  const snapshot = reviewSnapshotWithFailedCheck();
+  const check = snapshot.checks[0]!;
+  const reviewStore = memoryReviewReceiptStore();
+  const { gateway, adapter } = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(9n),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review',
+          request: { project, workspace: userWorkspaceIdentity },
+        },
+        result: { kind: 'review_result', review: snapshot },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review_capabilities',
+          request: { project, workspace: userWorkspaceIdentity },
+        },
+        result: {
+          kind: 'review_capabilities',
+          capabilities: {
+            schema: PLATFORM_SCHEMA_V2,
+            project,
+            workspace: userWorkspaceIdentity,
+            snapshot_revision: WorkContextRevision(7n),
+            workspace_revision: WorkContextRevision(8n),
+            rerunnable_checks: [
+              {
+                authority: check.authority,
+                check_id: check.id,
+                confirmation_digest: ReviewConfirmationDigest('ab'.repeat(32)),
+                receipt_correlation_digest: rerunReceiptCorrelationDigest,
+                expected_check_revision: WorkContextRevision(
+                  check.freshness.observed_revision,
+                ),
+              },
+            ],
+          },
+        },
+      },
+    ],
+    1_500,
+    memoryReceiptStore(),
+    reviewAuthorization(),
+    undefined,
+    authorizationDigest,
+    reviewStore,
+  );
+  await negotiate(gateway);
+  await gateway.loadProject(project);
+  await gateway.loadReview(project, userWorkspaceIdentity);
+  await expect(
+    gateway.previewCheckRerun(
+      project,
+      userWorkspaceIdentity,
+      9n,
+      7n,
+      check.id,
+      check.freshness.observed_revision,
+    ),
+  ).rejects.toMatchObject({ category: 'review_rerun_capability_stale' });
+  expect(reviewStore.handles).toEqual([]);
+  expect(adapter.pendingSteps).toBe(0);
+});
+
+test('rerun persistence failure is known never-started and invokes no provider mutation', async () => {
+  const snapshot = reviewSnapshotWithFailedCheck();
+  const check = snapshot.checks[0]!;
+  const put = jest.fn().mockRejectedValue(new Error('receipt_store_failed'));
+  const remove = jest.fn().mockResolvedValue(undefined);
+  const reviewStore: ReviewV2ReceiptStore = {
+    list: async () => [],
+    put,
+    remove,
+  };
+  const { gateway, adapter } = gatewayFor(
+    [
+      { lane: 'negotiation', result: negotiatedV2 },
+      projectSnapshotStep(9n),
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review',
+          request: { project, workspace: userWorkspaceIdentity },
+        },
+        result: { kind: 'review_result', review: snapshot },
+      },
+      {
+        lane: 'v2',
+        request: {
+          kind: 'get_review_capabilities',
+          request: { project, workspace: userWorkspaceIdentity },
+        },
+        result: {
+          kind: 'review_capabilities',
+          capabilities: {
+            schema: PLATFORM_SCHEMA_V2,
+            project,
+            workspace: userWorkspaceIdentity,
+            snapshot_revision: WorkContextRevision(7n),
+            workspace_revision: WorkContextRevision(9n),
+            rerunnable_checks: [
+              {
+                authority: check.authority,
+                check_id: check.id,
+                confirmation_digest: ReviewConfirmationDigest('ab'.repeat(32)),
+                receipt_correlation_digest: rerunReceiptCorrelationDigest,
+                expected_check_revision: WorkContextRevision(
+                  check.freshness.observed_revision,
+                ),
+              },
+            ],
+          },
+        },
+      },
+    ],
+    1_500,
+    memoryReceiptStore(),
+    reviewAuthorization(),
+    undefined,
+    authorizationDigest,
+    reviewStore,
+  );
+  await negotiate(gateway);
+  await gateway.loadProject(project);
+  await gateway.loadReview(project, userWorkspaceIdentity);
+  const prepared = await gateway.previewCheckRerun(
+    project,
+    userWorkspaceIdentity,
+    9n,
+    7n,
+    check.id,
+    check.freshness.observed_revision,
+  );
+  await expect(
+    gateway.confirmCheckRerun(prepared, 'mobile-rerun-never-started'),
+  ).rejects.toMatchObject({ category: 'review_action_not_submitted' });
+  expect(put).toHaveBeenCalledTimes(1);
+  expect(remove).not.toHaveBeenCalled();
+  expect(
+    adapter.requests.some(
+      (request) => request.kind === 'execute_review_action',
+    ),
+  ).toBe(false);
+  expect(adapter.pendingSteps).toBe(0);
+});
+
+test('keeps check rerun behind its three grants without widening direct review execution', async () => {
+  const legacyReviewAuthorization: DelegatedMobileV2Authorization = {
+    ...reviewAuthorization(),
+    actions: MOBILE_V2_ACTIONS.filter(
+      (action) =>
+        action !== 'get_review_capabilities' && action !== 'rerun_check',
+    ),
+  };
+  const legacy = gatewayFor(
+    [],
+    1_500,
+    memoryReceiptStore(),
+    legacyReviewAuthorization,
+    undefined,
+    authorizationDigest,
+    memoryReviewReceiptStore(),
+  );
+  expect(legacy.gateway.reviewEffectKinds).toEqual(
+    MOBILE_DIRECT_REVIEW_EFFECT_KINDS,
+  );
+  await expect(
+    legacy.gateway.previewCheckRerun(
+      project,
+      userWorkspaceIdentity,
+      9n,
+      7n,
+      'check-1',
+      5n,
+    ),
+  ).rejects.toMatchObject({ category: 'mobile_v2_action_unauthorized' });
+  expect(legacy.adapter.pendingSteps).toBe(0);
+
+  const rerunOnlyAuthorization: DelegatedMobileV2Authorization = {
+    ...reviewAuthorization(),
+    actions: MOBILE_V2_ACTIONS.filter(
+      (action) => action !== 'execute_review_action',
+    ),
+  };
+  expect(
+    gatewayFor(
+      [],
+      1_500,
+      memoryReceiptStore(),
+      rerunOnlyAuthorization,
+      undefined,
+      authorizationDigest,
+      memoryReviewReceiptStore(),
+    ).gateway.reviewEffectKinds,
+  ).toEqual(['rerun_check']);
+
+  const noReceiptAuthorization: DelegatedMobileV2Authorization = {
+    ...reviewAuthorization(),
+    actions: MOBILE_V2_ACTIONS.filter(
+      (action) => action !== 'get_review_receipt',
+    ),
+  };
+  expect(
+    gatewayFor(
+      [],
+      1_500,
+      memoryReceiptStore(),
+      noReceiptAuthorization,
+      undefined,
+      authorizationDigest,
+      memoryReviewReceiptStore(),
+    ).gateway.reviewEffectKinds,
+  ).toEqual([]);
+});
+
 test('every unsupported review family refuses before a request or durable handle', async () => {
   const snapshot = reviewSnapshot();
   const reviewStore = memoryReviewReceiptStore();
@@ -955,10 +1518,6 @@ test('every unsupported review family refuses before a request or durable handle
         proposal_id: 'proposal-1',
         resolution: 'keep_current',
       },
-    },
-    {
-      kind: 'rerun_check',
-      payload: { check_id: 'check-1', expected_check_revision: 1n },
     },
     {
       kind: 'open_pull_request',

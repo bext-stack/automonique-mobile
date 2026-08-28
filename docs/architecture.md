@@ -11,8 +11,9 @@ to one server profile. Cached profiles reopen stale and retain only
 `workspace_read`. The canonical Platform v2 SDK is now vendored and the
 production lifecycle constructs a generation-scoped authenticated v2 gateway.
 It negotiates v2 before reads, consumes exact project-root queries, exposes
-typed lineage and read-only review snapshots, and performs create/resume only
-through an ephemeral server preview and a separate confirmation. The
+typed lineage and read-only review snapshots, performs create/resume through
+an ephemeral server preview and separate confirmation, and admits check rerun
+only through an exact server capability preview plus a second confirmation. The
 `WorkspaceProvider` joins only typed Platform v2 relations into a durable
 catalog. Linear indexed selection applies coherent global ceilings to projects,
 hosts, workspaces, and retained sessions before strict admission; detail fanout
@@ -68,7 +69,7 @@ ProductionMobileProvider / MobileProvider / WorkspaceProvider
    │
    ├── WorkspaceV2Gateway ───────── @automonique/sdk Platform v2 over HTTPS
    │       negotiated reads, lineage, review reads, typed lifecycle preview,
-   │       explicit confirm/deny, and exact lineage cancellation
+   │       exact check-rerun capability/confirm, and lineage cancellation
    │
    ├── bounded read cache and reconciliation handles ── Async Storage
    ├── endpoint/profile metadata and message drafts ─── Async Storage
@@ -107,6 +108,13 @@ migration record. The expired grant is not returned as authority and cannot
 construct a gateway, while the primary refresh token remains available. A
 malformed optional grant or migration record is discarded without erasing an
 otherwise valid primary credential.
+Check-rerun capability previews require independent `get_review_capabilities`,
+`rerun_check`, and `get_review_receipt` grants. They bind the exact project,
+workspace revision, review revision, check revision, and CI authority. The
+server confirmation digest exists only in a frozen in-memory, single-use value;
+the durable handle includes it only inside the action hash. A cold restart can
+therefore reconcile by idempotency key but cannot reconstruct or replay the
+mutation.
 Canonical receipts must match their exact project-bound handle, intent/action
 digest, idempotency key, actor, authority, target revision, and resulting
 revision. Review receipt handles also retain the exact workspace and action
@@ -303,6 +311,10 @@ mutation queue never cross or live inside the mobile boundary.
   records the original canonical TypeScript Platform client and distribution
   repair. The mobile app consumes the CI-verified packed SDK archive until an
   authorized public registry release exists.
+- [Automonique PR #208](https://github.com/bext-stack/automonique/pull/208)
+  supplies the exact Platform v2 capability-preview and confirmed check-rerun
+  SDK methods vendored here from commit
+  `e7a099ed46f90880a6ff97b98fe146e17d8e5852`.
 - [Automonique #164](https://github.com/bext-stack/automonique/issues/164)
   delivered the retained-session Rust client helpers in Automonique PR #171.
   It did not change the TypeScript SDK's deterministic fixture from the source

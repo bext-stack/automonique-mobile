@@ -112,6 +112,9 @@ if (
   MOBILE_PLATFORM_V2_AUTHORIZATION_MEDIA_TYPE !==
     'application/vnd.automonique.mobile-platform-v2-authorization.v1+json' ||
   !MOBILE_PLATFORM_V2_ACTIONS.includes('get_mutation_receipt') ||
+  !MOBILE_PLATFORM_V2_ACTIONS.includes('get_review_capabilities') ||
+  !MOBILE_PLATFORM_V2_ACTIONS.includes('rerun_check') ||
+  !MOBILE_PLATFORM_V2_ACTIONS.includes('get_review_receipt') ||
   typeof MobileLifecycleClient !== 'function' ||
   typeof MobileLifecycleClient.prototype.grantPlatformV2 !== 'function' ||
   typeof MobileLifecycleClient.prototype.platformV2Authorization !==
@@ -121,6 +124,9 @@ if (
   typeof encodeMobilePlatformV2GrantRequest !== 'function' ||
   typeof mobilePlatformClientId !== 'function' ||
   typeof PlatformV2Client !== 'function' ||
+  typeof PlatformV2Client.prototype.getReviewCapabilities !== 'function' ||
+  typeof PlatformV2Client.prototype.executeConfirmedReviewAction !==
+    'function' ||
   typeof HttpsPlatformV2Transport !== 'function' ||
   Object.hasOwn(sdkRoot, 'PlatformV2CanonicalTestingTransport') ||
   Object.hasOwn(sdkTesting, 'PlatformV2CanonicalTestingTransport') ||

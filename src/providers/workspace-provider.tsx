@@ -45,6 +45,7 @@ import type {
   ReviewActionReconciliation,
   ReviewActionSubmission,
   ReadOnlyWorkspaceV2Gateway,
+  PreparedCheckRerun,
   PreparedWorkspaceMutation,
   WorkspaceLifecycleIntent,
   WorkspaceMutationConfirmation,
@@ -52,7 +53,10 @@ import type {
   WorkspaceV2Gateway,
 } from '@/core/workspace-v2-gateway';
 import type { WorkspaceV2ReceiptHandle } from '@/core/workspace-v2-receipts';
-import type { MobileSupportedReviewAction } from '@/core/mobile-review-effects';
+import type {
+  MobileDirectReviewAction,
+  MobileSupportedReviewAction,
+} from '@/core/mobile-review-effects';
 import type { SessionSummary } from '@/core/types';
 import type { ReviewV2ReceiptHandle } from '@/core/review-v2-receipts';
 import {
@@ -125,9 +129,21 @@ interface WorkspaceContextValue {
     readonly workspaceRevision: string;
     readonly reviewRevision: string;
     readonly authority: ReviewAuthority;
-    readonly action: MobileSupportedReviewAction;
+    readonly action: MobileDirectReviewAction;
     readonly idempotencyKey: string;
   }) => Promise<ReviewActionSubmission>;
+  readonly previewCheckRerun: (options: {
+    readonly projectId: string;
+    readonly workspaceId: string;
+    readonly workspaceRevision: string;
+    readonly reviewRevision: string;
+    readonly checkId: string;
+    readonly expectedCheckRevision: bigint;
+  }) => Promise<PreparedCheckRerun>;
+  readonly confirmCheckRerun: (
+    prepared: PreparedCheckRerun,
+    idempotencyKey: string,
+  ) => Promise<ReviewActionSubmission>;
   readonly reconcileReviewAction: (
     idempotencyKey: string,
   ) => Promise<ReviewActionReconciliation>;
@@ -969,7 +985,7 @@ export function WorkspaceProvider({
       readonly workspaceRevision: string;
       readonly reviewRevision: string;
       readonly authority: ReviewAuthority;
-      readonly action: MobileSupportedReviewAction;
+      readonly action: MobileDirectReviewAction;
       readonly idempotencyKey: string;
     }): Promise<ReviewActionSubmission> => {
       if (gateway === null || profile === null || reviewOperation.current) {
@@ -1015,6 +1031,124 @@ export function WorkspaceProvider({
               projectId: options.projectId,
               workspaceId: options.workspaceId,
               actionKind: options.action.kind,
+              receipt,
+            },
+            ...current.filter(
+              (projection) =>
+                projection.receipt.idempotency_key !== receipt.idempotency_key,
+            ),
+          ]);
+        }
+        await refresh();
+        return result;
+      } finally {
+        reviewOperation.current = false;
+        setReviewBusy(false);
+      }
+    },
+    [gateway, profile, refresh],
+  );
+
+  const previewCheckRerun = useCallback(
+    async (options: {
+      readonly projectId: string;
+      readonly workspaceId: string;
+      readonly workspaceRevision: string;
+      readonly reviewRevision: string;
+      readonly checkId: string;
+      readonly expectedCheckRevision: bigint;
+    }): Promise<PreparedCheckRerun> => {
+      if (gateway === null || profile === null || reviewOperation.current) {
+        throw new Error('review_mutation_unavailable');
+      }
+      const detail = detailsRef.current.find(
+        (candidate) =>
+          candidate.serverIdentity ===
+            gateway.authorizationScope.serverIdentity &&
+          candidate.workspaceId === options.workspaceId &&
+          candidate.workspaceRevision === options.workspaceRevision &&
+          candidate.review?.revision === options.reviewRevision,
+      );
+      const server = catalogRef.current.servers.find(
+        (candidate) =>
+          candidate.serverIdentity ===
+          gateway.authorizationScope.serverIdentity,
+      );
+      if (
+        statusRef.current.phase !== 'live' ||
+        server?.authorization !== 'active' ||
+        server.staleProjectIds.includes(options.projectId) ||
+        detail === undefined ||
+        !gateway.reviewEffectKinds.includes('rerun_check')
+      ) {
+        throw new Error('review_mutation_unavailable');
+      }
+      reviewOperation.current = true;
+      setReviewBusy(true);
+      try {
+        return await gateway.previewCheckRerun(
+          options.projectId,
+          { kind: 'user_workspace', id: UserWorkspaceId(options.workspaceId) },
+          BigInt(options.workspaceRevision),
+          BigInt(options.reviewRevision),
+          options.checkId,
+          options.expectedCheckRevision,
+        );
+      } finally {
+        reviewOperation.current = false;
+        setReviewBusy(false);
+      }
+    },
+    [gateway, profile],
+  );
+
+  const confirmCheckRerun = useCallback(
+    async (
+      prepared: PreparedCheckRerun,
+      idempotencyKey: string,
+    ): Promise<ReviewActionSubmission> => {
+      if (gateway === null || profile === null || reviewOperation.current) {
+        throw new Error('review_mutation_unavailable');
+      }
+      const detail = detailsRef.current.find(
+        (candidate) =>
+          candidate.serverIdentity ===
+            gateway.authorizationScope.serverIdentity &&
+          candidate.workspaceId ===
+            ('id' in prepared.workspace ? prepared.workspace.id : '') &&
+          candidate.workspaceRevision ===
+            prepared.workspaceRevision.toString() &&
+          candidate.review?.revision === prepared.snapshotRevision.toString(),
+      );
+      const server = catalogRef.current.servers.find(
+        (candidate) =>
+          candidate.serverIdentity ===
+          gateway.authorizationScope.serverIdentity,
+      );
+      if (
+        statusRef.current.phase !== 'live' ||
+        server?.authorization !== 'active' ||
+        server.staleProjectIds.includes(prepared.project) ||
+        detail === undefined ||
+        !gateway.reviewEffectKinds.includes('rerun_check')
+      ) {
+        throw new Error('review_mutation_unavailable');
+      }
+      reviewOperation.current = true;
+      setReviewBusy(true);
+      try {
+        const result = await gateway.confirmCheckRerun(
+          prepared,
+          idempotencyKey,
+        );
+        if (result.receipt !== null) {
+          const receipt = result.receipt;
+          setReviewReceipts((current) => [
+            {
+              projectId: prepared.project,
+              workspaceId:
+                'id' in prepared.workspace ? prepared.workspace.id : '',
+              actionKind: 'rerun_check',
               receipt,
             },
             ...current.filter(
@@ -1420,6 +1554,8 @@ export function WorkspaceProvider({
               detail.workspaceId === workspaceId,
           ) ?? null,
         executeReviewAction,
+        previewCheckRerun,
+        confirmCheckRerun,
         reconcileReviewAction,
         prepareWorkspaceMutation,
         confirmWorkspaceMutation,

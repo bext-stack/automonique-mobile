@@ -184,20 +184,25 @@ are never parsed for either.
 
 Workspace files, sanitized previews, and source-control summaries appear only
 after a current `get_review` grant returns the corresponding typed projection.
-The review surface additionally supports exact line-comment, approval, and
-single/batch retained-agent comment-delivery effects only when the current
-delegated grant exposes both review execution and receipt lookup. Every effect
-has a separate confirmation preview and a durable idempotency handle; the
-retained delivery handle stores no comment content or replayable provider
-payload. Cached, stale, revoked, or ambiguous state disables the matching
-mutation. Opt-in local notifications contain no review or session content, use
+The review surface additionally supports exact line-comment, approval,
+single/batch retained-agent comment delivery, and check rerun effects. Direct
+review effects require review execution plus receipt lookup. A check rerun
+instead requires the independent capability-read, rerun, and receipt grants;
+the app fetches the server's exact check/revision/CI-authority confirmation
+digest before it shows an inert preview. Confirmation is a separate single-use
+gesture. Every effect has a durable idempotency handle before transport
+custody; the handle stores only a hash of the action and confirmation digest,
+never the digest itself, comment content, or a replayable provider payload.
+Cached, stale, revoked, or ambiguous state disables the matching mutation.
+Opt-in local notifications contain no review or session content, use
 the configured Android channel, and their coordinates—including a cold-start
 response—are re-admitted against the current live projection before routing. A
 live refresh that discovers new attention while the process is in the
 background schedules the notification; an OS background-delivery source and
 authorized device evidence remain release gates rather than being inferred
 from foreground tests. Review payloads provide the exact
-server/authorization/principal/workspace/review and optional file/hunk anchor.
+server/authorization/principal/workspace/review and optional file/hunk or check
+anchor.
 Lineage-attention payloads provide only the exact typed orchestration identity
 and revision under that same scope. On tap, mobile looks that identity up in
 the current lineage and derives a session route only from the current typed
@@ -206,12 +211,12 @@ infers those session coordinates in notification data. A bounded content-free
 delivery ledger suppresses duplicates across killed-app launches and is purged
 for the server on credential revocation.
 
-Check rerun, pull-request update/merge, generic execute, and shell fallback
-remain unavailable. The mobile UI renders CI-rerun and pull-request
-open/update/merge as disabled typed controls with the production server's
+Pull-request update/merge, generic execute, and shell fallback remain
+unavailable. The mobile UI renders a check rerun as active only for an exact
+fresh terminal check and all three dedicated grants; pull-request
+open/update/merge remain disabled typed controls with the production server's
 explicit unavailable adapter category. The coarse `execute_review_action`
-grant is never treated as Git, CI, or pull-request authority, and selecting one
-of those rows cannot create a receipt handle or network request. Agent delivery
+grant is never treated as CI or pull-request authority. Agent delivery
 instead uses the review authority and server-bound retained-session adapter;
 it never exposes a generic provider-message destination.
 

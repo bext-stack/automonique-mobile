@@ -60,6 +60,7 @@ export interface ReviewDeepLinkRequest {
   readonly reviewRevision: string;
   readonly fileId: string | null;
   readonly hunkId: string | null;
+  readonly checkId?: string | null;
 }
 
 export interface SessionAttentionDeepLinkRequest {
@@ -94,6 +95,7 @@ export interface ReviewActionAvailability {
 export interface ReviewAttentionAnchor {
   readonly fileId: string | null;
   readonly hunkId: string | null;
+  readonly checkId: string | null;
 }
 
 function identityKey(value: {
@@ -374,7 +376,7 @@ export function reviewAttentionAnchor(
   review: ReviewSnapshot,
 ): ReviewAttentionAnchor {
   if (review.attention.reason === null) {
-    return { fileId: null, hunkId: null };
+    return { fileId: null, hunkId: null, checkId: null };
   }
   const selected = review.attention_events
     .filter((event) => event.reason === review.attention.reason)
@@ -393,15 +395,21 @@ export function reviewAttentionAnchor(
       return {
         fileId: comment.anchor.file_id,
         hunkId: comment.anchor.hunk_id,
+        checkId: null,
       };
     }
   }
   if (selected?.origin.kind === 'file' && selected.origin.id !== null) {
     return review.files.some((file) => file.id === selected.origin.id)
-      ? { fileId: selected.origin.id, hunkId: null }
-      : { fileId: null, hunkId: null };
+      ? { fileId: selected.origin.id, hunkId: null, checkId: null }
+      : { fileId: null, hunkId: null, checkId: null };
   }
-  return { fileId: null, hunkId: null };
+  if (selected?.origin.kind === 'check' && selected.origin.id !== null) {
+    return review.checks.some((check) => check.id === selected.origin.id)
+      ? { fileId: null, hunkId: null, checkId: selected.origin.id }
+      : { fileId: null, hunkId: null, checkId: null };
+  }
+  return { fileId: null, hunkId: null, checkId: null };
 }
 
 /** Never render an unsanitized hunk as source text. */
@@ -465,6 +473,17 @@ export function admitReviewDeepLink(
     destination: 'review',
     review_revision: request.reviewRevision,
   };
+  const checkId = request.checkId ?? null;
+  if (checkId !== null) {
+    if (
+      request.fileId !== null ||
+      request.hunkId !== null ||
+      !detail.review.snapshot.checks.some((check) => check.id === checkId)
+    ) {
+      throw new Error('review_navigation_not_authorized');
+    }
+    params.check = checkId;
+  }
   if (request.fileId === null) {
     if (request.hunkId !== null)
       throw new Error('review_navigation_not_authorized');
@@ -492,6 +511,11 @@ function actionAuthority(
     case 'send_comment_to_agent':
     case 'batch_send_comments_to_agent':
       return snapshot.review.authority;
+    case 'rerun_check':
+      return (
+        snapshot.checks.find((check) => check.id === action.payload.check_id)
+          ?.authority ?? null
+      );
     default:
       return null;
   }
@@ -510,7 +534,16 @@ export function reviewActionAvailability(options: {
   if (options.projectStale) return { enabled: false, reason: 'stale_project' };
   if (!options.exactReviewRevision)
     return { enabled: false, reason: 'review_not_current' };
-  if (!options.delegatedActions.includes('execute_review_action')) {
+  const rerun = options.action.kind === 'rerun_check';
+  if (
+    rerun
+      ? !['get_review_capabilities', 'rerun_check', 'get_review_receipt'].every(
+          (grant) => options.delegatedActions.includes(grant),
+        )
+      : !['execute_review_action', 'get_review_receipt'].every((grant) =>
+          options.delegatedActions.includes(grant),
+        )
+  ) {
     return { enabled: false, reason: 'action_not_delegated' };
   }
   if (
@@ -519,7 +552,22 @@ export function reviewActionAvailability(options: {
   ) {
     return { enabled: false, reason: 'effect_unavailable' };
   }
-  if (options.snapshot.review.freshness.state !== 'fresh') {
+  if (options.action.kind === 'rerun_check') {
+    const action = options.action;
+    const check = options.snapshot.checks.find(
+      (candidate) => candidate.id === action.payload.check_id,
+    );
+    if (check?.freshness.state !== 'fresh') {
+      return { enabled: false, reason: 'authority_stale' };
+    }
+    if (
+      !['passed', 'failed', 'cancelled'].includes(check.state) ||
+      check.freshness.observed_revision !==
+        action.payload.expected_check_revision
+    ) {
+      return { enabled: false, reason: 'target_already_settled' };
+    }
+  } else if (options.snapshot.review.freshness.state !== 'fresh') {
     return { enabled: false, reason: 'authority_stale' };
   }
   if (
