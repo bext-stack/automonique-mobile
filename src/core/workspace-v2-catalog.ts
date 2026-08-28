@@ -8,6 +8,10 @@ import type {
 
 import { decimalRevision } from './types';
 import {
+  projectReviewRenderSemantics,
+  type MobileReviewRenderSemantics,
+} from './review-render-semantics';
+import {
   MAX_WORKSPACES,
   MAX_WORKSPACE_HOSTS,
   MAX_WORKSPACE_PROJECTS,
@@ -33,7 +37,7 @@ export interface WorkspaceReviewFileProjection {
   readonly change: string;
   readonly worktree: string;
   readonly conflict: string;
-  readonly previewKind: string;
+  readonly previewKind: ReviewSnapshot['files'][number]['preview']['kind'];
   readonly sanitized: boolean;
   readonly hunks: readonly {
     readonly id: string;
@@ -47,14 +51,15 @@ export interface WorkspaceReviewFileProjection {
 
 export interface WorkspaceReviewProjection {
   readonly snapshot: ReviewSnapshot;
+  readonly semantics: MobileReviewRenderSemantics;
   readonly revision: string;
-  readonly attentionState: string;
+  readonly attentionState: ReviewSnapshot['attention']['state'];
   readonly unread: number;
   readonly files: readonly WorkspaceReviewFileProjection[];
-  readonly pullRequestState: string;
+  readonly pullRequestState: ReviewSnapshot['pull_request']['state'];
   readonly pullRequestId: string | null;
-  readonly reviewDecision: string;
-  readonly deliveryState: string;
+  readonly reviewDecision: ReviewSnapshot['review']['decision'];
+  readonly deliveryState: ReviewSnapshot['delivery']['state'];
   readonly attentionReason: string | null;
   readonly comments: ReviewSnapshot['comments'];
   readonly checks: ReviewSnapshot['checks'];
@@ -240,9 +245,14 @@ function boundedUnread(value: bigint): number {
   );
 }
 
-function reviewProjection(review: ReviewSnapshot): WorkspaceReviewProjection {
+function reviewProjection(
+  review: ReviewSnapshot,
+): WorkspaceReviewProjection | null {
+  const semantics = projectReviewRenderSemantics(review);
+  if (semantics === null) return null;
   return {
     snapshot: review,
+    semantics,
     revision: review.revision.toString(),
     attentionState: review.attention.state,
     unread: boundedUnread(review.attention.unread),
@@ -660,6 +670,7 @@ export async function buildWorkspaceServerCatalog(
     failedDetailCount += detail?.failures ?? 0;
     const review = detail?.review ?? null;
     const reviewRead = review === null ? null : reviewProjection(review);
+    if (review !== null && reviewRead === null) failedDetailCount += 1;
     details.push({
       serverIdentity: scope.serverIdentity as ServerIdentity,
       workspaceId,
@@ -678,7 +689,7 @@ export async function buildWorkspaceServerCatalog(
             },
           ]
         : []),
-      ...(review === null
+      ...(reviewRead === null
         ? []
         : [
             {
@@ -690,7 +701,7 @@ export async function buildWorkspaceServerCatalog(
               revision: decimalRevision(graph.workspace.revision.toString()),
             },
           ]),
-      ...(review?.files.some((file) => file.preview.kind !== 'none')
+      ...(reviewRead?.files.some((file) => file.previewKind !== 'none')
         ? [
             {
               destination: 'preview' as const,
@@ -698,7 +709,7 @@ export async function buildWorkspaceServerCatalog(
             },
           ]
         : []),
-      ...(review !== null && review.pull_request.id !== null
+      ...(reviewRead !== null && reviewRead.pullRequestId !== null
         ? [
             {
               destination: 'source_control' as const,

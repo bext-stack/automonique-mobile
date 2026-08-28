@@ -21,6 +21,7 @@ import {
   reviewActionAvailability,
   safeHunkPreview,
 } from '@/core/review-attention';
+import { projectReviewRenderSemantics } from '@/core/review-render-semantics';
 import {
   loadReviewDrafts,
   MAX_REVIEW_DRAFT_BYTES,
@@ -271,6 +272,7 @@ function ReviewControlSurface({
   const [confirmationBusy, setConfirmationBusy] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const snapshot = review.snapshot;
+  const renderSemantics = projectReviewRenderSemantics(snapshot);
   const scopedReceiptHandles = pendingReviewReceipts.filter(
     (handle) =>
       handle.project === workspace.projectId &&
@@ -505,16 +507,51 @@ function ReviewControlSurface({
   const approvePending = scopedReceiptHandles.some(
     (handle) => handle.action_kind === 'approve_review',
   );
+  if (renderSemantics === null) {
+    return (
+      <Text
+        accessibilityLabel="Review render semantics unavailable"
+        style={[styles.subtitle, { color: palette.warning }]}
+      >
+        Review unavailable: the server projection is not semantically coherent.
+      </Text>
+    );
+  }
   return (
     <View style={styles.reviewSurface}>
       <View style={styles.reviewSummary}>
         <Text style={[styles.value, { color: palette.text }]}>
-          {snapshot.attention.state.replaceAll('_', ' ')} · {review.unread}{' '}
-          unread
+          {renderSemantics.attention.semantic_key} · {review.unread} unread
         </Text>
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          Review revision {review.revision} · decision {review.reviewDecision} ·
-          authority freshness {snapshot.review.freshness.state}
+          {renderSemantics.attention.reason_key ?? 'No attention reason'} ·
+          source revision{' '}
+          {renderSemantics.attention.source_revision?.toString() ??
+            'not applicable'}
+        </Text>
+        <Text style={[styles.subtitle, { color: palette.textMuted }]}>
+          {renderSemantics.review.semantic_key} ·{' '}
+          {renderSemantics.review.freshness_key} · source revision{' '}
+          {renderSemantics.review.source_revision.toString()}
+        </Text>
+        {renderSemantics.checks.map((check) => (
+          <Text
+            key={check.id}
+            style={[styles.subtitle, { color: palette.textMuted }]}
+          >
+            {check.semantic_key} · {check.freshness_key} · source revision{' '}
+            {check.source_revision.toString()}
+          </Text>
+        ))}
+        <Text style={[styles.subtitle, { color: palette.textMuted }]}>
+          {renderSemantics.pull_request.semantic_key} ·{' '}
+          {renderSemantics.pull_request.freshness_key} · source revision{' '}
+          {renderSemantics.pull_request.source_revision.toString()}
+        </Text>
+        <Text style={[styles.subtitle, { color: palette.textMuted }]}>
+          {renderSemantics.delivery.semantic_key} ·{' '}
+          {renderSemantics.delivery.freshness_key} · source revision{' '}
+          {renderSemantics.delivery.source_revision.toString()}
         </Text>
       </View>
       {review.files.map((file) => (
@@ -533,6 +570,11 @@ function ReviewControlSurface({
           </Text>
           <Text style={[styles.subtitle, { color: palette.textMuted }]}>
             {file.change} · {file.worktree} · conflict {file.conflict}
+          </Text>
+          <Text style={[styles.subtitle, { color: palette.textMuted }]}>
+            {renderSemantics.previews.find((preview) => preview.id === file.id)
+              ?.semantic_key ?? 'Preview semantics unavailable'}{' '}
+            · source revision {renderSemantics.source_revision.toString()}
           </Text>
           {file.hunks.map((hunk) => {
             const preview = safeHunkPreview(hunk.preview, file.sanitized);
@@ -1313,6 +1355,10 @@ export default function WorkspaceDetailScreen() {
   }
 
   const destination = params.destination;
+  const renderSemantics =
+    detail?.review === null || detail?.review === undefined
+      ? null
+      : projectReviewRenderSemantics(detail.review.snapshot);
   let destinationAdmitted = destination === undefined;
   if (destination !== undefined) {
     try {
@@ -1388,7 +1434,7 @@ export default function WorkspaceDetailScreen() {
       </Section>
 
       <View style={styles.twoColumn}>
-        <Section title="External task status">
+        <Section title="External work item">
           {workspace.externalWorkItem === null ? (
             <Text style={[styles.subtitle, { color: palette.textMuted }]}>
               No typed external work item was reported.
@@ -1403,7 +1449,7 @@ export default function WorkspaceDetailScreen() {
                 {workspace.externalWorkItem.title}
               </Text>
               <Text style={[styles.statusValue, { color: palette.text }]}>
-                {workspace.externalWorkItem.status}
+                External work status: {workspace.externalWorkItem.status}
               </Text>
             </>
           )}
@@ -1559,25 +1605,46 @@ export default function WorkspaceDetailScreen() {
               </Text>
             )
           ) : destination === 'preview' ? (
-            detail.review?.files
-              .filter((file) => file.previewKind !== 'none')
-              .map((file) => (
-                <Text key={file.id} style={{ color: palette.text }}>
-                  {file.path} · {file.previewKind} ·{' '}
-                  {file.sanitized ? 'sanitized' : 'not sanitized'}
-                </Text>
-              ))
+            renderSemantics === null ? (
+              <Text style={{ color: palette.warning }}>
+                Preview semantics unavailable.
+              </Text>
+            ) : (
+              detail.review?.files
+                .filter((file) => file.previewKind !== 'none')
+                .map((file) => {
+                  const preview = renderSemantics.previews.find(
+                    (candidate) => candidate.id === file.id,
+                  );
+                  return preview === undefined ? null : (
+                    <Text key={file.id} style={{ color: palette.text }}>
+                      {file.path} · {preview.semantic_key} · source revision{' '}
+                      {preview.source_revision.toString()}
+                    </Text>
+                  );
+                })
+            )
           ) : destination === 'source_control' ? (
-            <>
-              <Text style={{ color: palette.text }}>
-                Pull request: {detail.review?.pullRequestId ?? 'not reported'}
+            renderSemantics === null ? (
+              <Text style={{ color: palette.warning }}>
+                Source-control semantics unavailable.
               </Text>
-              <Text style={{ color: palette.textMuted }}>
-                State: {detail.review?.pullRequestState} · review:{' '}
-                {detail.review?.reviewDecision} · delivery:{' '}
-                {detail.review?.deliveryState}
-              </Text>
-            </>
+            ) : (
+              <>
+                <Text style={{ color: palette.text }}>
+                  Pull request: {detail.review?.pullRequestId ?? 'not reported'}
+                </Text>
+                <Text style={{ color: palette.textMuted }}>
+                  {renderSemantics.pull_request.semantic_key} ·{' '}
+                  {renderSemantics.pull_request.freshness_key} · source revision{' '}
+                  {renderSemantics.pull_request.source_revision.toString()}
+                </Text>
+                <Text style={{ color: palette.textMuted }}>
+                  {renderSemantics.review.semantic_key} ·{' '}
+                  {renderSemantics.delivery.semantic_key}
+                </Text>
+              </>
+            )
           ) : destination === 'review' && detail.review !== null ? (
             (() => {
               let exactReviewRoute = false;

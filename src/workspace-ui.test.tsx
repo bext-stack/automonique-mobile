@@ -84,7 +84,33 @@ const reviewSnapshot = {
       unread: 2n,
     },
   ],
-  files: [],
+  files: [
+    {
+      id: 'file-1',
+      path: 'src/typed.ts',
+      change: 'modified',
+      conflict: 'none',
+      worktree: 'unstaged',
+      preview: {
+        byte_size: 20n,
+        height: null,
+        kind: 'text',
+        media_type: 'text/plain',
+        sanitized: true,
+        width: null,
+      },
+      hunks: [
+        {
+          id: 'hunk-1',
+          old_start: 1n,
+          old_lines: 1n,
+          new_start: 1n,
+          new_lines: 1n,
+          preview: '-old\n+new',
+        },
+      ],
+    },
+  ],
   checks: [],
   comments: [],
   proposals: [],
@@ -463,6 +489,33 @@ test('unsupported typed review families stay inert with exact adapter categories
     review_revision: detail.review.revision,
   };
   const view = await render(<WorkspaceDetailScreen />);
+  expect(view.getByText(/attention\.needs_you · 2 unread/)).toBeTruthy();
+  expect(
+    view.getByText(/attention_reason\.approval_required · source revision 3/),
+  ).toBeTruthy();
+  expect(
+    view.getByText(
+      /review\.changes_requested · freshness\.fresh · source revision 3/,
+    ),
+  ).toBeTruthy();
+  expect(
+    view.getByText(
+      /check\.failed\.required · freshness\.fresh · source revision 5/,
+    ),
+  ).toBeTruthy();
+  expect(
+    view.getByText(
+      /pull_request\.open\.ready · freshness\.fresh · source revision 1/,
+    ),
+  ).toBeTruthy();
+  expect(
+    view.getByText(
+      /delivery\.not_delivered · freshness\.fresh · source revision 1/,
+    ),
+  ).toBeTruthy();
+  expect(
+    view.getByText(/preview\.text\.sanitized · source revision 7/),
+  ).toBeTruthy();
   const expectations = [
     [
       'Batch send comments to agent',
@@ -511,6 +564,41 @@ test('attention truthfully separates local exact deep links from unavailable pus
   expect(
     view.getByText(/exact, revalidated workspace coordinates/),
   ).toBeTruthy();
+});
+
+test('attention renders idle as idle with no invented source revision', async () => {
+  const base = workspaceValue();
+  const idleSnapshot = {
+    ...detail.review.snapshot,
+    attention: {
+      reason: null,
+      source_revision: null,
+      state: 'idle',
+      unread: 0n,
+    },
+  };
+  const idleDetail = {
+    ...detail,
+    review: {
+      ...detail.review,
+      snapshot: idleSnapshot,
+      attentionState: 'idle',
+      attentionReason: null,
+      unread: 0,
+    },
+  };
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    details: [idleDetail],
+    notificationPermission: 'denied',
+    requestReviewNotificationPermission: jest.fn(),
+  });
+  const view = await render(<AttentionScreen />);
+  expect(view.getByText('Idle')).toBeTruthy();
+  expect(
+    view.getByText(/attention\.idle · source revision not applicable/),
+  ).toBeTruthy();
+  expect(view.queryByText('Done')).toBeNull();
 });
 
 test('workspace review refuses a full gateway selected for another server', async () => {
@@ -927,7 +1015,8 @@ test('workspace detail exposes exact retained chat while mutations and terminal 
   const view = await render(<WorkspaceDetailScreen />);
   await waitFor(() => expect(AsyncStorage.getItem).toHaveBeenCalled());
 
-  expect(view.getByText('External task status')).toBeTruthy();
+  expect(view.getByText('External work item')).toBeTruthy();
+  expect(view.getByText('External work status: open')).toBeTruthy();
   expect(view.getByText('Orchestration status')).toBeTruthy();
   expect(view.getByText('Branch: feat/workspace-companion-34')).toBeTruthy();
   expect(view.getByLabelText(/Terminal, unavailable/)).toBeDisabled();
