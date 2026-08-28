@@ -1737,6 +1737,94 @@ export function rotateCredentialRegistryConnection(
   });
 }
 
+/** Replace only one slot's server-issued workspace grant in a new shadow. */
+export function saveCredentialRegistryWorkspaceAuthorization(
+  slotId: string,
+  value: DelegatedMobileV2Authorization | undefined,
+  now = Date.now(),
+): Promise<ScopedConnection> {
+  return withRegistryLock(async () => {
+    if (!isSlotId(slotId)) throw new Error('credential_registry_slot_invalid');
+    if (!(await secureStoreAvailable()))
+      throw new Error('secure_store_unavailable');
+    await recoverRegistryJournal();
+    const manifest = await readManifest();
+    const previousSlot = manifest.slots.find((slot) => slot.slotId === slotId);
+    if (previousSlot === undefined)
+      throw new Error('credential_registry_slot_missing');
+    const encoded = await SecureStore.getItemAsync(
+      slotKey(slotId, previousSlot.activeShadow),
+    );
+    if (encoded === null)
+      throw new Error('credential_registry_recovery_required');
+    const previous = await admitPersistedSlot(encoded, previousSlot, now);
+    const workspaceAuthorization =
+      value === undefined
+        ? undefined
+        : admitWorkspaceAuthorization(
+            persistWorkspaceAuthorization(value),
+            previous.connection.authorization,
+            now,
+          );
+    const workspaceReceiptMigration =
+      workspaceAuthorization === undefined
+        ? undefined
+        : await deriveMobileV2ReceiptMigrationMetadata(
+            workspaceAuthorization,
+            expectedWorkspaceAuthorization(
+              previous.connection.authorization,
+              now,
+            ),
+          );
+    const {
+      workspaceAuthorization: _previousAuthorization,
+      workspaceReceiptMigration: _previousMigration,
+      ...base
+    } = previous.connection;
+    const connection: ScopedConnection =
+      workspaceAuthorization === undefined ||
+      workspaceReceiptMigration === undefined
+        ? base
+        : { ...base, workspaceAuthorization, workspaceReceiptMigration };
+    const shadow: CredentialShadow =
+      previousSlot.activeShadow === 'a' ? 'b' : 'a';
+    const generation = incrementDecimal(previousSlot.generation);
+    const slot: CredentialSlotManifest = {
+      ...previousSlot,
+      activeShadow: shadow,
+      generation,
+    };
+    const nextManifest: CredentialRegistryManifest = {
+      ...manifest,
+      revision: incrementDecimal(manifest.revision),
+      slots: manifest.slots.map((entry) =>
+        entry.slotId === slotId ? slot : entry,
+      ),
+    };
+    await commitRegistryJournal(
+      {
+        schema: REGISTRY_JOURNAL_SCHEMA,
+        operation: 'write',
+        previousManifest: manifest,
+        nextManifest,
+        target: { slotId, shadow, generation },
+        cleanupSlotIds: [],
+      },
+      {
+        schema: REGISTRY_SLOT_SCHEMA,
+        slotId,
+        generation,
+        connection: persistedConnectionFor(connection),
+      },
+    );
+    await writePublicRegistryMirror(
+      nextManifest,
+      await loadManifestSlots(nextManifest, now),
+    );
+    return connection;
+  });
+}
+
 /** Select the one credential allowed to issue mutations; this never unions scope. */
 export function selectCredentialRegistryMutationSlot(
   slotId: string,

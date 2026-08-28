@@ -138,8 +138,13 @@ beforeEach(() => {
   mockRouteParams = { id: 'session-synthetic-001' };
   mockUseMobileLifecycle.mockReturnValue({
     state: { phase: 'unpaired', profile: null },
+    servers: [],
+    selectedMutationSlotId: null,
     refreshCredential: jest.fn(),
+    refreshServer: jest.fn(),
     revokeCredential: jest.fn(),
+    revokeServer: jest.fn(),
+    selectServer: jest.fn(),
     pair: mockPair,
   });
 });
@@ -357,6 +362,69 @@ test('settings renders protocol identity imported from the vendored SDK', async 
   expect(view.getByText('automonique.platform/v1 · protocol v1')).toBeTruthy();
   expect(view.getByText('automonique.platform')).toBeTruthy();
   expect(AsyncStorage.getItem).toHaveBeenCalled();
+});
+
+test('settings inventories independent servers and explicitly changes mutation selection', async () => {
+  const selectServer = jest.fn(async () => undefined);
+  const revokeServer = jest.fn(async () => undefined);
+  const firstProfile = {
+    origin: 'https://one.example.test',
+    platformEndpoint: 'https://one.example.test/api/platform',
+    serverIdentity: `sha256:${'1'.repeat(64)}`,
+    credentialId: 'credential-one',
+    actor: 'operator-one',
+    issuedAtMs: '1',
+    accessExpiresAtMs: '9999999999999',
+    authorizationRevision: '1',
+    credentialRevision: '1',
+    actions: ['attach'],
+    sessionScope: ['session-one'],
+    maxPageEvents: 100,
+    maxFollowUpBytes: 4096,
+  };
+  const secondProfile = {
+    ...firstProfile,
+    origin: 'https://two.example.test',
+    platformEndpoint: 'https://two.example.test/api/platform',
+    serverIdentity: `sha256:${'2'.repeat(64)}`,
+    credentialId: 'credential-two',
+    actor: 'operator-two',
+    sessionScope: ['session-two'],
+  };
+  mockUseMobile.mockReturnValue(mobileValue(['attach'], { synthetic: false }));
+  mockUseMobileLifecycle.mockReturnValue({
+    state: { phase: 'ready', profile: firstProfile },
+    servers: [
+      {
+        slotId: 'slot-one',
+        selected: true,
+        state: { phase: 'ready', profile: firstProfile },
+      },
+      {
+        slotId: 'slot-two',
+        selected: false,
+        state: { phase: 'ready', profile: secondProfile },
+      },
+    ],
+    selectedMutationSlotId: 'slot-one',
+    refreshCredential: jest.fn(),
+    refreshServer: jest.fn(),
+    revokeCredential: jest.fn(),
+    revokeServer,
+    selectServer,
+    pair: mockPair,
+  });
+
+  const view = await render(<SettingsScreen />);
+  expect(view.getByLabelText('Automonique server inventory')).toBeTruthy();
+  expect(view.getByText('https://one.example.test')).toBeTruthy();
+  expect(view.getByText('https://two.example.test')).toBeTruthy();
+  await fireEvent.press(
+    view.getByLabelText('Select https://two.example.test for commands'),
+  );
+  await waitFor(() => expect(selectServer).toHaveBeenCalledWith('slot-two'));
+  await fireEvent.press(view.getByLabelText('Revoke https://two.example.test'));
+  await waitFor(() => expect(revokeServer).toHaveBeenCalledWith('slot-two'));
 });
 
 test('an oversized endpoint draft is removed before display', async () => {

@@ -54,8 +54,17 @@ function normalizeEndpointForDisplay(value: string): string {
 
 export default function SettingsScreen() {
   const { snapshot } = useMobile();
-  const { state, pair, refreshCredential, revokeCredential } =
-    useMobileLifecycle();
+  const {
+    state,
+    servers,
+    selectedMutationSlotId,
+    pair,
+    refreshCredential,
+    refreshServer,
+    revokeCredential,
+    revokeServer,
+    selectServer,
+  } = useMobileLifecycle();
   const palette = usePalette();
   const checkController = useRef<AbortController | null>(null);
   const [endpoint, setEndpoint] = useState('https://');
@@ -69,14 +78,15 @@ export default function SettingsScreen() {
   );
   const [scannerVisible, setScannerVisible] = useState(false);
   const [scannerGeneration, setScannerGeneration] = useState(0);
+  const [addingServer, setAddingServer] = useState(false);
   const [serverCheck, setServerCheck] = useState<ServerCheck>({
     phase: 'idle',
   });
   const transportLabel = snapshot.connection.synthetic
     ? 'Synthetic fixture through the mobile gateway'
     : `${snapshot.connection.phase === 'live' ? 'Live' : 'Read-only'} ${AUTOMONIQUE_SDK_METADATA.packageName} transport`;
-  const needsSetup =
-    state.phase === 'unpaired' || state.phase === 'recovery_required';
+  const needsSetup = servers.length === 0;
+  const showPairing = needsSetup || addingServer;
 
   useEffect(() => {
     void (async () => {
@@ -158,9 +168,8 @@ export default function SettingsScreen() {
     setLifecycleBusy(true);
     try {
       await pair(offer);
-      setMessage(
-        `Connected to ${offer.origin}. The one-time invite was cleared.`,
-      );
+      setAddingServer(false);
+      setMessage(`Added ${offer.origin}. The one-time invite was cleared.`);
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : 'mobile_pairing_failed',
@@ -199,6 +208,48 @@ export default function SettingsScreen() {
     }
   }
 
+  async function selectAccess(slotId: string) {
+    setLifecycleBusy(true);
+    try {
+      await selectServer(slotId);
+      setMessage('Selected this server for scoped commands and mutations.');
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : 'credential_select_failed',
+      );
+    } finally {
+      setLifecycleBusy(false);
+    }
+  }
+
+  async function refreshServerAccess(slotId: string) {
+    setLifecycleBusy(true);
+    try {
+      await refreshServer(slotId);
+      setMessage('Secure access refreshed for this server.');
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : 'credential_refresh_failed',
+      );
+    } finally {
+      setLifecycleBusy(false);
+    }
+  }
+
+  async function revokeServerAccess(slotId: string) {
+    setLifecycleBusy(true);
+    try {
+      await revokeServer(slotId);
+      setMessage('That server credential was revoked; other servers remain.');
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : 'credential_revoke_failed',
+      );
+    } finally {
+      setLifecycleBusy(false);
+    }
+  }
+
   return (
     <Screen showConnectionBanner={!needsSetup}>
       <PairingScanner
@@ -216,16 +267,130 @@ export default function SettingsScreen() {
           accessibilityRole="header"
           style={[styles.title, { color: palette.text }]}
         >
-          {needsSetup ? 'Connect your server' : 'Your Automonique server'}
+          {needsSetup ? 'Connect your server' : 'Your Automonique servers'}
         </Text>
         <Text style={[styles.copy, { color: palette.textMuted }]}>
           {needsSetup
             ? 'Use your existing self-hosted installation. The app verifies its public mobile API, then accepts a short-lived invite created by your server.'
-            : 'This phone has scoped access to the server, sessions, and actions listed below.'}
+            : 'Each server keeps an independent credential. Exactly one selected server can receive commands.'}
         </Text>
       </View>
 
-      {needsSetup && (
+      {servers.length > 0 && (
+        <View
+          accessibilityLabel="Automonique server inventory"
+          style={[
+            styles.card,
+            { backgroundColor: palette.surface, borderColor: palette.border },
+          ]}
+        >
+          <Text style={[styles.cardTitle, { color: palette.text }]}>
+            Servers
+          </Text>
+          <Text style={[styles.copy, { color: palette.textMuted }]}>
+            Read-only discovery runs independently for each ready server. Only
+            the explicitly selected credential can authorize commands.
+          </Text>
+          {servers.map((server) => {
+            const profile = server.state.profile;
+            const selected = server.slotId === selectedMutationSlotId;
+            return (
+              <View
+                accessibilityLabel={`Server credential ${profile?.origin ?? server.slotId}`}
+                key={server.slotId}
+                style={[
+                  styles.serverRow,
+                  {
+                    borderColor: selected ? palette.accent : palette.border,
+                    backgroundColor: palette.surfaceMuted,
+                  },
+                ]}
+              >
+                <View style={styles.serverHeading}>
+                  <Text style={[styles.label, { color: palette.text }]}>
+                    {profile?.origin ?? 'Credential recovery required'}
+                  </Text>
+                  <Text style={[styles.status, { color: palette.textMuted }]}>
+                    {selected ? 'Selected for commands' : 'Read-only inventory'}
+                    {' · '}
+                    {server.state.phase.replaceAll('_', ' ')}
+                  </Text>
+                  {profile !== null && (
+                    <Text
+                      selectable
+                      style={[styles.digest, { color: palette.textMuted }]}
+                    >
+                      {shortIdentity(profile.serverIdentity)} ·{' '}
+                      {profile.credentialId}
+                    </Text>
+                  )}
+                </View>
+                {!selected && profile !== null && (
+                  <Pressable
+                    accessibilityLabel={`Select ${profile.origin} for commands`}
+                    accessibilityRole="button"
+                    disabled={lifecycleBusy}
+                    onPress={() => void selectAccess(server.slotId)}
+                    style={[
+                      styles.secondaryButton,
+                      { borderColor: palette.border },
+                    ]}
+                  >
+                    <Text style={{ color: palette.text, fontWeight: '800' }}>
+                      Select for commands
+                    </Text>
+                  </Pressable>
+                )}
+                {server.state.phase === 'refresh_required' && (
+                  <Pressable
+                    accessibilityLabel={`Refresh ${profile?.origin ?? 'server'} access`}
+                    accessibilityRole="button"
+                    disabled={lifecycleBusy}
+                    onPress={() => void refreshServerAccess(server.slotId)}
+                    style={[styles.button, { backgroundColor: palette.accent }]}
+                  >
+                    <Text
+                      style={{ color: palette.accentText, fontWeight: '800' }}
+                    >
+                      Refresh access
+                    </Text>
+                  </Pressable>
+                )}
+                {profile !== null && (
+                  <Pressable
+                    accessibilityLabel={`Revoke ${profile.origin}`}
+                    accessibilityRole="button"
+                    disabled={lifecycleBusy}
+                    onPress={() => void revokeServerAccess(server.slotId)}
+                    style={[
+                      styles.secondaryButton,
+                      { borderColor: palette.border },
+                    ]}
+                  >
+                    <Text style={{ color: palette.text, fontWeight: '800' }}>
+                      Revoke this server
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+            );
+          })}
+          {!addingServer && servers.length < 8 && (
+            <Pressable
+              accessibilityRole="button"
+              disabled={lifecycleBusy}
+              onPress={() => setAddingServer(true)}
+              style={[styles.button, { backgroundColor: palette.accent }]}
+            >
+              <Text style={{ color: palette.accentText, fontWeight: '800' }}>
+                Add another server
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+
+      {showPairing && (
         <>
           <View
             style={[
@@ -238,6 +403,24 @@ export default function SettingsScreen() {
               title="Check your server"
               copy="Enter the public HTTPS origin in front of Automonique. No admin credential is requested or sent by this check."
             />
+            {!needsSetup && (
+              <Pressable
+                accessibilityRole="button"
+                disabled={lifecycleBusy}
+                onPress={() => {
+                  setAddingServer(false);
+                  setPendingOffer(null);
+                }}
+                style={[
+                  styles.secondaryButton,
+                  { borderColor: palette.border },
+                ]}
+              >
+                <Text style={{ color: palette.text, fontWeight: '800' }}>
+                  Cancel adding server
+                </Text>
+              </Pressable>
+            )}
             <TextInput
               accessibilityLabel="Automonique HTTPS endpoint"
               autoCapitalize="none"
@@ -628,6 +811,8 @@ const styles = StyleSheet.create({
   copy: { fontSize: 14, lineHeight: 21 },
   card: { borderWidth: 1, borderRadius: 18, padding: 16, gap: 14 },
   cardTitle: { fontSize: 17, lineHeight: 22, fontWeight: '800' },
+  serverRow: { borderWidth: 1, borderRadius: 14, padding: 13, gap: 10 },
+  serverHeading: { gap: 4 },
   label: { fontSize: 14, fontWeight: '800' },
   stepHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   step: {

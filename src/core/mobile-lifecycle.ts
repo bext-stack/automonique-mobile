@@ -15,6 +15,7 @@ import {
   saveWorkspaceAuthorization,
   type ConnectionProfile,
   type ScopedConnection,
+  type StoredConnection,
 } from './credential-store';
 import { negotiateMobileProtocolVersion } from './negotiation';
 import { createAuthorizedHttpsGateway } from './sdk-gateway';
@@ -29,6 +30,7 @@ import {
   mobileV2AuthorizationDigest,
   mobileV2AuthorizationFingerprint,
   mobileV2DelegationFamilyDigest,
+  type DelegatedMobileV2Authorization,
 } from './mobile-v2-authorization';
 import {
   createWorkspaceV2ReceiptStore,
@@ -76,7 +78,34 @@ export interface MobileLifecycleDependencies {
   ) => Promise<LifecycleClient>;
   readonly fetcher?: typeof fetch;
   readonly now?: () => number;
+  readonly credentialStore?: MobileLifecycleCredentialStore;
 }
+
+export interface MobileLifecycleCredentialStore {
+  load(now: number): Promise<StoredConnection | null>;
+  saveIssued(
+    discovery: Pick<
+      MobileDiscovery,
+      'origin' | 'platform_endpoint' | 'server_identity'
+    >,
+    issued: IssuedMobileCredentials,
+    now: number,
+    previous?: ScopedConnection,
+  ): Promise<ScopedConnection>;
+  saveWorkspaceAuthorization(
+    connection: ScopedConnection,
+    value: DelegatedMobileV2Authorization | undefined,
+    now: number,
+  ): Promise<ScopedConnection>;
+  revoke(): Promise<void>;
+}
+
+const LEGACY_CREDENTIAL_STORE: MobileLifecycleCredentialStore = {
+  load: loadStoredConnection,
+  saveIssued: saveIssuedConnection,
+  saveWorkspaceAuthorization,
+  revoke: revokeLocalCredential,
+};
 
 type Listener = (state: MobileLifecycleState) => void;
 
@@ -257,6 +286,27 @@ function workspaceAuthorizationInvalid(error: unknown): boolean {
   );
 }
 
+function combineAbortSignals(
+  requestSignal: AbortSignal | null | undefined,
+  generationSignal: AbortSignal,
+): { readonly signal: AbortSignal; readonly dispose: () => void } {
+  if (requestSignal === null || requestSignal === undefined) {
+    return { signal: generationSignal, dispose: () => undefined };
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  requestSignal.addEventListener('abort', abort, { once: true });
+  generationSignal.addEventListener('abort', abort, { once: true });
+  if (requestSignal.aborted || generationSignal.aborted) abort();
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      requestSignal.removeEventListener('abort', abort);
+      generationSignal.removeEventListener('abort', abort);
+    },
+  };
+}
+
 function admitCurrentWorkspaceAuthorization(
   connection: ScopedConnection,
   now: number,
@@ -298,6 +348,7 @@ export class MobileLifecycleCoordinator {
   >;
   private readonly fetcher: typeof fetch;
   private readonly now: () => number;
+  private readonly credentialStore: MobileLifecycleCredentialStore;
   private readonly listeners = new Set<Listener>();
   private state: MobileLifecycleState = { phase: 'loading', profile: null };
   private connection: ScopedConnection | null = null;
@@ -312,6 +363,8 @@ export class MobileLifecycleCoordinator {
     this.discover = dependencies.discover ?? MobileLifecycleClient.discover;
     this.fetcher = dependencies.fetcher ?? fetch;
     this.now = dependencies.now ?? Date.now;
+    this.credentialStore =
+      dependencies.credentialStore ?? LEGACY_CREDENTIAL_STORE;
   }
 
   snapshot(): MobileLifecycleState {
@@ -371,6 +424,14 @@ export class MobileLifecycleCoordinator {
     return this.state;
   }
 
+  /** Abort every issued gateway without deleting or combining this slot. */
+  invalidateGateways(): MobileLifecycleState {
+    if (this.connection === null) return this.state;
+    this.replaceGeneration();
+    this.publishCredentialState(this.connection);
+    return this.state;
+  }
+
   private replaceGeneration(): {
     readonly generation: number;
     readonly signal: AbortSignal;
@@ -420,9 +481,9 @@ export class MobileLifecycleCoordinator {
   private async hydrateExclusive(): Promise<MobileLifecycleState> {
     const operation = this.replaceGeneration();
     this.publish({ phase: 'loading', profile: null });
-    let stored: Awaited<ReturnType<typeof loadStoredConnection>>;
+    let stored: StoredConnection | null;
     try {
-      stored = await loadStoredConnection(this.now());
+      stored = await this.credentialStore.load(this.now());
     } catch (error) {
       if (this.isCurrent(operation.generation)) {
         this.connection = null;
@@ -470,7 +531,7 @@ export class MobileLifecycleCoordinator {
           operation.signal,
         );
         if (!this.isCurrent(operation.generation)) return this.state;
-        connection = await saveWorkspaceAuthorization(
+        connection = await this.credentialStore.saveWorkspaceAuthorization(
           connection,
           workspaceAuthorization,
           this.now(),
@@ -547,7 +608,7 @@ export class MobileLifecycleCoordinator {
         operation.signal,
       );
       exchanged = true;
-      let connection = await saveIssuedConnection(
+      let connection = await this.credentialStore.saveIssued(
         client.discovery,
         issued,
         this.now(),
@@ -559,7 +620,7 @@ export class MobileLifecycleCoordinator {
           this.now(),
           operation.signal,
         );
-        connection = await saveWorkspaceAuthorization(
+        connection = await this.credentialStore.saveWorkspaceAuthorization(
           connection,
           workspaceAuthorization,
           this.now(),
@@ -611,10 +672,42 @@ export class MobileLifecycleCoordinator {
 
   createGateway(): MobileAutomoniqueGateway {
     if (this.connection === null) throw new Error('mobile_pairing_required');
+    if (this.state.phase !== 'ready' || this.activeController === null) {
+      throw new Error('mobile_credential_unavailable');
+    }
+    const generation = this.generation;
+    const generationSignal = this.activeController.signal;
+    const connection = this.connection;
     const authorization = this.connection.authorization;
     const expectedFingerprint = gatewayFingerprint(this.connection);
+    const admitGeneration = (): void => {
+      if (
+        generationSignal.aborted ||
+        this.state.phase !== 'ready' ||
+        this.replacementPending > 0 ||
+        this.connection !== connection ||
+        this.generation !== generation ||
+        gatewayFingerprint(connection) !== expectedFingerprint
+      ) {
+        throw new Error('gateway_generation_replaced');
+      }
+    };
     const lifecycleFetcher: typeof fetch = async (input, init) => {
-      const response = await this.fetcher(input, init);
+      admitGeneration();
+      const combined = combineAbortSignals(init?.signal, generationSignal);
+      let response: Response;
+      try {
+        response = await this.fetcher(input, {
+          ...init,
+          signal: combined.signal,
+        });
+      } catch (error) {
+        admitGeneration();
+        throw error;
+      } finally {
+        combined.dispose();
+      }
+      admitGeneration();
       if (
         (response.status === 401 ||
           response.status === 403 ||
@@ -639,12 +732,7 @@ export class MobileLifecycleCoordinator {
       now: this.now(),
       token: async () => {
         const token = await this.accessToken();
-        if (
-          this.connection === null ||
-          gatewayFingerprint(this.connection) !== expectedFingerprint
-        ) {
-          throw new Error('gateway_generation_replaced');
-        }
+        admitGeneration();
         return token;
       },
     });
@@ -784,7 +872,7 @@ export class MobileLifecycleCoordinator {
       );
       let rotated: ScopedConnection;
       try {
-        rotated = await saveIssuedConnection(
+        rotated = await this.credentialStore.saveIssued(
           client.discovery,
           issued,
           this.now(),
@@ -797,7 +885,7 @@ export class MobileLifecycleCoordinator {
             this.now(),
             operation.signal,
           );
-          rotated = await saveWorkspaceAuthorization(
+          rotated = await this.credentialStore.saveWorkspaceAuthorization(
             rotated,
             workspaceAuthorization,
             this.now(),
@@ -809,7 +897,7 @@ export class MobileLifecycleCoordinator {
       } catch (error) {
         // The server consumed the previous refresh token. If the local commit
         // is uncertain, replaying it could revoke the entire successor family.
-        await revokeLocalCredential().catch(() => undefined);
+        await this.credentialStore.revoke().catch(() => undefined);
         if (this.isCurrent(operation.generation)) {
           this.connection = null;
           this.publish({
@@ -829,7 +917,7 @@ export class MobileLifecycleCoordinator {
     } catch (error) {
       if (!this.isCurrent(operation.generation)) throw error;
       if (refreshIsRejected(error)) {
-        await revokeLocalCredential().catch(() => undefined);
+        await this.credentialStore.revoke().catch(() => undefined);
         this.connection = null;
         this.publish({
           phase: 'recovery_required',
@@ -853,7 +941,7 @@ export class MobileLifecycleCoordinator {
 
   private async revokeExclusive(): Promise<void> {
     if (this.connection === null) {
-      await revokeLocalCredential();
+      await this.credentialStore.revoke();
       this.publish({ phase: 'unpaired', profile: null });
       return;
     }
@@ -872,7 +960,7 @@ export class MobileLifecycleCoordinator {
       remoteRevoked = true;
       if (!this.isCurrent(operation.generation)) return;
       try {
-        await revokeLocalCredential();
+        await this.credentialStore.revoke();
         this.connection = null;
         this.publish({ phase: 'unpaired', profile: null });
       } catch (error) {

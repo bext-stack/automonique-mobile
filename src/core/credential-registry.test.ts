@@ -27,6 +27,7 @@ import {
   loadSelectedCredentialRegistryConnection,
   revokeCredentialRegistrySlot,
   rotateCredentialRegistryConnection,
+  saveCredentialRegistryWorkspaceAuthorization,
   saveIssuedConnection,
   selectCredentialRegistryMutationSlot,
 } from './credential-store';
@@ -194,6 +195,37 @@ test('adds, explicitly selects, and revokes one slot while every other slot surv
   ).toBe(false);
 });
 
+test('recovers a selected slot after the durable commit loses its final acknowledgement', async () => {
+  const first = await addCredentialRegistryConnection(
+    discovery(1),
+    issued(1),
+    NOW,
+  );
+  const second = await addCredentialRegistryConnection(
+    discovery(2),
+    issued(2),
+    NOW,
+  );
+  secureStore.deleteItemAsync.mockImplementationOnce(async (key) => {
+    if (key === JOURNAL_KEY) throw new Error('journal_delete_failed');
+    secureValues.delete(key);
+  });
+
+  await expect(
+    selectCredentialRegistryMutationSlot(second.slotId),
+  ).rejects.toThrow('journal_delete_failed');
+  expect(secureValues.has(JOURNAL_KEY)).toBe(true);
+
+  await expect(loadCredentialRegistry(NOW)).resolves.toMatchObject({
+    kind: 'ready',
+    registry: {
+      selectedMutationSlotId: second.slotId,
+      slots: [{ slotId: first.slotId }, { slotId: second.slotId }],
+    },
+  });
+  expect(secureValues.has(JOURNAL_KEY)).toBe(false);
+});
+
 test('keeps credentials and authority context out of the public profile mirror', async () => {
   await addCredentialRegistryConnection(
     discovery(3),
@@ -285,6 +317,32 @@ test('rotates into a complete inactive shadow without altering sibling authority
       ],
     },
   });
+});
+
+test('updates workspace grant custody in only the exact slot shadow', async () => {
+  const first = await addCredentialRegistryConnection(
+    discovery(1),
+    issued(1),
+    NOW,
+  );
+  const second = await addCredentialRegistryConnection(
+    discovery(2),
+    issued(2),
+    NOW,
+  );
+  const firstOldKey = activeSlotKey(first.slotId);
+  const secondKey = activeSlotKey(second.slotId);
+  const secondValue = secureValues.get(secondKey);
+
+  await saveCredentialRegistryWorkspaceAuthorization(
+    first.slotId,
+    undefined,
+    NOW,
+  );
+
+  expect(activeSlotKey(first.slotId)).not.toBe(firstOldKey);
+  expect(activeSlotKey(second.slotId)).toBe(secondKey);
+  expect(secureValues.get(secondKey)).toBe(secondValue);
 });
 
 test('recovers a completed shadow write when the manifest commit was interrupted', async () => {
