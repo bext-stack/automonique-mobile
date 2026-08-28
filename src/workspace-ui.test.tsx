@@ -693,12 +693,12 @@ test('attention exposes structured parents and admits only exact review and reta
 
   expect(
     view.getByLabelText(
-      'Needs You. comment reply. Review summary. 1 unread. Read-mostly workspace companion.',
+      'Needs You. comment reply. Review summary. 1 unread. Read-mostly workspace companion. Server Delivery Europe · https://ops.example.test.',
     ),
   ).not.toBeDisabled();
   expect(
     view.getByLabelText(
-      'Needs You. Inspect exact session. Nested under Coordinate the exact change. 0 unread. Read-mostly workspace companion.',
+      'Needs You. Inspect exact session. Nested under Coordinate the exact change. 0 unread. Read-mostly workspace companion. Server Delivery Europe · https://ops.example.test.',
     ),
   ).not.toBeDisabled();
   expect(
@@ -806,7 +806,7 @@ test('attention disables a nested session when the selected live scope is foreig
 
   const view = await render(<AttentionScreen />);
   const worker = view.getByLabelText(
-    'Blocked. Needs exact retained session. Top-level orchestration. 0 unread. Read-mostly workspace companion.',
+    'Blocked. Needs exact retained session. Top-level orchestration. 0 unread. Read-mostly workspace companion. Server Delivery Europe · https://ops.example.test.',
   );
   expect(worker).toBeDisabled();
   expect(worker).toHaveProp('accessibilityState', { disabled: true });
@@ -862,7 +862,7 @@ test('attention renders and links authoritative lineage when review is unavailab
 
   expect(
     view.getByLabelText(
-      'Needs You. Inspect retained context. Top-level orchestration. 0 unread. Read-mostly workspace companion.',
+      'Needs You. Inspect retained context. Top-level orchestration. 0 unread. Read-mostly workspace companion. Server Delivery Europe · https://ops.example.test.',
     ),
   ).not.toBeDisabled();
   expect(view.getByText(/review revision unavailable/)).toBeTruthy();
@@ -874,6 +874,113 @@ test('attention renders and links authoritative lineage when review is unavailab
       authorization_revision: '8',
     }),
   });
+});
+
+test('attention disambiguates identical multi-server nodes and preserves the surviving exact route', async () => {
+  const base = workspaceValue();
+  const primary = base.catalog.servers[0]!;
+  const workspace = primary.workspaces[0]!;
+  const reviewWorkspace = {
+    ...workspace,
+    navigation: [
+      ...workspace.navigation,
+      { destination: 'review' as const, revision: workspace.revision },
+    ],
+  };
+  const secondaryIdentity =
+    `sha256:${'b'.repeat(64)}` as typeof WORKSPACE_FIXTURE_IDENTITY;
+  const primaryServer = { ...primary, workspaces: [reviewWorkspace] };
+  const secondaryServer = {
+    ...primaryServer,
+    serverIdentity: secondaryIdentity,
+    label: 'Delivery Americas',
+    origin: 'https://ops-us.example.test',
+    tenantId: 'tenant-delivery-us',
+  };
+  const primaryDetail = { ...detail };
+  const secondaryDetail = {
+    ...detail,
+    serverIdentity: secondaryIdentity,
+  };
+  const twoServerCatalog = {
+    ...base.catalog,
+    servers: [primaryServer, secondaryServer],
+  };
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: twoServerCatalog,
+    details: [primaryDetail, secondaryDetail],
+    notificationPermission: 'denied',
+    requestReviewNotificationPermission: jest.fn(),
+  });
+
+  const view = await render(<AttentionScreen />);
+
+  const primaryCard = view.getByLabelText(
+    'Needs You. approval required. Review summary. 2 unread. Read-mostly workspace companion. Server Delivery Europe · https://ops.example.test.',
+  );
+  const secondaryCard = view.getByLabelText(
+    'Needs You. approval required. Review summary. 2 unread. Read-mostly workspace companion. Server Delivery Americas · https://ops-us.example.test.',
+  );
+  expect(primaryCard).not.toBeDisabled();
+  expect(secondaryCard).not.toBeDisabled();
+  expect(
+    view.getByText(/Delivery Europe · https:\/\/ops\.example\.test/),
+  ).toBeTruthy();
+  expect(
+    view.getByText(/Delivery Americas · https:\/\/ops-us\.example\.test/),
+  ).toBeTruthy();
+  const reviewHrefs = mockLinkHrefs.filter(
+    (
+      candidate,
+    ): candidate is {
+      readonly pathname: string;
+      readonly params: Readonly<Record<string, string>>;
+    } =>
+      typeof candidate === 'object' &&
+      candidate !== null &&
+      'pathname' in candidate &&
+      candidate.pathname === '/workspace/[server]/[workspace]',
+  );
+  expect(reviewHrefs).toHaveLength(2);
+  expect(reviewHrefs.map((href) => href.params.server).sort()).toEqual(
+    [WORKSPACE_FIXTURE_IDENTITY, secondaryIdentity].sort(),
+  );
+
+  mockLinkHrefs = [];
+  const remainingCatalog = {
+    ...twoServerCatalog,
+    selectedServerIdentity: secondaryIdentity,
+    servers: [secondaryServer],
+  };
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: remainingCatalog,
+    details: [secondaryDetail],
+    notificationPermission: 'denied',
+    requestReviewNotificationPermission: jest.fn(),
+  });
+  await act(async () => {
+    view.rerender(<AttentionScreen />);
+    await Promise.resolve();
+  });
+
+  expect(
+    view.queryByLabelText(
+      'Needs You. approval required. Review summary. 2 unread. Read-mostly workspace companion. Server Delivery Europe · https://ops.example.test.',
+    ),
+  ).toBeNull();
+  expect(
+    view.getByLabelText(
+      'Needs You. approval required. Review summary. 2 unread. Read-mostly workspace companion. Server Delivery Americas · https://ops-us.example.test.',
+    ),
+  ).not.toBeDisabled();
+  expect(mockLinkHrefs).toEqual([
+    expect.objectContaining({
+      pathname: '/workspace/[server]/[workspace]',
+      params: expect.objectContaining({ server: secondaryIdentity }),
+    }),
+  ]);
 });
 
 test('attention renders idle as idle with no invented source revision', async () => {

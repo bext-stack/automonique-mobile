@@ -35,7 +35,19 @@ export default function AttentionScreen() {
   } = useWorkspaces();
   const rows = details.flatMap((detail) => {
     const workspace = workspaceForDetail(catalog, detail);
-    if (workspace === null) return [];
+    const server = catalog.servers.find(
+      (candidate) => candidate.serverIdentity === detail.serverIdentity,
+    );
+    if (workspace === null || server === undefined) return [];
+    const duplicateServerDisplay = catalog.servers.some(
+      (candidate) =>
+        candidate.serverIdentity !== server.serverIdentity &&
+        candidate.label === server.label &&
+        candidate.origin === server.origin,
+    );
+    const serverDiscriminator = duplicateServerDisplay
+      ? `${server.label} · ${server.origin} · ${server.serverIdentity}`
+      : `${server.label} · ${server.origin}`;
     const nodes = projectAttentionNodes(
       detail.review?.snapshot ?? null,
       detail.lineage,
@@ -57,7 +69,7 @@ export default function AttentionScreen() {
       } catch {
         href = null;
       }
-      return { detail, href, node, workspace };
+      return { detail, href, node, serverDiscriminator, workspace };
     });
   });
 
@@ -127,7 +139,7 @@ export default function AttentionScreen() {
           </Text>
         </Pressable>
       </View>
-      {rows.map(({ detail, href, node, workspace }) => {
+      {rows.map(({ detail, href, node, serverDiscriminator, workspace }) => {
         const relationship =
           node.parentLabel === null
             ? node.kind === 'review'
@@ -141,7 +153,7 @@ export default function AttentionScreen() {
         const card = (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`${labels[node.state]}. ${node.label}. ${relationship}. ${node.unread} unread. ${workspace.title}.`}
+            accessibilityLabel={`${labels[node.state]}. ${node.label}. ${relationship}. ${node.unread} unread. ${workspace.title}. Server ${serverDiscriminator}.`}
             accessibilityHint={
               href === null
                 ? 'No exact current navigation coordinate is available.'
@@ -181,17 +193,19 @@ export default function AttentionScreen() {
               {relationship}
             </Text>
             <Text style={[styles.meta, { color: palette.textMuted }]}>
-              {workspace.title} · {node.semanticKey} · source revision{' '}
-              {node.revision ?? 'not applicable'} · review revision{' '}
-              {detail.review?.revision ?? 'unavailable'}
+              {serverDiscriminator} · {workspace.title} · {node.semanticKey} ·
+              source revision {node.revision ?? 'not applicable'} · review
+              revision {detail.review?.revision ?? 'unavailable'}
             </Text>
           </Pressable>
         );
         return href === null ? (
-          <View key={`${workspace.id}:${node.key}`}>{card}</View>
+          <View key={`${detail.serverIdentity}:${workspace.id}:${node.key}`}>
+            {card}
+          </View>
         ) : (
           <Link
-            key={`${workspace.id}:${node.key}`}
+            key={`${detail.serverIdentity}:${workspace.id}:${node.key}`}
             asChild
             href={{ pathname: href.pathname, params: href.params }}
           >
