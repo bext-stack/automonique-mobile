@@ -39,7 +39,7 @@ function cacheFor(
   authorizationRevision = '8',
 ): WorkspaceCompanionCache {
   return {
-    schema: 'automonique.mobile-workspace-cache/v1',
+    schema: 'automonique.mobile-workspace-cache/v2',
     catalog: {
       ...workspaceCompanionFixture,
       selectedServerIdentity: serverIdentity,
@@ -65,6 +65,22 @@ beforeEach(() => {
   jest.mocked(AsyncStorage.removeItem).mockImplementation(async (key) => {
     values.delete(key);
   });
+});
+
+test('legacy workspace cache key is discarded without admission', async () => {
+  values.set(
+    'automonique.mobile.workspace-catalog.v1',
+    JSON.stringify({
+      schema: 'automonique.mobile-workspace-cache/v1',
+      catalog: { schema: 'automonique.mobile-workspace-companion/v1' },
+      intentDrafts: [],
+    }),
+  );
+
+  await expect(loadWorkspaceCatalogCache()).resolves.toBeNull();
+  expect(AsyncStorage.removeItem).toHaveBeenCalledWith(
+    'automonique.mobile.workspace-catalog.v1',
+  );
 });
 
 test('workspace drafts are bounded and keyed by exact server, authorization, and workspace revision', async () => {

@@ -35,6 +35,10 @@ new intent ID, and target intent ID.
 Deep links use a finite internal destination vocabulary and exact workspace
 and retained-session revisions. Server omission or revocation persists a
 bounded identity/tenant/origin/authorization-revision tombstone.
+Retained chat carries both the typed Platform v2 work-session relation ID and
+the distinct Platform v1 target ID; neither may be substituted for the other.
+The route also binds tenant, principal generation, and authorization revision,
+then rechecks the same scope after its handoff to the session screen.
 Workspace, attempt, and session omission persists bounded per-ID revision
 tombstones, so a later equal or older object cannot bypass rollback detection.
 Terminal requires both a workspace navigation grant and a separate live

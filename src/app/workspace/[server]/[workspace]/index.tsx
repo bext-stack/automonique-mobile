@@ -1364,10 +1364,13 @@ export default function WorkspaceDetailScreen() {
     try {
       admitWorkspaceDeepLink(catalog, {
         serverIdentity: params.server as ServerIdentity,
+        tenantId: server.tenantId,
+        authorizationRevision: server.authorizationRevision,
+        principalGeneration: server.principalGeneration,
         workspaceId: workspace.id,
         workspaceRevision: decimalRevision(workspace.revision),
         destination,
-        sessionId: null,
+        workSessionId: null,
         sessionRelationRevision: null,
         retainedTarget: null,
       });
@@ -1485,13 +1488,34 @@ export default function WorkspaceDetailScreen() {
           );
           const currentServer =
             lifecycleState.profile?.serverIdentity === server.serverIdentity;
-          const enabled =
+          let sessionHref: ReturnType<typeof admitWorkspaceDeepLink> | null =
+            null;
+          const linkCandidate =
             retained !== undefined &&
             currentServer &&
             status.phase === 'live' &&
             server.authorization === 'active' &&
             !server.staleProjectIds.includes(workspace.projectId) &&
             granted('chat');
+          if (linkCandidate) {
+            try {
+              sessionHref = admitWorkspaceDeepLink(catalog, {
+                serverIdentity: server.serverIdentity,
+                tenantId: server.tenantId,
+                authorizationRevision: server.authorizationRevision,
+                principalGeneration: server.principalGeneration,
+                workspaceId: workspace.id,
+                workspaceRevision: workspace.revision,
+                destination: 'chat',
+                workSessionId: session.id,
+                sessionRelationRevision: session.revision,
+                retainedTarget: retained.target,
+              });
+            } catch {
+              sessionHref = null;
+            }
+          }
+          const enabled = sessionHref !== null;
           const sessionButton = (
             <Pressable
               accessibilityRole="button"
@@ -1524,19 +1548,8 @@ export default function WorkspaceDetailScreen() {
               key={session.id}
               asChild
               href={{
-                pathname: '/workspace/[server]/[workspace]/session/[session]',
-                params: {
-                  server: params.server,
-                  workspace: workspace.id,
-                  revision: workspace.revision,
-                  session: session.id,
-                  relation_revision: session.revision,
-                  session_revision: retained!.target.revision,
-                  session_authority: session.target.authority,
-                  session_kind: session.target.kind,
-                  principal_generation: server.principalGeneration,
-                  authorization_revision: server.authorizationRevision,
-                },
+                pathname: sessionHref!.pathname,
+                params: sessionHref!.params,
               }}
             >
               {sessionButton}

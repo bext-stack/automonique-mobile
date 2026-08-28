@@ -739,7 +739,7 @@ export function WorkspaceProvider({
       if (successful[0] !== undefined) {
         await persistWorkspaceCatalogCacheForServers(
           {
-            schema: 'automonique.mobile-workspace-cache/v1',
+            schema: 'automonique.mobile-workspace-cache/v2',
             catalog: next,
             intentDrafts: draftsRef.current,
           },

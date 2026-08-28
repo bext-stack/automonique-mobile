@@ -35,6 +35,10 @@ cancellation behind a narrow companion gateway. Production workspace screens
 join only typed project/host/checkout/workspace relations, bound detail fanout,
 report partial coverage, preserve a read-only multi-server cache and exact
 revision drafts, and admit review destinations only from current review data.
+Retained-chat links keep the typed work-session relation separate from its v1
+session target and bind both through the tenant, authorization revision,
+principal generation, workspace revision, relation revision, and target
+revision before handing off to the session screen.
 They remain fail-closed until the dedicated server endpoint issues a delegated
 Platform v2 principal binding the bearer to server-owned tenant/actor,
 credential identity and revisions, generation, expiry, exact project roots,

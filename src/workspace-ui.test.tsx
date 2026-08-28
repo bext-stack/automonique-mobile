@@ -714,6 +714,8 @@ test('attention exposes structured parents and admits only exact review and reta
         pathname: '/workspace/[server]/[workspace]/session/[session]',
         params: expect.objectContaining({
           session: 'session-34',
+          work_session: 'work-session-34',
+          tenant: 'tenant-delivery',
           relation_revision: '9',
           session_revision: '9',
           principal_generation: '3',
@@ -1666,9 +1668,11 @@ test('draft loading is keyed so route changes cannot copy text across workspaces
 function exactSessionParams(overrides: Record<string, string> = {}) {
   return {
     server: WORKSPACE_FIXTURE_IDENTITY,
+    tenant: 'tenant-delivery',
     workspace: 'workspace-34',
     revision: '12',
     session: 'session-34',
+    work_session: 'work-session-34',
     relation_revision: '9',
     session_revision: '9',
     session_authority: 'automonique',
@@ -1688,7 +1692,9 @@ test('exact retained chat preserves full scope in the generic session route', as
     params: expect.objectContaining({
       id: 'session-34',
       scope_server: WORKSPACE_FIXTURE_IDENTITY,
+      scope_tenant: 'tenant-delivery',
       scope_relation_revision: '9',
+      scope_work_session: 'work-session-34',
       scope_authority: 'automonique',
       scope_kind: 'session',
       scope_session_revision: '9',
@@ -1697,8 +1703,67 @@ test('exact retained chat preserves full scope in the generic session route', as
   });
 });
 
+test('exact retained chat routes a distinct work-session relation to its v1 target', async () => {
+  const base = workspaceValue();
+  const currentServer = base.catalog.servers[0]!;
+  const currentWorkspace = currentServer.workspaces[0]!;
+  const retainedSessionId = 'retained-session-34';
+  const workSessionId = 'work-session-34';
+  const workspace = {
+    ...currentWorkspace,
+    sessions: currentWorkspace.sessions.map((session) => ({
+      ...session,
+      id: workSessionId,
+      target: { ...session.target, id: retainedSessionId },
+    })),
+  };
+  const server = { ...currentServer, workspaces: [workspace] };
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: { ...base.catalog, servers: [server] },
+    findServer: (identity: string) =>
+      identity === server.serverIdentity ? server : null,
+    findWorkspace: (identity: string, id: string) =>
+      identity === server.serverIdentity && id === workspace.id
+        ? workspace
+        : null,
+  });
+  mockUseMobile.mockReturnValue({
+    snapshot: {
+      ...mockUseMobile().snapshot,
+      sessions: [
+        {
+          target: {
+            coordinate: {
+              authority: 'automonique',
+              kind: 'session',
+              id: retainedSessionId,
+            },
+            revision: '9',
+          },
+        },
+      ],
+    },
+  });
+  mockRouteParams = exactSessionParams({
+    session: retainedSessionId,
+    work_session: workSessionId,
+  });
+
+  await render(<ExactWorkspaceSessionLink />);
+  expect(mockRedirect).toHaveBeenCalledWith({
+    pathname: '/session/[id]',
+    params: expect.objectContaining({
+      id: retainedSessionId,
+      scope_work_session: workSessionId,
+    }),
+  });
+});
+
 test.each([
   ['foreign server', { server: `sha256:${'b'.repeat(64)}` }],
+  ['foreign tenant', { tenant: 'tenant-foreign' }],
+  ['foreign work session', { work_session: 'work-session-foreign' }],
   ['foreign authority', { session_authority: 'github' }],
   ['stale v1 revision', { session_revision: '8' }],
   ['stale principal generation', { principal_generation: '2' }],

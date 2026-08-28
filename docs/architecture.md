@@ -39,6 +39,15 @@ state.
 Concurrent active multi-server credentials and live acceptance remain distinct
 work.
 
+A retained-chat route keeps the Platform v2 work-session relation distinct
+from its Platform v1 retained-session target. Its internal coordinates bind the
+tenant, server identity, authorization revision, principal generation,
+workspace/revision, work-session relation/revision, and complete retained
+target/revision. The handoff route and the generic session screen both
+re-admit those coordinates against current live projections; an omitted,
+foreign, stale, or colliding coordinate renders an unavailable screen and
+cannot expose session actions.
+
 ## System boundary
 
 ```text

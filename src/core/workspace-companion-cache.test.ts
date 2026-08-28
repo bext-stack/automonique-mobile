@@ -17,7 +17,7 @@ import { decimalRevision } from './types';
 
 test('cached workspace reads restore stale with mutation and terminal authority removed', () => {
   const encoded = encodeWorkspaceCompanionCache({
-    schema: 'automonique.mobile-workspace-cache/v1',
+    schema: 'automonique.mobile-workspace-cache/v2',
     catalog: {
       ...workspaceCompanionFixture,
       servers: workspaceCompanionFixture.servers.map((server) => ({
@@ -48,7 +48,7 @@ test('cached workspace reads restore stale with mutation and terminal authority 
 
 test('cache rejects authority previews, unknown fields, and oversized input', () => {
   const hiddenAuthority = {
-    schema: 'automonique.mobile-workspace-cache/v1',
+    schema: 'automonique.mobile-workspace-cache/v2',
     catalog: workspaceCompanionFixture,
     intentDrafts: [],
     authorityPreview: { summary: ['must not persist'] },
@@ -63,9 +63,25 @@ test('cache rejects authority previews, unknown fields, and oversized input', ()
   ).toThrow('workspace_companion_cache_too_large');
 });
 
+test('legacy cache is rejected instead of reinterpreting retained IDs as work-session IDs', () => {
+  const legacy = JSON.parse(
+    encodeWorkspaceCompanionCache({
+      schema: 'automonique.mobile-workspace-cache/v2',
+      catalog: workspaceCompanionFixture,
+      intentDrafts: [],
+    }),
+  );
+  legacy.schema = 'automonique.mobile-workspace-cache/v1';
+  legacy.catalog.schema = 'automonique.mobile-workspace-companion/v1';
+
+  expect(() => decodeWorkspaceCompanionCache(JSON.stringify(legacy))).toThrow(
+    'workspace_companion_cache_invalid',
+  );
+});
+
 test('cache preserves server authorization tombstones across restart', () => {
   const encoded = encodeWorkspaceCompanionCache({
-    schema: 'automonique.mobile-workspace-cache/v1',
+    schema: 'automonique.mobile-workspace-cache/v2',
     catalog: {
       ...workspaceCompanionFixture,
       selectedServerIdentity: null,
@@ -91,7 +107,7 @@ test('cache preserves server authorization tombstones across restart', () => {
 test('cache rejects rather than truncates oversized revision fences', () => {
   expect(() =>
     encodeWorkspaceCompanionCache({
-      schema: 'automonique.mobile-workspace-cache/v1',
+      schema: 'automonique.mobile-workspace-cache/v2',
       catalog: {
         ...workspaceCompanionFixture,
         revisionTombstones: Array.from(
@@ -125,7 +141,7 @@ test('cache restart preserves nested high-water marks from revocation', () => {
   );
   const restored = decodeWorkspaceCompanionCache(
     encodeWorkspaceCompanionCache({
-      schema: 'automonique.mobile-workspace-cache/v1',
+      schema: 'automonique.mobile-workspace-cache/v2',
       catalog: removal.catalog,
       intentDrafts: [],
     }),

@@ -32,6 +32,7 @@ jest.mock('expo-speech-recognition', () => ({
 
 const mockUseMobile = jest.fn();
 const mockUseMobileLifecycle = jest.fn();
+const mockUseWorkspaces = jest.fn();
 let mockRouteParams: Record<string, string> = {
   id: 'session-synthetic-001',
 };
@@ -56,12 +57,7 @@ jest.mock('@/providers/production-mobile-provider', () => ({
   useMobileLifecycle: () => mockUseMobileLifecycle(),
 }));
 jest.mock('@/providers/workspace-provider', () => ({
-  useWorkspaces: () => ({
-    catalog: { phase: 'stale' },
-    status: { phase: 'unavailable' },
-    findServer: () => null,
-    findWorkspace: () => null,
-  }),
+  useWorkspaces: () => mockUseWorkspaces(),
 }));
 jest.mock('@/core/server-connection', () => ({
   ...jest.requireActual('@/core/server-connection'),
@@ -147,6 +143,12 @@ beforeEach(() => {
     selectServer: jest.fn(),
     pair: mockPair,
   });
+  mockUseWorkspaces.mockReturnValue({
+    catalog: { phase: 'stale' },
+    status: { phase: 'unavailable' },
+    findServer: () => null,
+    findWorkspace: () => null,
+  });
 });
 
 test('stop-run authorization is independent from follow-up authorization', async () => {
@@ -184,6 +186,89 @@ test('a scoped workspace redirect cannot mutate a same-id session on another ser
   ).toBeTruthy();
   expect(view.queryByLabelText('Send follow-up')).toBeNull();
   expect(view.queryByLabelText(/Stop exact run/)).toBeNull();
+});
+
+test('a scoped workspace redirect joins a distinct work-session relation to its exact retained target', async () => {
+  const serverIdentity = `sha256:${'a'.repeat(64)}`;
+  const server = {
+    serverIdentity,
+    tenantId: 'tenant-mobile',
+    authorization: 'active',
+    authorizationRevision: '8',
+    principalGeneration: '3',
+    staleProjectIds: [],
+    actions: ['workspace_read'],
+  };
+  const workspace = {
+    id: 'workspace-1',
+    revision: '2',
+    projectId: 'project-1',
+    navigation: [{ destination: 'chat', revision: '2' }],
+    sessions: [
+      {
+        id: 'work-session-1',
+        revision: '9',
+        target: {
+          authority: 'automonique',
+          kind: 'session',
+          id: 'session-synthetic-001',
+        },
+      },
+    ],
+  };
+  mockUseMobile.mockReturnValue(mobileValue(['follow_up']));
+  mockUseMobileLifecycle.mockReturnValue({
+    state: { phase: 'ready', profile: { serverIdentity } },
+  });
+  mockUseWorkspaces.mockReturnValue({
+    catalog: { phase: 'live' },
+    status: { phase: 'live' },
+    findServer: (candidate: string) =>
+      candidate === serverIdentity ? server : null,
+    findWorkspace: (candidateServer: string, candidateWorkspace: string) =>
+      candidateServer === serverIdentity && candidateWorkspace === workspace.id
+        ? workspace
+        : null,
+  });
+  mockRouteParams = {
+    id: 'session-synthetic-001',
+    scope_server: serverIdentity,
+    scope_tenant: 'tenant-mobile',
+    scope_workspace: 'workspace-1',
+    scope_workspace_revision: '2',
+    scope_work_session: 'work-session-1',
+    scope_relation_revision: '9',
+    scope_authority: 'automonique',
+    scope_kind: 'session',
+    scope_session_revision: '12',
+    scope_principal_generation: '3',
+    scope_authorization_revision: '8',
+  };
+
+  const view = await render(<SessionScreen />);
+  expect(view.getByLabelText('Follow-up message').props.editable).toBe(true);
+  expect(
+    view.queryByText(/exact scoped session is no longer current/),
+  ).toBeNull();
+
+  mockUseWorkspaces.mockReturnValue({
+    catalog: { phase: 'live' },
+    status: { phase: 'live' },
+    findServer: (candidate: string) =>
+      candidate === serverIdentity ? { ...server, actions: [] } : null,
+    findWorkspace: (candidateServer: string, candidateWorkspace: string) =>
+      candidateServer === serverIdentity && candidateWorkspace === workspace.id
+        ? workspace
+        : null,
+  });
+  await act(async () => {
+    view.rerender(<SessionScreen />);
+    await Promise.resolve();
+  });
+  expect(
+    view.getByText(/exact scoped session is no longer current/),
+  ).toBeTruthy();
+  expect(view.queryByLabelText('Send follow-up')).toBeNull();
 });
 
 test('follow-up uses the negotiated UTF-8 byte limit', async () => {

@@ -70,6 +70,10 @@ never cached.
   output make admission fail rather than being ignored.
 - A stale workspace/session revision, missing destination grant, or unscoped
   retained session refuses a deep link.
+- A retained-session deep link names both its work-session relation and its
+  retained v1 target. It also names the exact tenant, authorization revision,
+  and principal generation; an ID collision across either relation, tenant, or
+  generation is refused at the handoff and again at the session screen.
 - A nested attention record cannot supply a session route by display text. Its
   exact typed lineage attempt and work-session origin must match the same live
   Platform v2 binding and a current retained v1 target under the selected

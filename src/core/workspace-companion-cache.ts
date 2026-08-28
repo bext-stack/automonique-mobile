@@ -17,7 +17,7 @@ export const MAX_WORKSPACE_COMPANION_CACHE_BYTES = 256 * 1024;
 export const MAX_WORKSPACE_INTENT_DRAFTS = 32;
 
 export interface WorkspaceCompanionCache {
-  readonly schema: 'automonique.mobile-workspace-cache/v1';
+  readonly schema: 'automonique.mobile-workspace-cache/v2';
   readonly catalog: WorkspaceCompanionCatalog;
   readonly intentDrafts: readonly WorkspaceIntentRequest[];
 }
@@ -51,7 +51,7 @@ export function encodeWorkspaceCompanionCache(
   cache: WorkspaceCompanionCache,
 ): string {
   const encoded = JSON.stringify({
-    schema: 'automonique.mobile-workspace-cache/v1',
+    schema: 'automonique.mobile-workspace-cache/v2',
     catalog: boundCatalog(cache.catalog),
     intentDrafts: cache.intentDrafts.slice(0, MAX_WORKSPACE_INTENT_DRAFTS),
   });
@@ -85,7 +85,7 @@ function decodeEnvelope(encoded: string): WorkspaceCompanionCache {
   const envelope = parsed as Record<string, unknown>;
   if (
     Object.keys(envelope).length !== 3 ||
-    envelope.schema !== 'automonique.mobile-workspace-cache/v1' ||
+    envelope.schema !== 'automonique.mobile-workspace-cache/v2' ||
     !Object.hasOwn(envelope, 'catalog') ||
     !Array.isArray(envelope.intentDrafts) ||
     envelope.intentDrafts.length > MAX_WORKSPACE_INTENT_DRAFTS
@@ -94,7 +94,7 @@ function decodeEnvelope(encoded: string): WorkspaceCompanionCache {
   }
   try {
     return {
-      schema: 'automonique.mobile-workspace-cache/v1',
+      schema: 'automonique.mobile-workspace-cache/v2',
       catalog: admitWorkspaceCompanionCatalog(envelope.catalog),
       intentDrafts: envelope.intentDrafts.map(admitWorkspaceIntentRequest),
     };
