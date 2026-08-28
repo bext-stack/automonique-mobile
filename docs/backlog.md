@@ -138,9 +138,12 @@ Remaining tracked work is grouped in the
         eligibility, draft-persistence failure, one-key confirmation and
         receipt recovery, and accessibility contracts in automated tests and
         all-platform exports.
-  - [ ] Add separately delegated server adapters for batch-send-to-agent,
-        check rerun, pull-request update, and merge; they remain explicitly
-        unavailable and there is no generic execute or shell fallback.
+  - [x] Wire exact single/batch comment delivery to the separately bounded
+        retained-agent server adapter with preview, durable receipt lookup, and
+        no generic provider-message or shell fallback.
+  - [ ] Add separately delegated server adapters for check rerun,
+        pull-request update, and merge; they remain explicitly unavailable and
+        there is no generic execute or shell fallback.
   - [ ] Record live Mobile/ShellDeck/web fixture parity plus an authorized
         background-notification deep-link pass.
   - [ ] Record immutable iOS/EAS, VoiceOver/TalkBack, and independent-review

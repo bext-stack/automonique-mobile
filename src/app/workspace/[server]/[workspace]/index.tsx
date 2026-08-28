@@ -507,6 +507,23 @@ function ReviewControlSurface({
   const approvePending = scopedReceiptHandles.some(
     (handle) => handle.action_kind === 'approve_review',
   );
+  const agentDeliveryPending = scopedReceiptHandles.some(
+    (handle) =>
+      handle.action_kind === 'send_comment_to_agent' ||
+      handle.action_kind === 'batch_send_comments_to_agent',
+  );
+  const batchTargets = snapshot.comments
+    .filter((comment) => ['not_sent', 'refused'].includes(comment.agent_state))
+    .map((comment) => ({
+      comment_id: comment.id,
+      expected_comment_revision: comment.revision,
+    }));
+  const batchAction = {
+    kind: 'batch_send_comments_to_agent' as const,
+    payload: { comments: batchTargets },
+  };
+  const batchTargetLabel = `${batchTargets.length} ${batchTargets.length === 1 ? 'comment' : 'comments'}`;
+  const batchAvailability = availability(batchAction);
   if (renderSemantics === null) {
     return (
       <Text
@@ -711,10 +728,46 @@ function ReviewControlSurface({
             Approve review
           </Text>
         </Pressable>
-        <UnavailableReviewEffect
-          kind="batch_send_comments_to_agent"
-          label="Batch send comments to agent"
-        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{
+            disabled:
+              batchTargets.length === 0 ||
+              !batchAvailability.enabled ||
+              reviewBusy ||
+              agentDeliveryPending,
+          }}
+          accessibilityLabel={`Batch send ${batchTargetLabel} to retained agent${batchTargets.length > 0 && batchAvailability.enabled ? '' : `, unavailable: ${(batchTargets.length === 0 ? 'target_already_settled' : batchAvailability.reason).replaceAll('_', ' ')}`}`}
+          disabled={
+            batchTargets.length === 0 ||
+            !batchAvailability.enabled ||
+            reviewBusy ||
+            agentDeliveryPending
+          }
+          onPress={() =>
+            prepare(
+              batchAction,
+              `Send ${batchTargetLabel} with exact persisted revisions to the retained agent session bound by the server to workspace ${workspace.id}. Each comment revision is fenced; no provider session, shell, Git, CI, or pull-request authority is delegated by this action.`,
+            )
+          }
+          style={[
+            styles.reviewAction,
+            {
+              borderColor: palette.accent,
+              opacity:
+                batchTargets.length > 0 &&
+                batchAvailability.enabled &&
+                !reviewBusy &&
+                !agentDeliveryPending
+                  ? 1
+                  : 0.48,
+            },
+          ]}
+        >
+          <Text style={{ color: palette.accent, fontWeight: '800' }}>
+            Batch send {batchTargetLabel} to agent
+          </Text>
+        </Pressable>
       </View>
       {pending !== null && (
         <View
@@ -736,6 +789,22 @@ function ReviewControlSurface({
             Receipt key {pending.idempotencyKey} · state {pending.phase}
             {pending.outcome === null ? '' : ` · outcome ${pending.outcome}`}
           </Text>
+          {pending.action.kind === 'batch_send_comments_to_agent' && (
+            <View accessibilityLabel="Exact batch review targets">
+              <Text style={[styles.meta, { color: palette.text }]}>
+                Exact persisted targets
+              </Text>
+              {pending.action.payload.comments.map((target) => (
+                <Text
+                  key={target.comment_id}
+                  style={[styles.meta, { color: palette.textMuted }]}
+                >
+                  Comment {target.comment_id} · revision{' '}
+                  {target.expected_comment_revision.toString()}
+                </Text>
+              ))}
+            </View>
+          )}
           <View style={styles.reviewActions}>
             {pending.phase === 'confirm' && (
               <Pressable
@@ -858,7 +927,8 @@ function ReviewControlSurface({
       )}
       <Text style={[styles.subtitle, { color: palette.textMuted }]}>
         Draft state is explicit: local drafts are not sent to an agent. Git
-        stage, unstage, and commit remain unavailable. External agent, CI, and
+        stage, unstage, and commit remain unavailable. Persisted comments can be
+        sent only through the exact retained-agent actions above. CI and
         pull-request effect families are shown below with the server adapter
         category that keeps each control inert.
       </Text>
@@ -869,10 +939,45 @@ function ReviewControlSurface({
             {comment.actor} · revision {comment.revision.toString()} ·{' '}
             {comment.agent_state.replaceAll('_', ' ')}
           </Text>
-          <UnavailableReviewEffect
-            kind="send_comment_to_agent"
-            label={`Send comment ${comment.id} to agent`}
-          />
+          {(() => {
+            const action = {
+              kind: 'send_comment_to_agent' as const,
+              payload: {
+                comment_id: comment.id,
+                expected_comment_revision: comment.revision,
+              },
+            };
+            const actionAvailability = availability(action);
+            const enabled =
+              actionAvailability.enabled &&
+              !reviewBusy &&
+              !agentDeliveryPending;
+            return (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !enabled }}
+                accessibilityLabel={`Send comment ${comment.id} revision ${comment.revision.toString()} to retained agent${actionAvailability.enabled ? '' : `, unavailable: ${actionAvailability.reason.replaceAll('_', ' ')}`}`}
+                disabled={!enabled}
+                onPress={() =>
+                  prepare(
+                    action,
+                    `Send comment ${comment.id} at exact revision ${comment.revision.toString()} to the retained agent session bound by the server to workspace ${workspace.id}. This does not grant a generic provider message or shell action.`,
+                  )
+                }
+                style={[
+                  styles.reviewAction,
+                  {
+                    borderColor: palette.accent,
+                    opacity: enabled ? 1 : 0.48,
+                  },
+                ]}
+              >
+                <Text style={{ color: palette.accent, fontWeight: '800' }}>
+                  Send exact comment to agent
+                </Text>
+              </Pressable>
+            );
+          })()}
         </View>
       ))}
       {snapshot.checks.map((check) => (

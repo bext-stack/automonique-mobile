@@ -261,11 +261,15 @@ mobile actions in the first slice.
 | Review reconciliation handle             | Async Storage         | 32 handles; 32 KiB encoded set                                   | Exact actor/authority/action digest/revision/key; no comment body  |
 
 The vendored review union also defines agent-send, CI, Git, and pull-request
-actions. Production currently completes only `add_comment` and
-`approve_review`; its external families return explicit adapter-unavailable
-categories. Mobile therefore exposes those external families only as inert,
-disabled typed rows. It does not probe support by sending an action, persist a
-speculative handle, or infer per-family authority from the coarse review grant.
+actions. Production completes `add_comment`, `approve_review`, and the exact
+single/batch retained-agent comment-delivery actions. Agent delivery is bound
+to the current review authority, workspace/review revision, exact comment IDs
+and comment revisions. Its durable mobile handle contains only the action
+digest and lookup coordinates, never comment content or a replayable provider
+message. Git, CI, and pull-request families continue to return explicit
+adapter-unavailable categories and remain inert disabled rows. Mobile does not
+probe their support by sending an action, persist a speculative handle, or
+infer their authority from the coarse review grant.
 
 Provider credentials, raw provider/tool output, routing policy, and an offline
 mutation queue never cross or live inside the mobile boundary.
