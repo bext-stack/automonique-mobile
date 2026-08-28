@@ -378,14 +378,7 @@ function reviewSnapshot(): ReviewSnapshot {
 }
 
 function reviewAuthorization(now = 1_500): DelegatedMobileV2Authorization {
-  return {
-    ...delegatedAuthorization(now),
-    actions: [
-      ...MOBILE_V2_ACTIONS,
-      'execute_review_action',
-      'get_review_receipt',
-    ],
-  } as unknown as DelegatedMobileV2Authorization;
+  return delegatedAuthorization(now);
 }
 
 test('executes and durably reconciles only an authority-bound local review action', async () => {
@@ -558,7 +551,18 @@ test('refuses stale review revisions, mismatched authorities, and undelegated ef
   expect(reviewStore.handles).toEqual([]);
   expect(authorized.adapter.pendingSteps).toBe(0);
 
-  const undelegated = gatewayFor([]).gateway;
+  const undelegatedAuthorization: DelegatedMobileV2Authorization = {
+    ...delegatedAuthorization(),
+    actions: MOBILE_V2_ACTIONS.filter(
+      (delegatedAction) => delegatedAction !== 'execute_review_action',
+    ),
+  };
+  const undelegated = gatewayFor(
+    [],
+    1_500,
+    memoryReceiptStore(),
+    undelegatedAuthorization,
+  ).gateway;
   await expect(
     undelegated.executeReviewAction(
       project,
