@@ -19,9 +19,19 @@ const mockUseMobile = jest.fn();
 const mockUseMobileLifecycle = jest.fn();
 const mockRedirect = jest.fn();
 const mockRouterPush = jest.fn();
+let mockLinkHrefs: readonly unknown[] = [];
 
 jest.mock('expo-router', () => ({
-  Link: ({ children }: { readonly children: ReactNode }) => children,
+  Link: ({
+    children,
+    href,
+  }: {
+    readonly children: ReactNode;
+    readonly href: unknown;
+  }) => {
+    mockLinkHrefs = [...mockLinkHrefs, href];
+    return children;
+  },
   Redirect: ({ href }: { readonly href: unknown }) => {
     mockRedirect(href);
     return null;
@@ -153,6 +163,7 @@ const detail = {
   workspaceRevision: '12',
   lineageAvailable: true,
   lineage: null,
+  sessionBindings: [],
   review: {
     snapshot: reviewSnapshot,
     revision: '7',
@@ -297,6 +308,7 @@ function preparedMutation() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockLinkHrefs = [];
   jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
   jest.mocked(AsyncStorage.setItem).mockResolvedValue(undefined);
   jest.mocked(AsyncStorage.removeItem).mockResolvedValue(undefined);
@@ -564,6 +576,411 @@ test('attention truthfully separates local exact deep links from unavailable pus
   expect(
     view.getByText(/exact, revalidated workspace coordinates/),
   ).toBeTruthy();
+});
+
+test('attention exposes structured parents and admits only exact review and retained-session anchors', async () => {
+  const base = workspaceValue();
+  const server = base.catalog.servers[0]!;
+  const workspace = server.workspaces[0]!;
+  const reviewWorkspace = {
+    ...workspace,
+    navigation: [
+      ...workspace.navigation,
+      { destination: 'review' as const, revision: workspace.revision },
+    ],
+  };
+  const anchoredSnapshot = {
+    ...reviewSnapshot,
+    attention: {
+      reason: 'comment_reply',
+      source_revision: 5n,
+      state: 'needs_you',
+      unread: 1n,
+    },
+    attention_events: [
+      {
+        id: 'attention-comment-1',
+        origin: {
+          authority: reviewSnapshot.review.authority,
+          id: 'comment-1',
+          kind: 'comment',
+          revision: 5n,
+        },
+        reason: 'comment_reply',
+        unread: 1n,
+      },
+    ],
+    comments: [
+      {
+        actor: 'reviewer',
+        agent_state: 'not_sent',
+        anchor: {
+          file_id: 'file-1',
+          hunk_id: 'hunk-1',
+          line: 1n,
+          side: 'new',
+        },
+        body: 'Inspect the exact line.',
+        id: 'comment-1',
+        revision: 5n,
+        unread: true,
+      },
+    ],
+  };
+  const lineage = {
+    workspace: workspace.id,
+    external_work_items: [],
+    orchestration: [
+      {
+        identity: { kind: 'task', id: 'task-34' },
+        parent: null,
+        origin: {
+          workspace: workspace.id,
+          attempt: 'attempt-34-a',
+          session: null,
+          pane: null,
+        },
+        status: { kind: 'working' },
+        revision: 6n,
+        latest_useful_message: { text: 'Coordinate the exact change' },
+      },
+      {
+        identity: { kind: 'question', id: 'question-34' },
+        parent: { kind: 'task', id: 'task-34' },
+        origin: {
+          workspace: workspace.id,
+          attempt: 'attempt-34-a',
+          session: 'work-session-34',
+          pane: null,
+        },
+        status: { kind: 'waiting', reason: 'Inspect exact session' },
+        revision: 7n,
+        latest_useful_message: { text: 'Inspect exact session' },
+      },
+    ],
+  };
+  const structuredDetail = {
+    ...detail,
+    lineageAvailable: true,
+    lineage,
+    sessionBindings: [
+      {
+        workSessionId: 'work-session-34',
+        attemptWorkspaceId: 'attempt-34-a',
+        retainedSessionId: 'session-34',
+      },
+    ],
+    review: {
+      ...detail.review,
+      snapshot: anchoredSnapshot,
+      attentionReason: 'comment_reply',
+      unread: 1,
+    },
+  };
+  const catalog = {
+    ...base.catalog,
+    servers: [{ ...server, workspaces: [reviewWorkspace] }],
+  };
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog,
+    details: [structuredDetail],
+    notificationPermission: 'granted',
+    requestReviewNotificationPermission: jest.fn(),
+  });
+
+  const view = await render(<AttentionScreen />);
+
+  expect(
+    view.getByLabelText(
+      'Needs You. comment reply. Review summary. 1 unread. Read-mostly workspace companion. Server Delivery Europe · https://ops.example.test.',
+    ),
+  ).not.toBeDisabled();
+  expect(
+    view.getByLabelText(
+      'Needs You. Inspect exact session. Nested under Coordinate the exact change. 0 unread. Read-mostly workspace companion. Server Delivery Europe · https://ops.example.test.',
+    ),
+  ).not.toBeDisabled();
+  expect(
+    view.getByText('Nested under Coordinate the exact change'),
+  ).toBeTruthy();
+  expect(mockLinkHrefs).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        pathname: '/workspace/[server]/[workspace]',
+        params: expect.objectContaining({ file: 'file-1', hunk: 'hunk-1' }),
+      }),
+      expect.objectContaining({
+        pathname: '/workspace/[server]/[workspace]/session/[session]',
+        params: expect.objectContaining({
+          session: 'session-34',
+          relation_revision: '9',
+          session_revision: '9',
+          principal_generation: '3',
+          authorization_revision: '8',
+        }),
+      }),
+    ]),
+  );
+  const retainedSessionHref = mockLinkHrefs.find(
+    (candidate) =>
+      typeof candidate === 'object' &&
+      candidate !== null &&
+      'pathname' in candidate &&
+      candidate.pathname ===
+        '/workspace/[server]/[workspace]/session/[session]',
+  ) as { readonly params: Record<string, string> } | undefined;
+  expect(retainedSessionHref).toBeDefined();
+
+  mockRouteParams = retainedSessionHref!.params;
+  await render(<ExactWorkspaceSessionLink />);
+  expect(mockRedirect).toHaveBeenCalledWith({
+    pathname: '/session/[id]',
+    params: expect.objectContaining({
+      id: 'session-34',
+      scope_principal_generation: '3',
+      scope_authorization_revision: '8',
+    }),
+  });
+
+  mockRedirect.mockClear();
+  mockRouteParams = {
+    ...retainedSessionHref!.params,
+    principal_generation: '2',
+  };
+  const refused = await render(<ExactWorkspaceSessionLink />);
+  expect(mockRedirect).not.toHaveBeenCalled();
+  expect(refused.getByText('Retained session unavailable')).toBeTruthy();
+  expect(
+    view.getByLabelText('Enable local review notifications'),
+  ).toBeDisabled();
+});
+
+test('attention disables a nested session when the selected live scope is foreign', async () => {
+  const base = workspaceValue();
+  const lineage = {
+    workspace: detail.workspaceId,
+    external_work_items: [],
+    orchestration: [
+      {
+        identity: { kind: 'worker', id: 'worker-34' },
+        parent: null,
+        origin: {
+          workspace: detail.workspaceId,
+          attempt: 'attempt-34-a',
+          session: 'work-session-34',
+          pane: null,
+        },
+        status: { kind: 'blocked', reason: 'Needs exact retained session' },
+        revision: 7n,
+        latest_useful_message: { text: 'Needs exact retained session' },
+      },
+    ],
+  };
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    details: [
+      {
+        ...detail,
+        lineageAvailable: true,
+        lineage,
+        sessionBindings: [
+          {
+            workSessionId: 'work-session-34',
+            attemptWorkspaceId: 'attempt-34-a',
+            retainedSessionId: 'session-34',
+          },
+        ],
+      },
+    ],
+    notificationPermission: 'undetermined',
+    requestReviewNotificationPermission: jest.fn(),
+  });
+  mockUseMobileLifecycle.mockReturnValue({
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: `sha256:${'b'.repeat(64)}` },
+    },
+    workspaceGateway: null,
+  });
+
+  const view = await render(<AttentionScreen />);
+  const worker = view.getByLabelText(
+    'Blocked. Needs exact retained session. Top-level orchestration. 0 unread. Read-mostly workspace companion. Server Delivery Europe · https://ops.example.test.',
+  );
+  expect(worker).toBeDisabled();
+  expect(worker).toHaveProp('accessibilityState', { disabled: true });
+  expect(worker).toHaveProp(
+    'accessibilityHint',
+    'No exact current navigation coordinate is available.',
+  );
+});
+
+test('attention renders and links authoritative lineage when review is unavailable', async () => {
+  const base = workspaceValue();
+  const lineage = {
+    workspace: detail.workspaceId,
+    external_work_items: [],
+    orchestration: [
+      {
+        identity: { kind: 'question', id: 'question-lineage-only' },
+        parent: null,
+        origin: {
+          workspace: detail.workspaceId,
+          attempt: 'attempt-34-a',
+          session: 'work-session-34',
+          pane: null,
+        },
+        status: { kind: 'waiting', reason: 'Inspect retained context' },
+        revision: 8n,
+        latest_useful_message: { text: 'Inspect retained context' },
+      },
+    ],
+  };
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    details: [
+      {
+        ...detail,
+        lineageAvailable: true,
+        lineage,
+        sessionBindings: [
+          {
+            workSessionId: 'work-session-34',
+            attemptWorkspaceId: 'attempt-34-a',
+            retainedSessionId: 'session-34',
+          },
+        ],
+        review: null,
+      },
+    ],
+    notificationPermission: 'denied',
+    requestReviewNotificationPermission: jest.fn(),
+  });
+
+  const view = await render(<AttentionScreen />);
+
+  expect(
+    view.getByLabelText(
+      'Needs You. Inspect retained context. Top-level orchestration. 0 unread. Read-mostly workspace companion. Server Delivery Europe · https://ops.example.test.',
+    ),
+  ).not.toBeDisabled();
+  expect(view.getByText(/review revision unavailable/)).toBeTruthy();
+  expect(mockLinkHrefs).toContainEqual({
+    pathname: '/workspace/[server]/[workspace]/session/[session]',
+    params: expect.objectContaining({
+      session: 'session-34',
+      principal_generation: '3',
+      authorization_revision: '8',
+    }),
+  });
+});
+
+test('attention disambiguates identical multi-server nodes and preserves the surviving exact route', async () => {
+  const base = workspaceValue();
+  const primary = base.catalog.servers[0]!;
+  const workspace = primary.workspaces[0]!;
+  const reviewWorkspace = {
+    ...workspace,
+    navigation: [
+      ...workspace.navigation,
+      { destination: 'review' as const, revision: workspace.revision },
+    ],
+  };
+  const secondaryIdentity =
+    `sha256:${'b'.repeat(64)}` as typeof WORKSPACE_FIXTURE_IDENTITY;
+  const primaryServer = { ...primary, workspaces: [reviewWorkspace] };
+  const secondaryServer = {
+    ...primaryServer,
+    serverIdentity: secondaryIdentity,
+    label: 'Delivery Americas',
+    origin: 'https://ops-us.example.test',
+    tenantId: 'tenant-delivery-us',
+  };
+  const primaryDetail = { ...detail };
+  const secondaryDetail = {
+    ...detail,
+    serverIdentity: secondaryIdentity,
+  };
+  const twoServerCatalog = {
+    ...base.catalog,
+    servers: [primaryServer, secondaryServer],
+  };
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: twoServerCatalog,
+    details: [primaryDetail, secondaryDetail],
+    notificationPermission: 'denied',
+    requestReviewNotificationPermission: jest.fn(),
+  });
+
+  const view = await render(<AttentionScreen />);
+
+  const primaryCard = view.getByLabelText(
+    'Needs You. approval required. Review summary. 2 unread. Read-mostly workspace companion. Server Delivery Europe · https://ops.example.test.',
+  );
+  const secondaryCard = view.getByLabelText(
+    'Needs You. approval required. Review summary. 2 unread. Read-mostly workspace companion. Server Delivery Americas · https://ops-us.example.test.',
+  );
+  expect(primaryCard).not.toBeDisabled();
+  expect(secondaryCard).not.toBeDisabled();
+  expect(
+    view.getByText(/Delivery Europe · https:\/\/ops\.example\.test/),
+  ).toBeTruthy();
+  expect(
+    view.getByText(/Delivery Americas · https:\/\/ops-us\.example\.test/),
+  ).toBeTruthy();
+  const reviewHrefs = mockLinkHrefs.filter(
+    (
+      candidate,
+    ): candidate is {
+      readonly pathname: string;
+      readonly params: Readonly<Record<string, string>>;
+    } =>
+      typeof candidate === 'object' &&
+      candidate !== null &&
+      'pathname' in candidate &&
+      candidate.pathname === '/workspace/[server]/[workspace]',
+  );
+  expect(reviewHrefs).toHaveLength(2);
+  expect(reviewHrefs.map((href) => href.params.server).sort()).toEqual(
+    [WORKSPACE_FIXTURE_IDENTITY, secondaryIdentity].sort(),
+  );
+
+  mockLinkHrefs = [];
+  const remainingCatalog = {
+    ...twoServerCatalog,
+    selectedServerIdentity: secondaryIdentity,
+    servers: [secondaryServer],
+  };
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: remainingCatalog,
+    details: [secondaryDetail],
+    notificationPermission: 'denied',
+    requestReviewNotificationPermission: jest.fn(),
+  });
+  await act(async () => {
+    view.rerender(<AttentionScreen />);
+    await Promise.resolve();
+  });
+
+  expect(
+    view.queryByLabelText(
+      'Needs You. approval required. Review summary. 2 unread. Read-mostly workspace companion. Server Delivery Europe · https://ops.example.test.',
+    ),
+  ).toBeNull();
+  expect(
+    view.getByLabelText(
+      'Needs You. approval required. Review summary. 2 unread. Read-mostly workspace companion. Server Delivery Americas · https://ops-us.example.test.',
+    ),
+  ).not.toBeDisabled();
+  expect(mockLinkHrefs).toEqual([
+    expect.objectContaining({
+      pathname: '/workspace/[server]/[workspace]',
+      params: expect.objectContaining({ server: secondaryIdentity }),
+    }),
+  ]);
 });
 
 test('attention renders idle as idle with no invented source revision', async () => {

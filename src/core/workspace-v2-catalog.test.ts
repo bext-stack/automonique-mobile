@@ -504,6 +504,13 @@ test('projects typed relations, lineage status, review attention, and separately
     delivery: { semantic_key: 'delivery.not_delivered' },
     previews: [{ semantic_key: 'preview.text.sanitized' }],
   });
+  expect(result.details[0]?.sessionBindings).toEqual([
+    {
+      workSessionId: 'work-session-0',
+      attemptWorkspaceId: 'attempt-0',
+      retainedSessionId: 'retained-0',
+    },
+  ]);
 });
 
 test('withholds an incoherent review from detail, attention, and navigation', async () => {

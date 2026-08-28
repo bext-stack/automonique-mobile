@@ -5,6 +5,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -326,6 +327,19 @@ export function WorkspaceProvider({
         : server,
     );
   }, [gateway, profile, readOnlyServers]);
+  const currentReadableServerIdentitiesRef = useRef<ReadonlySet<string>>(
+    new Set(),
+  );
+  useLayoutEffect(() => {
+    currentReadableServerIdentitiesRef.current = new Set(
+      readableServers.map(
+        (server) => server.gateway.authorizationScope.serverIdentity,
+      ),
+    );
+    return () => {
+      currentReadableServerIdentitiesRef.current = new Set();
+    };
+  }, [readableServers]);
   const routerRef = useRef(router);
   const [catalog, setCatalog] = useState<WorkspaceCompanionCatalog>(() =>
     emptyWorkspaceCatalog(),
@@ -395,6 +409,11 @@ export function WorkspaceProvider({
     if (statusRef.current.phase !== 'live') return false;
     try {
       const request = decodeReviewNotificationData(data);
+      if (
+        !currentReadableServerIdentitiesRef.current.has(request.serverIdentity)
+      ) {
+        return false;
+      }
       const route = admitReviewDeepLink(
         catalogRef.current,
         detailsRef.current,
@@ -425,6 +444,9 @@ export function WorkspaceProvider({
       for (const detail of liveDetails) {
         if (
           detail.review === null ||
+          !currentReadableServerIdentitiesRef.current.has(
+            detail.serverIdentity,
+          ) ||
           detail.review.snapshot.attention.state !== 'needs_you' ||
           detail.review.unread <= 0
         ) {

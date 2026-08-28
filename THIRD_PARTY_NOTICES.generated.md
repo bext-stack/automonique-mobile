@@ -2907,19 +2907,19 @@ Declared license: MIT
 
 Packages:
 
-- @expo/cli@57.0.19 (node_modules/expo/node_modules/@expo/cli)
+- @expo/cli@57.0.20 (node_modules/expo/node_modules/@expo/cli)
 - @expo/config-plugins@57.0.9 (node_modules/@expo/config-plugins)
 - @expo/config@57.0.9 (node_modules/@expo/config)
 - @expo/devtools@57.0.1 (node_modules/@expo/devtools)
 - @expo/dom-webview@57.0.1 (node_modules/@expo/dom-webview)
 - @expo/expo-modules-macros-plugin@0.6.1 (node_modules/@expo/expo-modules-macros-plugin)
-- @expo/fingerprint@0.20.10 (node_modules/@expo/fingerprint)
+- @expo/fingerprint@0.20.11 (node_modules/@expo/fingerprint)
 - @expo/image-utils@0.11.5 (node_modules/@expo/image-utils)
 - @expo/inline-modules@0.1.7 (node_modules/@expo/inline-modules)
 - @expo/json-file@11.0.1 (node_modules/@expo/json-file)
 - @expo/local-build-cache-provider@57.0.8 (node_modules/@expo/local-build-cache-provider)
 - @expo/log-box@57.0.4 (node_modules/@expo/log-box)
-- @expo/metro-config@57.0.11 (node_modules/@expo/metro-config)
+- @expo/metro-config@57.0.12 (node_modules/@expo/metro-config)
 - @expo/metro-file-map@57.0.2 (node_modules/@expo/metro-file-map)
 - @expo/metro-runtime@57.0.14 (node_modules/@expo/metro-runtime)
 - @expo/osascript@2.7.1 (node_modules/@expo/osascript)
@@ -2931,10 +2931,10 @@ Packages:
 - expo-application@57.0.2 (node_modules/expo-application)
 - expo-asset@57.0.15 (node_modules/expo-asset)
 - expo-build-properties@57.0.15 (node_modules/expo-build-properties)
-- expo-constants@57.0.15 (node_modules/expo-constants)
+- expo-constants@57.0.16 (node_modules/expo-constants)
 - expo-crypto@57.0.2 (node_modules/expo-crypto)
 - expo-file-system@57.0.6 (node_modules/expo-file-system)
-- expo-font@57.0.1 (node_modules/expo-font)
+- expo-font@57.0.2 (node_modules/expo-font)
 - expo-glass-effect@57.0.1 (node_modules/expo-glass-effect)
 - expo-image-loader@57.0.1 (node_modules/expo-image-loader)
 - expo-image-manipulator@57.0.14 (node_modules/expo-image-manipulator)
@@ -2950,7 +2950,7 @@ Packages:
 - expo-splash-screen@57.0.8 (node_modules/expo-splash-screen)
 - expo-status-bar@57.0.1 (node_modules/expo-status-bar)
 - expo-symbols@57.0.2 (node_modules/expo-symbols)
-- expo@57.0.17 (node_modules/expo)
+- expo@57.0.18 (node_modules/expo)
 - jest-expo@57.0.5 (node_modules/jest-expo)
 
 ```text
@@ -12782,7 +12782,7 @@ Declared license: MIT
 
 Packages:
 
-- @expo/env@2.4.2 (node_modules/@expo/env)
+- @expo/env@2.4.3 (node_modules/@expo/env)
 
 ```text
 The MIT License (MIT)

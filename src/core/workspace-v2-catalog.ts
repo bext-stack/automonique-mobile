@@ -76,6 +76,12 @@ export interface WorkspaceCatalogDetail {
   readonly workspaceRevision: string;
   readonly lineageAvailable: boolean;
   readonly lineage: LineageProjection | null;
+  /** Exact live binding from a lineage work-session origin to its retained target. */
+  readonly sessionBindings: readonly {
+    readonly workSessionId: string;
+    readonly attemptWorkspaceId: string;
+    readonly retainedSessionId: string;
+  }[];
   readonly review: WorkspaceReviewProjection | null;
 }
 
@@ -323,6 +329,7 @@ interface WorkspaceGraph {
 
 interface RetainedSession {
   readonly record: WorkContextRecord;
+  readonly attemptWorkspaceId: string;
   readonly target: Extract<
     WorkContextRecord['relations'][number]['target'],
     { readonly kind: 'platform_session' }
@@ -402,18 +409,28 @@ function graphs(
     for (const session of attempt === null
       ? []
       : (sessionsByAttempt.get(recordId(attempt)) ?? [])) {
+      const attemptTarget = relation(
+        session,
+        'session_attempt_workspace',
+        'attempt_workspace',
+      );
       const target = relation(
         session,
         'session_platform_session',
         'platform_session',
       );
       if (
+        attemptTarget?.kind !== 'attempt_workspace' ||
         target?.kind !== 'platform_session' ||
         retainedIds.has(target.resource.id)
       )
         continue;
       retainedIds.add(target.resource.id);
-      sessions.push({ record: session, target: target.resource });
+      sessions.push({
+        record: session,
+        attemptWorkspaceId: attemptTarget.id,
+        target: target.resource,
+      });
     }
     const repository = relation(checkout, 'checkout_repository', 'repository');
     result.push({
@@ -678,6 +695,13 @@ export async function buildWorkspaceServerCatalog(
       lineageAvailable:
         detail?.lineage !== null && detail?.lineage !== undefined,
       lineage: detail?.lineage ?? null,
+      sessionBindings: graph.sessions.map(
+        ({ attemptWorkspaceId, record: session, target }) => ({
+          workSessionId: recordId(session),
+          attemptWorkspaceId,
+          retainedSessionId: target.id,
+        }),
+      ),
       review: reviewRead,
     });
     const navigation: CompanionWorkspace['navigation'] = [
