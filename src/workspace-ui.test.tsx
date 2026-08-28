@@ -712,7 +712,9 @@ test('attention truthfully separates local exact deep links from unavailable pus
     ),
   ).toBeTruthy();
   expect(
-    view.getByText(/exact, revalidated workspace coordinates/),
+    view.getByText(
+      /exact, revalidated review or retained-session lookup coordinates/,
+    ),
   ).toBeTruthy();
 });
 
@@ -892,7 +894,7 @@ test('attention exposes structured parents and admits only exact review and reta
   expect(mockRedirect).not.toHaveBeenCalled();
   expect(refused.getByText('Retained session unavailable')).toBeTruthy();
   expect(
-    view.getByLabelText('Enable local review notifications'),
+    view.getByLabelText('Enable local attention notifications'),
   ).toBeDisabled();
 });
 

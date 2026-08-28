@@ -2,6 +2,8 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { revokeAttentionNotificationRecords } from './attention-notification-store';
+
 import {
   decodeWorkspaceCompanionCache,
   encodeWorkspaceCompanionCache,
@@ -455,7 +457,10 @@ export function revokeWorkspaceServerStorage(
       );
     } catch {
       await AsyncStorage.removeItem(REVIEW_DRAFTS_KEY);
-      return;
+      reviewEnvelope = {
+        schema: 'automonique.mobile-review-drafts/v1',
+        drafts: [],
+      };
     }
     await AsyncStorage.setItem(
       REVIEW_DRAFTS_KEY,
@@ -465,6 +470,7 @@ export function revokeWorkspaceServerStorage(
         ),
       ),
     );
+    await revokeAttentionNotificationRecords(serverIdentity);
   });
 }
 

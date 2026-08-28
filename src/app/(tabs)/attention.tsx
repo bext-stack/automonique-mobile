@@ -103,11 +103,11 @@ export default function AttentionScreen() {
       >
         <View style={{ flex: 1, gap: 3 }}>
           <Text style={[styles.cardTitle, { color: palette.text }]}>
-            Local review notifications
+            Local attention notifications
           </Text>
           <Text style={[styles.detail, { color: palette.textMuted }]}>
             {notificationPermission === 'granted'
-              ? 'Granted. Background Needs You notifications carry only exact, revalidated workspace coordinates.'
+              ? 'Granted. Background Needs You notifications carry only exact, revalidated review or retained-session lookup coordinates.'
               : notificationPermission === 'denied'
                 ? 'Unavailable. Change notification permission in device settings if desired.'
                 : 'Permission is requested only from this explicit button.'}
@@ -120,7 +120,7 @@ export default function AttentionScreen() {
         </View>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Enable local review notifications"
+          accessibilityLabel="Enable local attention notifications"
           accessibilityState={{
             disabled: notificationPermission !== 'undetermined',
           }}

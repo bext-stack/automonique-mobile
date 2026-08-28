@@ -36,6 +36,11 @@ export interface MobileAttentionNode {
   readonly depth: number;
   readonly parentKey: string | null;
   readonly parentLabel: string | null;
+  /** Exact typed orchestration identity; labels and composite keys are never parsed. */
+  readonly identity: {
+    readonly kind: string;
+    readonly id: string;
+  } | null;
   readonly origin: {
     readonly workspaceId: string;
     readonly attemptId: string | null;
@@ -48,11 +53,24 @@ export interface MobileAttentionNode {
 
 export interface ReviewDeepLinkRequest {
   readonly serverIdentity: ServerIdentity;
+  readonly authorizationRevision: string;
+  readonly principalGeneration: string;
   readonly workspaceId: string;
   readonly workspaceRevision: string;
   readonly reviewRevision: string;
   readonly fileId: string | null;
   readonly hunkId: string | null;
+}
+
+export interface SessionAttentionDeepLinkRequest {
+  readonly serverIdentity: ServerIdentity;
+  readonly authorizationRevision: string;
+  readonly principalGeneration: string;
+  readonly workspaceId: string;
+  readonly workspaceRevision: string;
+  readonly nodeKind: string;
+  readonly nodeId: string;
+  readonly nodeRevision: string;
 }
 
 export interface AdmittedReviewRoute {
@@ -136,6 +154,7 @@ export function projectAttentionNodes(
       depth: 0,
       parentKey: null,
       parentLabel: null,
+      identity: null,
       origin: null,
       revision: semantics.attention.source_revision?.toString() ?? null,
       unread: Number(review.attention.unread),
@@ -187,6 +206,10 @@ export function projectAttentionNodes(
           : parentRecord === undefined
             ? `${record.parent.kind.replaceAll('_', ' ')} ${record.parent.id}`
             : orchestrationLabel(parentRecord),
+      identity: {
+        kind: record.identity.kind,
+        id: record.identity.id,
+      },
       origin: {
         workspaceId: record.origin.workspace,
         attemptId: record.origin.attempt,
@@ -219,7 +242,7 @@ export function admitAttentionDeepLink(options: {
   const server = catalog.servers.find(
     (candidate) => candidate.serverIdentity === detail.serverIdentity,
   );
-  if (workspace === null) {
+  if (workspace === null || server === undefined) {
     throw new Error('attention_navigation_not_authorized');
   }
   if (node.key === 'review') {
@@ -228,6 +251,8 @@ export function admitAttentionDeepLink(options: {
     }
     return admitReviewDeepLink(catalog, details, {
       serverIdentity: detail.serverIdentity,
+      authorizationRevision: server.authorizationRevision,
+      principalGeneration: server.principalGeneration,
       workspaceId: workspace.id,
       workspaceRevision: workspace.revision,
       reviewRevision: detail.review.revision,
@@ -285,6 +310,62 @@ export function admitAttentionDeepLink(options: {
     sessionRelationRevision: session.revision,
     retainedTarget: retained.target,
   });
+  return route;
+}
+
+/**
+ * Re-resolve a content-free notification coordinate against the current
+ * lineage, exact credential generation, session relation, and retained v1
+ * projection. The notification never supplies a retained target itself.
+ */
+export function admitSessionAttentionDeepLink(options: {
+  readonly catalog: WorkspaceCompanionCatalog;
+  readonly details: readonly WorkspaceCatalogDetail[];
+  readonly request: SessionAttentionDeepLinkRequest;
+  readonly retainedSessions: readonly SessionSummary[];
+}): AdmittedWorkspaceRoute {
+  const { catalog, details, request, retainedSessions } = options;
+  const server = catalog.servers.find(
+    (candidate) => candidate.serverIdentity === request.serverIdentity,
+  );
+  const workspace = server?.workspaces.find(
+    (candidate) => candidate.id === request.workspaceId,
+  );
+  const detail = details.find(
+    (candidate) =>
+      candidate.serverIdentity === request.serverIdentity &&
+      candidate.workspaceId === request.workspaceId,
+  );
+  if (
+    catalog.phase !== 'live' ||
+    server?.authorization !== 'active' ||
+    server.authorizationRevision !== request.authorizationRevision ||
+    server.principalGeneration !== request.principalGeneration ||
+    workspace === undefined ||
+    workspace.revision !== request.workspaceRevision ||
+    detail?.workspaceRevision !== request.workspaceRevision
+  ) {
+    throw new Error('attention_navigation_not_authorized');
+  }
+  const node = projectAttentionNodes(null, detail.lineage).find(
+    (candidate) =>
+      candidate.identity?.kind === request.nodeKind &&
+      candidate.identity.id === request.nodeId &&
+      candidate.revision === request.nodeRevision,
+  );
+  if (node === undefined || node.state !== 'needs_you') {
+    throw new Error('attention_navigation_not_authorized');
+  }
+  const route = admitAttentionDeepLink({
+    catalog,
+    details,
+    detail,
+    node,
+    retainedSessions,
+  });
+  if (route.pathname !== '/workspace/[server]/[workspace]/session/[session]') {
+    throw new Error('attention_navigation_not_authorized');
+  }
   return route;
 }
 
@@ -363,6 +444,8 @@ export function admitReviewDeepLink(
   if (
     catalog.phase !== 'live' ||
     server?.authorization !== 'active' ||
+    server.authorizationRevision !== request.authorizationRevision ||
+    server.principalGeneration !== request.principalGeneration ||
     workspace === undefined ||
     workspace.revision !== request.workspaceRevision ||
     !workspace.navigation.some(

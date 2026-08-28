@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import {
+  attentionNotificationKey,
   admitReviewNotification,
+  decodeAttentionNotificationData,
   decodeReviewNotificationData,
   encodeReviewNotificationData,
+  encodeSessionAttentionNotificationData,
   mayRequestNotificationPermission,
 } from './review-notifications';
 import type { ServerIdentity } from './workspace-companion';
@@ -48,11 +51,12 @@ test('background notification is content-free and requires current Needs You att
     projectionLive: true,
     attentionState: 'needs_you' as const,
     unread: 1,
+    target: 'review' as const,
     route,
   };
   expect(admitReviewNotification(candidate)).toEqual({
     title: 'Automonique needs you',
-    body: 'Open the current review to inspect the bounded request.',
+    body: 'Open Automonique to inspect the current bounded request.',
     route,
   });
   expect(
@@ -78,6 +82,8 @@ test('background notification is content-free and requires current Needs You att
 test('notification coordinates are exact, bounded, and inert until live re-admission', () => {
   const request = {
     serverIdentity: `sha256:${'a'.repeat(64)}` as ServerIdentity,
+    authorizationRevision: '8',
+    principalGeneration: '3',
     workspaceId: 'workspace-35',
     workspaceRevision: '4',
     reviewRevision: '9',
@@ -90,6 +96,8 @@ test('notification coordinates are exact, bounded, and inert until live re-admis
       'file_id',
       'hunk_id',
       'kind',
+      'authorization_revision',
+      'principal_generation',
       'review_revision',
       'server_identity',
       'workspace_id',
@@ -108,5 +116,51 @@ test('notification coordinates are exact, bounded, and inert until live re-admis
   ).toThrow('review_notification_invalid');
   expect(() =>
     decodeReviewNotificationData({ ...encoded, file_id: null }),
+  ).toThrow('review_notification_invalid');
+  expect(() =>
+    decodeReviewNotificationData({
+      ...encoded,
+      authorization_revision: '9',
+      extra: 'forged',
+    }),
+  ).toThrow('review_notification_invalid');
+});
+
+test('session notification carries only lookup coordinates and allows zero unread', () => {
+  const request = {
+    serverIdentity: `sha256:${'a'.repeat(64)}` as ServerIdentity,
+    authorizationRevision: '8',
+    principalGeneration: '3',
+    workspaceId: 'workspace-35',
+    workspaceRevision: '4',
+    nodeKind: 'question',
+    nodeId: 'question-1',
+    nodeRevision: '11',
+  };
+  const encoded = encodeSessionAttentionNotificationData(request);
+  const decoded = decodeAttentionNotificationData(encoded);
+  expect(decoded).toEqual({ target: 'session', request });
+  expect(JSON.stringify(encoded)).not.toMatch(
+    /retained|attempt|session_id|pathname|token|body/iu,
+  );
+  expect(attentionNotificationKey(decoded)).toContain('question-1');
+  expect(
+    admitReviewNotification({
+      permission: 'granted',
+      appState: 'background',
+      authorizationActive: true,
+      projectionLive: true,
+      attentionState: 'needs_you',
+      unread: 0,
+      target: 'session',
+      route: {
+        pathname: '/workspace/[server]/[workspace]/session/[session]',
+        params: { session: 'current-lookup-result' },
+        readOnly: false,
+      },
+    }),
+  ).not.toBeNull();
+  expect(() =>
+    decodeAttentionNotificationData({ ...encoded, node_revision: '0' }),
   ).toThrow('review_notification_invalid');
 });

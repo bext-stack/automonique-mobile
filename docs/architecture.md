@@ -256,6 +256,7 @@ mobile actions in the first slice.
 | Workspace companion projection           | Async Storage         | 256 KiB; 8 servers; 64 server and 1,024 object tombstones        | Exact-scope admitted; restored stale with read authority only      |
 | Workspace task-context draft             | Async Storage         | 32 inert server/workspace/revision-scoped drafts                 | Purged on server revocation; never restores an authority preview   |
 | Review line-comment draft                | Async Storage         | 64 exact authorization/principal/review/anchor-scoped drafts     | Purged on server revocation; draft text is never notification data |
+| Attention delivery coordinate            | Async Storage         | 256 generation-bound, content-free keys                          | Dedupe only; purged on server revocation and never grants routing  |
 | Message draft                            | Async Storage         | One draft per session; negotiated UTF-8 follow-up byte ceiling   | Re-admitted on load; never submitted in the background             |
 | Reconciliation handle                    | Async Storage         | 20 handles; 16 KiB encoded set                                   | Action, exact target and key only; never an executable command     |
 | Review reconciliation handle             | Async Storage         | 32 handles; 32 KiB encoded set                                   | Exact actor/authority/action digest/revision/key; no comment body  |

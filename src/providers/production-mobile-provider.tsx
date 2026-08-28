@@ -19,7 +19,7 @@ import type { MobileAutomoniqueGateway } from '@/core/types';
 import type { WorkspaceV2Gateway } from '@/core/workspace-v2-gateway';
 import type { MobilePairingOffer } from '@automonique/sdk';
 
-import { MobileProvider } from './mobile-provider';
+import { MobileProvider, useMobile } from './mobile-provider';
 import {
   revokeWorkspaceCatalogCache,
   WorkspaceProvider,
@@ -131,6 +131,34 @@ async function revokeCredentialGeneration(
   }
   if (lifecycleError !== undefined) throw lifecycleError;
   if (cleanupError !== undefined) throw cleanupError;
+}
+
+function AuthorizedWorkspaceComposition({
+  children,
+  generation,
+  profile,
+  selectedMutationSlotId,
+}: PropsWithChildren<{
+  readonly generation: GatewayGeneration;
+  readonly profile: MobileLifecycleState['profile'];
+  readonly selectedMutationSlotId: string | null;
+}>) {
+  const { snapshot } = useMobile();
+  return (
+    <WorkspaceProvider
+      gateway={generation.workspaceGateway}
+      generationKey={generation.key}
+      profile={profile}
+      readOnlyServers={generation.readOnlyWorkspaceServers}
+      retainedSessions={snapshot.sessions}
+      selectMutationServer={async (slotId) => {
+        if (selectedMutationSlotId === slotId) return;
+        await mobileFleetLifecycle.selectMutationSlot(slotId);
+      }}
+    >
+      {children}
+    </WorkspaceProvider>
+  );
 }
 
 /** Production composition root. Mock gateways must be passed explicitly in tests. */
@@ -250,19 +278,14 @@ export function ProductionMobileProvider({ children }: PropsWithChildren) {
         gateway={generation.gateway}
         storageScope={generation.scope}
       >
-        <WorkspaceProvider
+        <AuthorizedWorkspaceComposition
           key={generation.key}
-          gateway={generation.workspaceGateway}
-          generationKey={generation.key}
+          generation={generation}
           profile={state.profile}
-          readOnlyServers={generation.readOnlyWorkspaceServers}
-          selectMutationServer={async (slotId) => {
-            if (fleet.selectedMutationSlotId === slotId) return;
-            await mobileFleetLifecycle.selectMutationSlot(slotId);
-          }}
+          selectedMutationSlotId={fleet.selectedMutationSlotId}
         >
           {children}
-        </WorkspaceProvider>
+        </AuthorizedWorkspaceComposition>
       </MobileProvider>
     </LifecycleContext.Provider>
   );

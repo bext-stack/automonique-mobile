@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import type {
+  AttentionNotificationData,
   NotificationPermission,
-  ReviewNotificationData,
 } from './review-notifications';
 
 export interface ReviewNotificationRuntime {
@@ -16,7 +16,7 @@ export interface ReviewNotificationRuntime {
   schedule(content: {
     readonly title: string;
     readonly body: string;
-    readonly data: ReviewNotificationData;
+    readonly data: AttentionNotificationData;
   }): Promise<void>;
 }
 

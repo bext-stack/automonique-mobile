@@ -78,6 +78,14 @@ never cached.
   exact typed lineage attempt and work-session origin must match the same live
   Platform v2 binding and a current retained v1 target under the selected
   server identity.
+- A lineage notification cannot carry an attempt, work-session, pane, retained
+  target, path, or message. It carries only the exact credential generation,
+  workspace revision, typed orchestration identity, and node revision; a tap
+  repeats the live lineage/binding/retained-target admission before routing.
+- The durable notification ledger stores only bounded generation-bound dedupe
+  keys and delivery time. It is not navigation authority, survives a killed
+  process only to suppress duplicate local delivery, and is purged on exact
+  server revocation.
 - Omitting a workspace, attempt, or session cannot erase its revision fence;
   an equal or older reintroduction forces resynchronization.
 - Terminal navigation is refused even when visible in a workspace unless both
