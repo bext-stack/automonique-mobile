@@ -63,6 +63,7 @@ jest.mock('@/core/mobile-fleet-lifecycle', () => ({
 
 jest.mock('./mobile-provider', () => ({
   MobileProvider: ({ children }: PropsWithChildren) => children,
+  useMobile: () => ({ snapshot: { sessions: [] } }),
 }));
 
 jest.mock('./workspace-provider', () => {

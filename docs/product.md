@@ -190,16 +190,21 @@ delegated grant exposes both review execution and receipt lookup. Every effect
 has a separate confirmation preview and a durable idempotency handle; the
 retained delivery handle stores no comment content or replayable provider
 payload. Cached, stale, revoked, or ambiguous state disables the matching
-mutation. Opt-in local notifications contain no review content,
-use the configured Android channel, and their coordinates—including a
-cold-start response—are re-admitted against the current live projection before
-routing. A live refresh that discovers new attention while the process is in
-the background schedules the notification; an OS background-delivery source
-and authorized device evidence remain release gates rather than being inferred
-from foreground tests. The typed notification source provides exact
-server/workspace/review and optional file/hunk anchors only; mobile does not
-infer a retained-session coordinate or include paths, review content, or actor
-data in notification payloads.
+mutation. Opt-in local notifications contain no review or session content, use
+the configured Android channel, and their coordinates—including a cold-start
+response—are re-admitted against the current live projection before routing. A
+live refresh that discovers new attention while the process is in the
+background schedules the notification; an OS background-delivery source and
+authorized device evidence remain release gates rather than being inferred
+from foreground tests. Review payloads provide the exact
+server/authorization/principal/workspace/review and optional file/hunk anchor.
+Lineage-attention payloads provide only the exact typed orchestration identity
+and revision under that same scope. On tap, mobile looks that identity up in
+the current lineage and derives a session route only from the current typed
+attempt/work-session binding plus retained v1 projection; it never stores or
+infers those session coordinates in notification data. A bounded content-free
+delivery ledger suppresses duplicates across killed-app launches and is purged
+for the server on credential revocation.
 
 Check rerun, pull-request update/merge, generic execute, and shell fallback
 remain unavailable. The mobile UI renders CI-rerun and pull-request

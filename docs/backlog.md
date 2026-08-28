@@ -132,12 +132,14 @@ Remaining tracked work is grouped in the
   - [ ] Add opt-in, content-free background delivery whose inert coordinates
         are re-admitted against the current live catalog before navigation.
         Local scheduling, cold-start response admission, and web/SSR isolation
-        are implemented; an authorized OS background/push source is still
-        required for attention arriving after suspension.
-  - [x] Cover permission prompting, stale/revoked deep links, local background
-        eligibility, draft-persistence failure, one-key confirmation and
-        receipt recovery, and accessibility contracts in automated tests and
-        all-platform exports.
+        are implemented for exact review anchors and lookup-only retained
+        session attention, with generation-bound durable dedupe; an authorized
+        OS background/push source is still required for attention arriving
+        after suspension.
+  - [x] Cover permission prompting, stale/revoked review and session-attention
+        deep links, local background eligibility, killed-app dedupe hydration,
+        draft-persistence failure, one-key confirmation and receipt recovery,
+        and accessibility contracts in automated tests and all-platform exports.
   - [x] Wire exact single/batch comment delivery to the separately bounded
         retained-agent server adapter with preview, durable receipt lookup, and
         no generic provider-message or shell fallback.

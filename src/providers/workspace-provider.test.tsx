@@ -860,6 +860,143 @@ test('a denied notification permission remains explicit and creates no notificat
   expect(mockNotificationRouterPush).not.toHaveBeenCalled();
 });
 
+test('lineage attention notifications stay lookup-only across cold start, delivery, and credential rotation', async () => {
+  jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  mockNotificationGetPermissions.mockResolvedValue({
+    status: 'granted',
+    canAskAgain: false,
+  });
+  const baseServer = workspaceCompanionFixture.servers[0]!;
+  const server = {
+    ...baseServer,
+    authorizationRevision: '9' as typeof baseServer.authorizationRevision,
+  };
+  const built = catalogBuild(server);
+  mockBuildWorkspaceServerCatalog.mockResolvedValue({
+    ...built,
+    details: [
+      {
+        ...built.details[0]!,
+        lineageAvailable: true,
+        lineage: {
+          workspace: 'workspace-34',
+          external_work_items: [],
+          orchestration: [
+            {
+              identity: { kind: 'question', id: 'question-notification' },
+              parent: null,
+              origin: {
+                workspace: 'workspace-34',
+                attempt: 'attempt-34-a',
+                session: 'work-session-34',
+                pane: null,
+              },
+              status: { kind: 'waiting', reason: 'Choose exact action' },
+              revision: 11n,
+              latest_useful_message: { text: 'Choose exact action' },
+            },
+          ],
+        } as never,
+        sessionBindings: [
+          {
+            workSessionId: 'work-session-34',
+            attemptWorkspaceId: 'attempt-34-a',
+            retainedSessionId: 'session-34',
+          },
+        ],
+      },
+    ],
+  });
+  const notificationData = {
+    kind: 'automonique_session_attention_v1',
+    server_identity: server.serverIdentity,
+    authorization_revision: server.authorizationRevision,
+    principal_generation: server.principalGeneration,
+    workspace_id: 'workspace-34',
+    workspace_revision: '12',
+    node_kind: 'question',
+    node_id: 'question-notification',
+    node_revision: '11',
+  };
+  mockNotificationGetLastResponse.mockResolvedValue({
+    notification: { request: { content: { data: notificationData } } },
+  });
+  const retainedSessions = [
+    {
+      target: {
+        coordinate: {
+          authority: 'automonique',
+          kind: 'session',
+          id: 'session-34',
+        },
+        revision: '15',
+      },
+    },
+  ] as never;
+  const gateway = {
+    authorizationScope: {
+      serverIdentity: server.serverIdentity,
+      actions: [],
+    },
+    reviewEffectKinds: [],
+  } as never;
+
+  const view = await render(
+    <WorkspaceProvider
+      gateway={gateway}
+      generationKey="lineage-notification"
+      profile={{ origin: server.origin } as never}
+      retainedSessions={retainedSessions}
+    >
+      <Probe />
+    </WorkspaceProvider>,
+  );
+  await waitFor(() => expect(view.getByText('live:1:active')).toBeTruthy());
+  await waitFor(() =>
+    expect(mockNotificationRouterPush).toHaveBeenCalledWith({
+      pathname: '/workspace/[server]/[workspace]/session/[session]',
+      params: expect.objectContaining({
+        server: server.serverIdentity,
+        workspace: 'workspace-34',
+        session: 'session-34',
+        relation_revision: '9',
+        session_revision: '15',
+        authorization_revision: '9',
+        principal_generation: '3',
+      }),
+    }),
+  );
+
+  mockAppStateChange!('background');
+  await waitFor(() =>
+    expect(mockNotificationSchedule).toHaveBeenCalledTimes(1),
+  );
+  expect(mockNotificationSchedule).toHaveBeenCalledWith({
+    content: {
+      title: 'Automonique needs you',
+      body: 'Open Automonique to inspect the current bounded request.',
+      data: notificationData,
+    },
+    trigger: null,
+  });
+  expect(
+    JSON.stringify(mockNotificationSchedule.mock.calls[0]![0]),
+  ).not.toMatch(/attempt-34|session-34|retained|pathname/iu);
+  mockAppStateChange!('background');
+  expect(mockNotificationSchedule).toHaveBeenCalledTimes(1);
+
+  mockNotificationResponse!({
+    notification: {
+      request: {
+        content: {
+          data: { ...notificationData, authorization_revision: '8' },
+        },
+      },
+    },
+  });
+  expect(mockNotificationRouterPush).toHaveBeenCalledTimes(1);
+});
+
 test('revoked or unavailable state rejects notification delivery and navigation', async () => {
   mockNotificationGetPermissions.mockResolvedValue({
     status: 'granted',
@@ -885,8 +1022,10 @@ test('revoked or unavailable state rejects notification delivery and navigation'
       request: {
         content: {
           data: {
-            kind: 'automonique_review_attention',
+            kind: 'automonique_review_attention_v2',
             server_identity: WORKSPACE_FIXTURE_IDENTITY,
+            authorization_revision: '8',
+            principal_generation: '3',
             workspace_id: 'workspace-34',
             workspace_revision: '12',
             review_revision: '7',
@@ -1087,8 +1226,10 @@ test('cold-start and already-background refreshes admit and schedule exact notif
   };
   mockBuildWorkspaceServerCatalog.mockResolvedValue(built);
   const notificationData = {
-    kind: 'automonique_review_attention',
+    kind: 'automonique_review_attention_v2',
     server_identity: liveServer.serverIdentity,
+    authorization_revision: liveServer.authorizationRevision,
+    principal_generation: liveServer.principalGeneration,
     workspace_id: workspace.id,
     workspace_revision: workspace.revision,
     review_revision: '7',
@@ -1177,7 +1318,7 @@ test('cold-start and already-background refreshes admit and schedule exact notif
   expect(mockNotificationSchedule).toHaveBeenCalledWith({
     content: {
       title: 'Automonique needs you',
-      body: 'Open the current review to inspect the bounded request.',
+      body: 'Open Automonique to inspect the current bounded request.',
       data: notificationData,
     },
     trigger: null,

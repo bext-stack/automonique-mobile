@@ -5,6 +5,7 @@ import type { LineageProjection, ReviewSnapshot } from '@automonique/sdk';
 import {
   admitAttentionDeepLink,
   admitReviewDeepLink,
+  admitSessionAttentionDeepLink,
   projectAttentionNodes,
   reviewAttentionAnchor,
   reviewActionAvailability,
@@ -521,6 +522,57 @@ test('projects and admits lineage-only attention without inventing review state'
       authorization_revision: '8',
     },
   });
+  const request = {
+    serverIdentity: workspaceCompanionFixture.servers[0]!.serverIdentity,
+    authorizationRevision:
+      workspaceCompanionFixture.servers[0]!.authorizationRevision,
+    principalGeneration:
+      workspaceCompanionFixture.servers[0]!.principalGeneration,
+    workspaceId: 'workspace-34',
+    workspaceRevision: '12',
+    nodeKind: 'question',
+    nodeId: 'question-lineage-only',
+    nodeRevision: '8',
+  } as const;
+  const retainedSessions = [
+    {
+      target: {
+        coordinate: {
+          authority: 'automonique',
+          kind: 'session',
+          id: 'session-34',
+        },
+        revision: '15',
+      },
+    },
+  ] as never;
+  expect(
+    admitSessionAttentionDeepLink({
+      catalog: workspaceCompanionFixture,
+      details: [lineageOnlyDetail],
+      request,
+      retainedSessions,
+    }),
+  ).toMatchObject({
+    pathname: '/workspace/[server]/[workspace]/session/[session]',
+    params: { session: 'session-34', session_revision: '15' },
+  });
+  expect(() =>
+    admitSessionAttentionDeepLink({
+      catalog: workspaceCompanionFixture,
+      details: [lineageOnlyDetail],
+      request: { ...request, authorizationRevision: '9' },
+      retainedSessions,
+    }),
+  ).toThrow('attention_navigation_not_authorized');
+  expect(() =>
+    admitSessionAttentionDeepLink({
+      catalog: workspaceCompanionFixture,
+      details: [lineageOnlyDetail],
+      request: { ...request, nodeRevision: '7' },
+      retainedSessions,
+    }),
+  ).toThrow('attention_navigation_not_authorized');
 });
 
 test('preserves canonical idle attention without inventing a snapshot revision', () => {
@@ -621,6 +673,8 @@ test('deep links bind the live grant plus exact review, file, and hunk revisions
   };
   const request = {
     serverIdentity: catalog.servers[0]!.serverIdentity,
+    authorizationRevision: catalog.servers[0]!.authorizationRevision,
+    principalGeneration: catalog.servers[0]!.principalGeneration,
     workspaceId: 'workspace-34',
     workspaceRevision: '12',
     reviewRevision: '7',
@@ -646,6 +700,12 @@ test('deep links bind the live grant plus exact review, file, and hunk revisions
     admitReviewDeepLink(catalog, [detail()], {
       ...request,
       hunkId: 'hunk-other',
+    }),
+  ).toThrow('review_navigation_not_authorized');
+  expect(() =>
+    admitReviewDeepLink(catalog, [detail()], {
+      ...request,
+      authorizationRevision: '999',
     }),
   ).toThrow('review_navigation_not_authorized');
 });

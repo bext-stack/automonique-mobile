@@ -1769,6 +1769,8 @@ export default function WorkspaceDetailScreen() {
               try {
                 admitReviewDeepLink(catalog, [detail], {
                   serverIdentity: server.serverIdentity,
+                  authorizationRevision: server.authorizationRevision,
+                  principalGeneration: server.principalGeneration,
                   workspaceId: workspace.id,
                   workspaceRevision: workspace.revision,
                   reviewRevision: params.review_revision ?? '',

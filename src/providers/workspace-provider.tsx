@@ -53,19 +53,29 @@ import type {
 } from '@/core/workspace-v2-gateway';
 import type { WorkspaceV2ReceiptHandle } from '@/core/workspace-v2-receipts';
 import type { MobileSupportedReviewAction } from '@/core/mobile-review-effects';
+import type { SessionSummary } from '@/core/types';
 import type { ReviewV2ReceiptHandle } from '@/core/review-v2-receipts';
 import {
+  admitSessionAttentionDeepLink,
   admitReviewDeepLink,
+  projectAttentionNodes,
   reviewAttentionAnchor,
   workspaceForDetail,
+  type AdmittedAttentionRoute,
 } from '@/core/review-attention';
 import {
+  attentionNotificationKey,
   admitReviewNotification,
-  decodeReviewNotificationData,
+  decodeAttentionNotificationData,
   encodeReviewNotificationData,
+  encodeSessionAttentionNotificationData,
   type NotificationPermission,
 } from '@/core/review-notifications';
 import { reviewNotificationRuntime } from '@/core/review-notification-runtime';
+import {
+  loadAttentionNotificationKeys,
+  recordAttentionNotification,
+} from '@/core/attention-notification-store';
 import {
   loadWorkspaceCatalogCache,
   persistWorkspaceCatalogCacheForServers,
@@ -174,6 +184,7 @@ interface WorkspaceProviderProps extends PropsWithChildren {
   readonly profile: ConnectionProfile | null;
   readonly generationKey: string;
   readonly readOnlyServers?: readonly WorkspaceReadServer[];
+  readonly retainedSessions?: readonly SessionSummary[];
   readonly selectMutationServer?: (slotId: string) => Promise<void>;
 }
 
@@ -294,6 +305,7 @@ export function WorkspaceProvider({
   profile,
   generationKey,
   readOnlyServers,
+  retainedSessions = [],
   selectMutationServer,
 }: WorkspaceProviderProps) {
   const router = useRouter();
@@ -377,9 +389,12 @@ export function WorkspaceProvider({
   const hydrated = useRef(false);
   const notificationPermissionRef =
     useRef<NotificationPermission>('undetermined');
-  const notifiedReviews = useRef(new Set<string>());
+  const notifiedAttention = useRef(new Set<string>());
+  const notificationStoreHydrated = useRef(false);
+  const notificationStoreHydration = useRef<Promise<void> | null>(null);
   const appStateRef = useRef(AppState.currentState);
   const pendingNotificationResponse = useRef<unknown | null>(null);
+  const retainedSessionsRef = useRef(retainedSessions);
 
   useEffect(() => {
     catalogRef.current = catalog;
@@ -402,23 +417,57 @@ export function WorkspaceProvider({
   }, [notificationPermission]);
 
   useEffect(() => {
+    retainedSessionsRef.current = retainedSessions;
+  }, [retainedSessions]);
+
+  useEffect(() => {
     routerRef.current = router;
   }, [router]);
+
+  const hydrateNotificationStore = useCallback(async (): Promise<void> => {
+    if (notificationStoreHydrated.current) return;
+    if (notificationStoreHydration.current === null) {
+      notificationStoreHydration.current = loadAttentionNotificationKeys()
+        .then((keys) => {
+          notifiedAttention.current = new Set(keys);
+          notificationStoreHydrated.current = true;
+        })
+        .catch(() => {
+          // Notification delivery can continue with process-local dedupe when
+          // bounded local storage is unavailable.
+          notifiedAttention.current = new Set();
+          notificationStoreHydrated.current = true;
+        })
+        .finally(() => {
+          notificationStoreHydration.current = null;
+        });
+    }
+    await notificationStoreHydration.current;
+  }, []);
 
   const admitNotificationResponse = useCallback((data: unknown): boolean => {
     if (statusRef.current.phase !== 'live') return false;
     try {
-      const request = decodeReviewNotificationData(data);
+      const decoded = decodeAttentionNotificationData(data);
+      const request = decoded.request;
       if (
         !currentReadableServerIdentitiesRef.current.has(request.serverIdentity)
       ) {
         return false;
       }
-      const route = admitReviewDeepLink(
-        catalogRef.current,
-        detailsRef.current,
-        request,
-      );
+      const route =
+        decoded.target === 'review'
+          ? admitReviewDeepLink(
+              catalogRef.current,
+              detailsRef.current,
+              decoded.request,
+            )
+          : admitSessionAttentionDeepLink({
+              catalog: catalogRef.current,
+              details: detailsRef.current,
+              request: decoded.request,
+              retainedSessions: retainedSessionsRef.current,
+            });
       routerRef.current.push({
         pathname: route.pathname,
         params: route.params,
@@ -441,17 +490,49 @@ export function WorkspaceProvider({
       ) {
         return;
       }
-      for (const detail of liveDetails) {
+      await hydrateNotificationStore();
+      const schedule = async (
+        decoded: ReturnType<typeof decodeAttentionNotificationData>,
+        route: AdmittedAttentionRoute,
+        unread: number,
+      ): Promise<void> => {
+        const candidate = admitReviewNotification({
+          permission: 'granted',
+          appState: 'background',
+          authorizationActive: true,
+          projectionLive: true,
+          attentionState: 'needs_you',
+          unread,
+          target: decoded.target,
+          route,
+        });
+        const notificationKey = attentionNotificationKey(decoded);
         if (
-          detail.review === null ||
-          !currentReadableServerIdentitiesRef.current.has(
-            detail.serverIdentity,
-          ) ||
-          detail.review.snapshot.attention.state !== 'needs_you' ||
-          detail.review.unread <= 0
+          candidate === null ||
+          notifiedAttention.current.has(notificationKey)
         ) {
-          continue;
+          return;
         }
+        notifiedAttention.current.add(notificationKey);
+        try {
+          await reviewNotificationRuntime.schedule({
+            title: candidate.title,
+            body: candidate.body,
+            data:
+              decoded.target === 'review'
+                ? encodeReviewNotificationData(decoded.request)
+                : encodeSessionAttentionNotificationData(decoded.request),
+          });
+        } catch {
+          notifiedAttention.current.delete(notificationKey);
+          return;
+        }
+        // Delivery already crossed into OS custody. Storage failure must not
+        // schedule a duplicate in this process; a later killed-app launch may
+        // notify again only when durable dedupe was unavailable.
+        await recordAttentionNotification(decoded).catch(() => undefined);
+      };
+      for (const detail of liveDetails) {
         const workspace = workspaceForDetail(liveCatalog, detail);
         const server = liveCatalog.servers.find(
           (candidate) => candidate.serverIdentity === detail.serverIdentity,
@@ -463,48 +544,73 @@ export function WorkspaceProvider({
         ) {
           continue;
         }
-        const request = {
-          serverIdentity: detail.serverIdentity,
-          workspaceId: workspace.id,
-          workspaceRevision: workspace.revision,
-          reviewRevision: detail.review.revision,
-          ...reviewAttentionAnchor(detail.review.snapshot),
-        };
-        let notificationKey: string | null = null;
-        try {
-          const route = admitReviewDeepLink(liveCatalog, liveDetails, request);
-          const candidate = admitReviewNotification({
-            permission: 'granted',
-            appState: 'background',
-            authorizationActive: true,
-            projectionLive: true,
-            attentionState: 'needs_you',
-            unread: detail.review.unread,
-            route,
-          });
-          notificationKey = `${detail.serverIdentity}:${workspace.id}:${detail.review.revision}`;
+        if (
+          detail.review !== null &&
+          detail.review.snapshot.attention.state === 'needs_you' &&
+          detail.review.unread > 0
+        ) {
+          const request = {
+            serverIdentity: detail.serverIdentity,
+            authorizationRevision: server.authorizationRevision,
+            principalGeneration: server.principalGeneration,
+            workspaceId: workspace.id,
+            workspaceRevision: workspace.revision,
+            reviewRevision: detail.review.revision,
+            ...reviewAttentionAnchor(detail.review.snapshot),
+          };
+          try {
+            const route = admitReviewDeepLink(
+              liveCatalog,
+              liveDetails,
+              request,
+            );
+            await schedule(
+              { target: 'review', request },
+              route,
+              detail.review.unread,
+            );
+          } catch {
+            // Stale or incomplete review coordinates remain inert.
+          }
+        }
+        for (const node of projectAttentionNodes(null, detail.lineage)) {
           if (
-            candidate === null ||
-            notifiedReviews.current.has(notificationKey)
-          )
+            node.state !== 'needs_you' ||
+            node.identity === null ||
+            node.revision === null
+          ) {
             continue;
-          notifiedReviews.current.add(notificationKey);
-          await reviewNotificationRuntime.schedule({
-            title: candidate.title,
-            body: candidate.body,
-            data: encodeReviewNotificationData(request),
-          });
-        } catch {
-          // Stale/incomplete coordinates and scheduling failures stay retriable.
-          if (notificationKey !== null)
-            notifiedReviews.current.delete(notificationKey);
+          }
+          const request = {
+            serverIdentity: detail.serverIdentity,
+            authorizationRevision: server.authorizationRevision,
+            principalGeneration: server.principalGeneration,
+            workspaceId: workspace.id,
+            workspaceRevision: workspace.revision,
+            nodeKind: node.identity.kind,
+            nodeId: node.identity.id,
+            nodeRevision: node.revision,
+          };
+          try {
+            const route = admitSessionAttentionDeepLink({
+              catalog: liveCatalog,
+              details: liveDetails,
+              request,
+              retainedSessions: retainedSessionsRef.current,
+            });
+            await schedule({ target: 'session', request }, route, 0);
+          } catch {
+            // A question without an exact retained session remains visible but
+            // cannot create a notification or navigation capability.
+          }
         }
       }
     },
-    [],
+    [hydrateNotificationStore],
   );
 
   useEffect(() => {
+    void hydrateNotificationStore();
     void reviewNotificationRuntime.configure().catch(() => undefined);
     void reviewNotificationRuntime
       .permission()
@@ -557,7 +663,11 @@ export function WorkspaceProvider({
       removeResponse();
       appStateSubscription.remove();
     };
-  }, [admitNotificationResponse, scheduleLiveReviewNotifications]);
+  }, [
+    admitNotificationResponse,
+    hydrateNotificationStore,
+    scheduleLiveReviewNotifications,
+  ]);
 
   const requestReviewNotificationPermission = useCallback(async () => {
     if (!reviewNotificationRuntime.supported) {
