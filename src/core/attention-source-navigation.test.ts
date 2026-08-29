@@ -14,7 +14,10 @@ import {
   applyAttentionSnapshot,
   createAttentionSourceBoard,
 } from './attention-source-board';
-import { admitAuthoritativeAttentionDeepLink } from './attention-source-navigation';
+import {
+  admitAttentionSourceNotificationDeepLink,
+  admitAuthoritativeAttentionDeepLink,
+} from './attention-source-navigation';
 import { projectAuthoritativeAttentionNodes } from './attention-source-projection';
 import { projectReviewRenderSemantics } from './review-render-semantics';
 import type { SessionSummary } from './types';
@@ -342,6 +345,72 @@ describe('authoritative attention navigation', () => {
         detail: current,
         details: [current],
         node: nodes[0]!,
+        retainedSessions,
+      }),
+    ).toThrow('attention_navigation_not_authorized');
+  });
+
+  it('re-admits a notification only at the exact item revision', () => {
+    const current = detail(board([[reviewSource, [item()]]]));
+    const server = workspaceCompanionFixture.servers[0]!;
+    const request = {
+      authorizationRevision: server.authorizationRevision,
+      itemId: 'item-a',
+      itemRevision: '1',
+      principalGeneration: server.principalGeneration,
+      serverIdentity: server.serverIdentity,
+      sourceId: 'workspace-34',
+      sourceKind: 'review',
+      workspaceId: 'workspace-34',
+      workspaceRevision: '12',
+    };
+    expect(
+      admitAttentionSourceNotificationDeepLink({
+        catalog,
+        details: [current],
+        request,
+        retainedSessions,
+      }),
+    ).toMatchObject({ pathname: '/workspace/[server]/[workspace]' });
+
+    for (const stale of [
+      { ...request, itemRevision: '2' },
+      { ...request, itemId: 'item-gone' },
+      { ...request, sourceId: 'workspace-other' },
+      { ...request, sourceKind: 'orchestration' },
+      { ...request, workspaceRevision: '13' },
+      { ...request, principalGeneration: '99' },
+      { ...request, authorizationRevision: '99' },
+    ]) {
+      expect(() =>
+        admitAttentionSourceNotificationDeepLink({
+          catalog,
+          details: [current],
+          request: stale,
+          retainedSessions,
+        }),
+      ).toThrow('attention_navigation_not_authorized');
+    }
+  });
+
+  it('refuses a notification for a workspace that serves no board', () => {
+    const current = detail(null);
+    const server = workspaceCompanionFixture.servers[0]!;
+    expect(() =>
+      admitAttentionSourceNotificationDeepLink({
+        catalog,
+        details: [current],
+        request: {
+          authorizationRevision: server.authorizationRevision,
+          itemId: 'item-a',
+          itemRevision: '1',
+          principalGeneration: server.principalGeneration,
+          serverIdentity: server.serverIdentity,
+          sourceId: 'workspace-34',
+          sourceKind: 'review',
+          workspaceId: 'workspace-34',
+          workspaceRevision: '12',
+        },
         retainedSessions,
       }),
     ).toThrow('attention_navigation_not_authorized');

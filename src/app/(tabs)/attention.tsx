@@ -103,7 +103,7 @@ export default function AttentionScreen() {
     // A workspace that serves the authoritative board is rendered only from
     // it. Falling back per row would let one workspace show two different
     // answers to "what needs me".
-    if (detail.attention !== null) {
+    if (detail.attention != null) {
       return projectAuthoritativeAttentionNodes(detail.attention).map(
         (node) => {
           let href: ReturnType<
@@ -175,7 +175,7 @@ export default function AttentionScreen() {
 
   const partialBoards = details.filter(
     (candidate) =>
-      candidate.attention !== null &&
+      candidate.attention != null &&
       summarizeAuthoritativeAttention(candidate.attention).partial,
   ).length;
 

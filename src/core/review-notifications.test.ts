@@ -5,6 +5,7 @@ import {
   admitReviewNotification,
   decodeAttentionNotificationData,
   decodeReviewNotificationData,
+  encodeAttentionSourceNotificationData,
   encodeReviewNotificationData,
   encodeSessionAttentionNotificationData,
   mayRequestNotificationPermission,
@@ -202,4 +203,74 @@ test('session notification carries only lookup coordinates and allows zero unrea
   expect(() =>
     decodeAttentionNotificationData({ ...encoded, node_revision: '0' }),
   ).toThrow('review_notification_invalid');
+});
+
+const attentionSourceRequest = {
+  serverIdentity: `sha256:${'a'.repeat(64)}` as ServerIdentity,
+  authorizationRevision: '8',
+  principalGeneration: '3',
+  workspaceId: 'workspace-35',
+  workspaceRevision: '12',
+  sourceKind: 'provider_session',
+  sourceId: 'work-session-34',
+  itemId: 'item-a',
+  itemRevision: '4',
+};
+
+test('round-trips an attention source coordinate and carries no content', () => {
+  const encoded = encodeAttentionSourceNotificationData(attentionSourceRequest);
+  expect(encoded).toEqual({
+    kind: 'automonique_attention_source_v1',
+    server_identity: attentionSourceRequest.serverIdentity,
+    authorization_revision: '8',
+    principal_generation: '3',
+    workspace_id: 'workspace-35',
+    workspace_revision: '12',
+    source_kind: 'provider_session',
+    source_id: 'work-session-34',
+    item_id: 'item-a',
+    item_revision: '4',
+  });
+  expect(decodeAttentionNotificationData(encoded)).toEqual({
+    target: 'attention_source',
+    request: attentionSourceRequest,
+  });
+});
+
+test('refuses an attention source coordinate that is not exactly shaped', () => {
+  const encoded = encodeAttentionSourceNotificationData(attentionSourceRequest);
+  for (const mutation of [
+    { ...encoded, extra: 'x' },
+    { ...encoded, source_kind: 'terminal' },
+    { ...encoded, item_revision: '0' },
+    { ...encoded, item_revision: 'latest' },
+    { ...encoded, server_identity: 'not-a-digest' },
+    Object.fromEntries(
+      Object.entries(encoded).filter(([field]) => field !== 'item_id'),
+    ),
+  ]) {
+    expect(() => decodeAttentionNotificationData(mutation)).toThrow(
+      'review_notification_invalid',
+    );
+  }
+});
+
+test('separates attention source coordinates by source and item revision', () => {
+  const base = attentionNotificationKey({
+    target: 'attention_source',
+    request: attentionSourceRequest,
+  });
+  expect(base).toContain('attention_source');
+  expect(
+    attentionNotificationKey({
+      target: 'attention_source',
+      request: { ...attentionSourceRequest, itemRevision: '5' },
+    }),
+  ).not.toBe(base);
+  expect(
+    attentionNotificationKey({
+      target: 'attention_source',
+      request: { ...attentionSourceRequest, sourceId: 'work-session-99' },
+    }),
+  ).not.toBe(base);
 });

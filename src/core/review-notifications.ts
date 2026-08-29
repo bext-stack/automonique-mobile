@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import type {
+  AdmittedAuthoritativeAttentionRoute,
+  AttentionSourceDeepLinkRequest,
+} from './attention-source-navigation';
+import type {
   AdmittedAttentionRoute,
   ReviewDeepLinkRequest,
   SessionAttentionDeepLinkRequest,
@@ -17,14 +21,14 @@ export interface ReviewNotificationCandidate {
   readonly attentionState:
     'idle' | 'needs_you' | 'working' | 'blocked' | 'done';
   readonly unread: number;
-  readonly target: 'review' | 'session';
-  readonly route: AdmittedAttentionRoute;
+  readonly target: 'review' | 'session' | 'attention_source';
+  readonly route: AdmittedAttentionRoute | AdmittedAuthoritativeAttentionRoute;
 }
 
 export interface AdmittedReviewNotification {
   readonly title: 'Automonique needs you';
   readonly body: 'Open Automonique to inspect the current bounded request.';
-  readonly route: AdmittedAttentionRoute;
+  readonly route: AdmittedAttentionRoute | AdmittedAuthoritativeAttentionRoute;
 }
 
 export type ReviewNotificationData = Readonly<Record<string, unknown>> & {
@@ -54,14 +58,35 @@ export type SessionAttentionNotificationData = Readonly<
   readonly node_revision: string;
 };
 
+export type AttentionSourceNotificationData = Readonly<
+  Record<string, unknown>
+> & {
+  readonly kind: 'automonique_attention_source_v1';
+  readonly server_identity: string;
+  readonly authorization_revision: string;
+  readonly principal_generation: string;
+  readonly workspace_id: string;
+  readonly workspace_revision: string;
+  readonly source_kind: string;
+  readonly source_id: string;
+  readonly item_id: string;
+  readonly item_revision: string;
+};
+
 export type AttentionNotificationData =
-  ReviewNotificationData | SessionAttentionNotificationData;
+  | ReviewNotificationData
+  | SessionAttentionNotificationData
+  | AttentionSourceNotificationData;
 
 export type DecodedAttentionNotification =
   | { readonly target: 'review'; readonly request: ReviewDeepLinkRequest }
   | {
       readonly target: 'session';
       readonly request: SessionAttentionDeepLinkRequest;
+    }
+  | {
+      readonly target: 'attention_source';
+      readonly request: AttentionSourceDeepLinkRequest;
     };
 
 function bounded(value: unknown): string {
@@ -98,6 +123,23 @@ export function encodeReviewNotificationData(
     file_id: request.fileId,
     hunk_id: request.hunkId,
     check_id: request.checkId ?? null,
+  };
+}
+
+export function encodeAttentionSourceNotificationData(
+  request: AttentionSourceDeepLinkRequest,
+): AttentionSourceNotificationData {
+  return {
+    kind: 'automonique_attention_source_v1',
+    server_identity: request.serverIdentity,
+    authorization_revision: request.authorizationRevision,
+    principal_generation: request.principalGeneration,
+    workspace_id: request.workspaceId,
+    workspace_revision: request.workspaceRevision,
+    source_kind: request.sourceKind,
+    source_id: request.sourceId,
+    item_id: request.itemId,
+    item_revision: request.itemRevision,
   };
 }
 
@@ -152,6 +194,41 @@ export function decodeAttentionNotificationData(
     throw new Error('review_notification_invalid');
   }
   const candidate = value as Readonly<Record<string, unknown>>;
+  if (candidate.kind === 'automonique_attention_source_v1') {
+    const fields = [
+      'kind',
+      'server_identity',
+      'authorization_revision',
+      'principal_generation',
+      'workspace_id',
+      'workspace_revision',
+      'source_kind',
+      'source_id',
+      'item_id',
+      'item_revision',
+    ];
+    const sourceKind = bounded(candidate.source_kind);
+    if (
+      !exactFields(candidate, fields) ||
+      !['review', 'orchestration', 'provider_session'].includes(sourceKind)
+    ) {
+      throw new Error('review_notification_invalid');
+    }
+    return {
+      target: 'attention_source',
+      request: {
+        serverIdentity: serverIdentity(candidate.server_identity),
+        authorizationRevision: revision(candidate.authorization_revision),
+        principalGeneration: revision(candidate.principal_generation),
+        workspaceId: bounded(candidate.workspace_id),
+        workspaceRevision: revision(candidate.workspace_revision),
+        sourceKind,
+        sourceId: bounded(candidate.source_id),
+        itemId: bounded(candidate.item_id),
+        itemRevision: revision(candidate.item_revision),
+      },
+    };
+  }
   if (candidate.kind === 'automonique_session_attention_v1') {
     const fields = [
       'kind',
@@ -239,11 +316,18 @@ export function attentionNotificationKey(
           decoded.request.hunkId ?? '',
           decoded.request.checkId ?? '',
         ]
-      : [
-          decoded.request.nodeKind,
-          decoded.request.nodeId,
-          decoded.request.nodeRevision,
-        ];
+      : decoded.target === 'attention_source'
+        ? [
+            decoded.request.sourceKind,
+            decoded.request.sourceId,
+            decoded.request.itemId,
+            decoded.request.itemRevision,
+          ]
+        : [
+            decoded.request.nodeKind,
+            decoded.request.nodeId,
+            decoded.request.nodeRevision,
+          ];
   const request = decoded.request;
   return [
     decoded.target,

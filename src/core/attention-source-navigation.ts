@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import type { SessionSummary } from './types';
-import type { AuthoritativeAttentionNode } from './attention-source-projection';
-import type {
-  AdmittedWorkspaceRoute,
-  WorkspaceCompanionCatalog,
+import {
+  projectAuthoritativeAttentionNodes,
+  type AuthoritativeAttentionNode,
+} from './attention-source-projection';
+import {
+  admitWorkspaceDeepLink,
+  type AdmittedWorkspaceRoute,
+  type ServerIdentity,
+  type WorkspaceCompanionCatalog,
 } from './workspace-companion';
-import { admitWorkspaceDeepLink } from './workspace-companion';
 import type { WorkspaceCatalogDetail } from './workspace-v2-catalog';
 import {
   admitReviewDeepLink,
@@ -28,6 +32,23 @@ import {
 
 export type AdmittedAuthoritativeAttentionRoute =
   AdmittedReviewRoute | AdmittedWorkspaceRoute;
+
+/**
+ * The content-free coordinate a notification carries. It names the exact
+ * source and the exact item revision the alert was raised at, and nothing
+ * about what the item says.
+ */
+export interface AttentionSourceDeepLinkRequest {
+  readonly serverIdentity: ServerIdentity;
+  readonly authorizationRevision: string;
+  readonly principalGeneration: string;
+  readonly workspaceId: string;
+  readonly workspaceRevision: string;
+  readonly sourceKind: string;
+  readonly sourceId: string;
+  readonly itemId: string;
+  readonly itemRevision: string;
+}
 
 export class AuthoritativeAttentionNavigationError extends Error {
   constructor(readonly category: string) {
@@ -66,7 +87,7 @@ export function admitAuthoritativeAttentionDeepLink(options: {
   // The board is keyed by workspace; a row from another workspace's board
   // cannot borrow this one's navigation.
   if (
-    detail.attention === null ||
+    detail.attention == null ||
     detail.attention.target.userWorkspace !== workspace.id
   ) {
     refuse();
@@ -139,5 +160,57 @@ export function admitAuthoritativeAttentionDeepLink(options: {
     workSessionId: session.id,
     workspaceId: workspace.id,
     workspaceRevision: workspace.revision,
+  });
+}
+
+/**
+ * Re-resolve a notification coordinate against the board this client holds
+ * now. The alert supplies no route: the source must still be inventoried and
+ * available, and the item must still be published at exactly the revision the
+ * alert named. A newer revision means the alert described a state that has
+ * already moved, so it opens nothing rather than something adjacent.
+ */
+export function admitAttentionSourceNotificationDeepLink(options: {
+  readonly catalog: WorkspaceCompanionCatalog;
+  readonly details: readonly WorkspaceCatalogDetail[];
+  readonly request: AttentionSourceDeepLinkRequest;
+  readonly retainedSessions: readonly SessionSummary[];
+}): AdmittedAuthoritativeAttentionRoute {
+  const { catalog, details, request, retainedSessions } = options;
+  const server = catalog.servers.find(
+    (candidate) => candidate.serverIdentity === request.serverIdentity,
+  );
+  if (
+    server === undefined ||
+    server.authorizationRevision !== request.authorizationRevision ||
+    server.principalGeneration !== request.principalGeneration
+  ) {
+    refuse();
+  }
+  const detail = details.find(
+    (candidate) =>
+      candidate.serverIdentity === request.serverIdentity &&
+      candidate.workspaceId === request.workspaceId,
+  );
+  if (
+    detail === undefined ||
+    detail.workspaceRevision !== request.workspaceRevision ||
+    detail.attention == null
+  ) {
+    refuse();
+  }
+  const node = projectAuthoritativeAttentionNodes(detail.attention).find(
+    (candidate) =>
+      candidate.source.kind === request.sourceKind &&
+      candidate.source.id === request.sourceId &&
+      candidate.itemId === request.itemId,
+  );
+  if (node === undefined || node.revision !== request.itemRevision) refuse();
+  return admitAuthoritativeAttentionDeepLink({
+    catalog,
+    detail,
+    details,
+    node,
+    retainedSessions,
   });
 }

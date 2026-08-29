@@ -281,6 +281,7 @@ function catalogBuild(
       workspaceId: workspace.id,
       workspaceRevision: workspace.revision,
       lineageAvailable: false,
+      attention: null,
       lineage: null,
       sessionBindings: [],
       review: null,
@@ -878,6 +879,7 @@ test('lineage attention notifications stay lookup-only across cold start, delive
       {
         ...built.details[0]!,
         lineageAvailable: true,
+        attention: null,
         lineage: {
           workspace: 'workspace-34',
           external_work_items: [],
@@ -1170,6 +1172,7 @@ test('cold-start and already-background refreshes admit and schedule exact notif
         workspaceId: workspace.id,
         workspaceRevision: workspace.revision,
         lineageAvailable: false,
+        attention: null,
         lineage: null,
         sessionBindings: [],
         review: {
