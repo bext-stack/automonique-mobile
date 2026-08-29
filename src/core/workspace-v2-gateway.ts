@@ -63,9 +63,16 @@ import {
   type ReviewV2ReceiptStore,
 } from './review-v2-receipts';
 import {
+  MOBILE_CONFIRMED_REVIEW_EFFECT_GRANTS,
+  MOBILE_DIRECT_REVIEW_EFFECT_GRANTS,
   MOBILE_DIRECT_REVIEW_EFFECT_KINDS,
+  MOBILE_PULL_REQUEST_REVIEW_EFFECT_KINDS,
+  isConfirmedReviewEffectKind,
   unavailableReviewEffectCategory,
+  type MobileConfirmedReviewAction,
   type MobileDirectReviewAction,
+  type MobilePullRequestReviewAction,
+  type MobilePullRequestReviewEffectKind,
   type MobileSupportedReviewAction,
   type MobileSupportedReviewEffectKind,
 } from './mobile-review-effects';
@@ -83,6 +90,7 @@ const PROJECT_PAGE_LIMIT = 128n;
 const MAX_PROJECT_PAGES = 64;
 const MAX_PROJECT_RECORDS = 1_024;
 const NO_MOBILE_REVIEW_EFFECT_KINDS = Object.freeze([] as const);
+const MAX_PULL_REQUEST_TITLE_BYTES = 256;
 
 export type WorkspaceLifecycleIntent = Extract<
   WorkContextMutationIntent,
@@ -172,6 +180,58 @@ export interface PreparedCheckRerun {
   readonly receiptCorrelationDigest: ReviewReceiptCorrelationDigestValue;
 }
 
+/**
+ * One generation-bound, server-issued, inert pull-request confirmation.
+ *
+ * Every authority-bearing field is copied out of the capability slot the
+ * server minted from its own mutation-free preflight. The client contributes
+ * only the human title on open and update; it never computes a revision, a
+ * head, a pull-request identity, or either digest.
+ */
+export interface PreparedPullRequestAction {
+  readonly project: ProjectIdValue;
+  readonly workspace: ReviewWorkspaceIdentity;
+  readonly workspaceRevision: bigint;
+  readonly snapshotRevision: bigint;
+  readonly authority: ReviewAuthority;
+  readonly action: MobilePullRequestReviewAction;
+  readonly confirmationDigest: ReviewConfirmationDigest;
+  readonly receiptCorrelationDigest: ReviewReceiptCorrelationDigestValue;
+  /** Server-observed pull-request identity. Absent for open. */
+  readonly pullRequestId: string | null;
+  /** Server-observed head being merged. Merge only; never client-derived. */
+  readonly expectedHeadRevision: string | null;
+  /** Server-asserted merge readiness. Merge only. */
+  readonly readiness: 'ready' | null;
+}
+
+/**
+ * What the server will actually let this delegation do to the pull request,
+ * for the render layer to decide which controls exist at all.
+ *
+ * A slot is present only when the server minted it *and* the delegation
+ * carries the matching grant. It deliberately carries no confirmation or
+ * correlation digest: deciding that a control exists must not be able to send
+ * anything. The digests are minted separately, at confirmation time.
+ */
+export interface ReviewPullRequestGrant {
+  readonly authority: ReviewAuthority;
+  readonly expectedPullRequestRevision: bigint;
+  readonly pullRequestId: string | null;
+  readonly expectedHeadRevision: string | null;
+  readonly readiness: 'ready' | null;
+}
+
+export interface ReviewPullRequestGrants {
+  readonly project: ProjectIdValue;
+  readonly workspace: ReviewWorkspaceIdentity;
+  readonly workspaceRevision: bigint;
+  readonly snapshotRevision: bigint;
+  readonly open_pull_request: ReviewPullRequestGrant | null;
+  readonly update_pull_request: ReviewPullRequestGrant | null;
+  readonly merge_pull_request: ReviewPullRequestGrant | null;
+}
+
 export interface WorkspaceV2Gateway {
   readonly authorizationScope: WorkspaceV2AuthorizationScope;
   readonly reviewEffectKinds: readonly MobileSupportedReviewEffectKind[];
@@ -221,6 +281,32 @@ export interface WorkspaceV2Gateway {
   ): Promise<PreparedCheckRerun>;
   confirmCheckRerun(
     prepared: PreparedCheckRerun,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ReviewActionSubmission>;
+  /**
+   * Read which pull-request families the server has actually earned for this
+   * delegation. The answer is the render layer's only licence to draw a
+   * control; an absent slot means the control does not exist.
+   */
+  loadReviewPullRequestGrants(
+    project: string,
+    workspace: ReviewWorkspaceIdentity,
+    expectedWorkspaceRevision: bigint,
+    expectedRevision: bigint,
+    signal?: AbortSignal,
+  ): Promise<ReviewPullRequestGrants>;
+  previewPullRequestAction(
+    project: string,
+    workspace: ReviewWorkspaceIdentity,
+    expectedWorkspaceRevision: bigint,
+    expectedRevision: bigint,
+    kind: MobilePullRequestReviewEffectKind,
+    title: string | null,
+    signal?: AbortSignal,
+  ): Promise<PreparedPullRequestAction>;
+  confirmPullRequestAction(
+    prepared: PreparedPullRequestAction,
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<ReviewActionSubmission>;
@@ -340,7 +426,7 @@ interface WorkspaceV2Client {
   executeConfirmedReviewAction(
     workspace: ReviewWorkspaceIdentity,
     expectedRevision: ReturnType<typeof WorkContextRevision>,
-    action: Extract<ReviewAction, { readonly kind: 'rerun_check' }>,
+    action: MobileConfirmedReviewAction,
     idempotencyKey: ReturnType<typeof IdempotencyKey>,
     confirmationDigest: ReviewConfirmationDigest,
     expectedWorkspaceRevision: ReturnType<typeof WorkContextRevision>,
@@ -678,14 +764,14 @@ async function reviewActionDigest(
   expectedRevision: bigint,
   authority: ReviewAuthority,
   action: ReviewAction,
-  rerunRecovery: {
+  confirmedRecovery: {
     readonly confirmationDigest: ReviewConfirmationDigest;
     readonly expectedWorkspaceRevision: bigint;
     readonly receiptCorrelationDigest: ReviewReceiptCorrelationDigestValue;
   } | null = null,
 ): Promise<string> {
   const coordinates =
-    rerunRecovery === null
+    confirmedRecovery === null
       ? {
           schema: 'automonique.mobile-review-action-digest/v1',
           workspace,
@@ -700,7 +786,10 @@ async function reviewActionDigest(
           expectedRevision,
           authority,
           action,
-          rerunRecovery,
+          // Field name kept from the rerun-only generation of this schema so
+          // that already-persisted v3 handles keep the digest they were
+          // written with. The pull-request families share the same lane.
+          rerunRecovery: confirmedRecovery,
         };
   const canonical = JSON.stringify(coordinates, (_key, value: unknown) =>
     typeof value === 'bigint' ? value.toString() : value,
@@ -788,6 +877,7 @@ export function createWorkspaceV2Gateway(
   });
   const pendingPreviews = new WeakSet<PreparedWorkspaceMutation>();
   const pendingCheckReruns = new WeakSet<PreparedCheckRerun>();
+  const pendingPullRequestActions = new WeakSet<PreparedPullRequestAction>();
   const projectSnapshots = new Map<
     ProjectIdValue,
     readonly WorkContextRecord[]
@@ -803,29 +893,26 @@ export function createWorkspaceV2Gateway(
   };
   const receiptStore = options.receiptStore;
   const reviewReceiptStore = options.reviewReceiptStore;
+  const delegatedActions = authorization.actions as readonly string[];
+  const holdsEveryGrant = (grants: readonly string[]): boolean =>
+    grants.every((grant) => delegatedActions.includes(grant));
+  // Each confirmed family is tested against its own grant set, never against a
+  // shared "can act on pull requests" summary. A delegation carrying open and
+  // update therefore yields exactly those two kinds and no merge kind.
   const reviewEffectKinds: readonly MobileSupportedReviewEffectKind[] =
     reviewReceiptStore === undefined
       ? NO_MOBILE_REVIEW_EFFECT_KINDS
       : Object.freeze([
-          ...((authorization.actions as readonly string[]).includes(
-            'execute_review_action',
-          ) &&
-          (authorization.actions as readonly string[]).includes(
-            'get_review_receipt',
-          )
+          ...(holdsEveryGrant(MOBILE_DIRECT_REVIEW_EFFECT_GRANTS)
             ? MOBILE_DIRECT_REVIEW_EFFECT_KINDS
             : []),
-          ...((authorization.actions as readonly string[]).includes(
-            'get_review_capabilities',
-          ) &&
-          (authorization.actions as readonly string[]).includes(
-            'rerun_check',
-          ) &&
-          (authorization.actions as readonly string[]).includes(
-            'get_review_receipt',
-          )
-            ? (['rerun_check'] as const)
-            : []),
+          ...(
+            Object.keys(
+              MOBILE_CONFIRMED_REVIEW_EFFECT_GRANTS,
+            ) as (keyof typeof MOBILE_CONFIRMED_REVIEW_EFFECT_GRANTS)[]
+          ).filter((kind) =>
+            holdsEveryGrant(MOBILE_CONFIRMED_REVIEW_EFFECT_GRANTS[kind]),
+          ),
         ]);
 
   function requireDelegatedAction(action: string): void {
@@ -901,7 +988,7 @@ export function createWorkspaceV2Gateway(
     readonly authority: ReviewAuthority;
     readonly action: MobileSupportedReviewAction;
     readonly idempotencyKey: string;
-    readonly rerunRecovery: {
+    readonly confirmedRecovery: {
       readonly confirmationDigest: ReviewConfirmationDigest;
       readonly expectedWorkspaceRevision: bigint;
       readonly receiptCorrelationDigest: ReviewReceiptCorrelationDigestValue;
@@ -927,7 +1014,8 @@ export function createWorkspaceV2Gateway(
         'user_workspace' | 'attempt_workspace',
       workspace_id: 'id' in options.workspace ? options.workspace.id : '',
       expected_revision: options.expectedRevision.toString(),
-      authority_kind: options.authority.kind as 'review' | 'ci',
+      authority_kind: options.authority
+        .kind as ReviewV2ReceiptHandle['authority_kind'],
       authority_id: options.authority.id,
       actor_id: authorization.actor_id,
       action_kind: options.action.kind,
@@ -936,14 +1024,14 @@ export function createWorkspaceV2Gateway(
         options.expectedRevision,
         options.authority,
         options.action,
-        options.rerunRecovery,
+        options.confirmedRecovery,
       ),
       idempotency_key: idempotencyKey,
       created_at_ms: BigInt(now()).toString(),
       expected_workspace_revision:
-        options.rerunRecovery?.expectedWorkspaceRevision.toString() ?? null,
+        options.confirmedRecovery?.expectedWorkspaceRevision.toString() ?? null,
       receipt_correlation_digest:
-        options.rerunRecovery?.receiptCorrelationDigest ?? null,
+        options.confirmedRecovery?.receiptCorrelationDigest ?? null,
     };
     let inserted = false;
     try {
@@ -1005,6 +1093,180 @@ export function createWorkspaceV2Gateway(
       receipt,
       projectionRefreshRequired: true,
     };
+  }
+
+  async function readReviewCapabilities(
+    project: ProjectIdValue,
+    workspace: ReviewWorkspaceIdentity,
+    expectedWorkspaceRevision: bigint,
+    expectedRevision: bigint,
+    signal: AbortSignal | undefined,
+  ): Promise<ReviewCapabilities> {
+    const response = await guarded(signal, (combined) =>
+      options.client.getReviewCapabilities(project, workspace, combined),
+    );
+    if (response.kind === 'platform_v2_refused') refusal(response.refusal);
+    const capabilities: ReviewCapabilities = response.capabilities;
+    if (
+      capabilities.project !== project ||
+      !sameWorkContextIdentity(capabilities.workspace, workspace) ||
+      capabilities.snapshot_revision !==
+        WorkContextRevision(expectedRevision) ||
+      capabilities.workspace_revision !==
+        WorkContextRevision(expectedWorkspaceRevision)
+    ) {
+      throw new WorkspaceV2GatewayError('review_capabilities_stale');
+    }
+    return capabilities;
+  }
+
+  /**
+   * Bind a pull-request effect to the exact workspace and review generation it
+   * was rendered from, and refuse a pull-request projection the server has not
+   * freshly observed.
+   */
+  function requirePullRequestTarget(
+    project: ProjectIdValue,
+    workspace: ReviewWorkspaceIdentity,
+    expectedWorkspaceRevision: bigint,
+    expectedRevision: bigint,
+  ): ReviewSnapshot {
+    requireProject(project);
+    requireReviewWorkspaceInSnapshot(projectSnapshots, project, workspace);
+    if (
+      !('id' in workspace) ||
+      snapshotRecord(projectSnapshots, project, workspace.kind, workspace.id)
+        .revision !== WorkContextRevision(expectedWorkspaceRevision)
+    ) {
+      throw new WorkspaceV2GatewayError('workspace_target_revision_stale');
+    }
+    const snapshot = reviewSnapshots.get(reviewSnapshotKey(project, workspace));
+    if (
+      snapshot === undefined ||
+      snapshot.revision !== WorkContextRevision(expectedRevision) ||
+      snapshot.pull_request.freshness.state !== 'fresh'
+    ) {
+      throw new WorkspaceV2GatewayError('review_target_revision_stale');
+    }
+    return snapshot;
+  }
+
+  /**
+   * Project one capability slot, or null. Null is returned both when the
+   * server withheld the slot and when this delegation does not carry the
+   * matching grant: in either case the family is not available to this actor,
+   * and the caller must render nothing rather than something disabled.
+   */
+  function pullRequestGrant(
+    kind: MobilePullRequestReviewEffectKind,
+    capabilities: ReviewCapabilities,
+    snapshot: ReviewSnapshot,
+  ): ReviewPullRequestGrant | null {
+    if (!holdsEveryGrant(MOBILE_CONFIRMED_REVIEW_EFFECT_GRANTS[kind])) {
+      return null;
+    }
+    const slot = capabilities[kind];
+    if (slot === null) return null;
+    if (!sameReviewAuthority(slot.authority, snapshot.pull_request.authority)) {
+      throw new WorkspaceV2GatewayError('review_pull_request_capability_stale');
+    }
+    return {
+      authority: slot.authority,
+      expectedPullRequestRevision: slot.expected_pull_request_revision,
+      pullRequestId: 'pull_request_id' in slot ? slot.pull_request_id : null,
+      expectedHeadRevision:
+        'expected_head_revision' in slot ? slot.expected_head_revision : null,
+      readiness: 'readiness' in slot ? slot.readiness : null,
+    };
+  }
+
+  function pullRequestTitle(value: string | null): string {
+    if (
+      value === null ||
+      value.length === 0 ||
+      new TextEncoder().encode(value).byteLength >
+        MAX_PULL_REQUEST_TITLE_BYTES ||
+      /\p{Cc}/u.test(value)
+    ) {
+      throw new WorkspaceV2GatewayError('review_pull_request_title_invalid');
+    }
+    return value;
+  }
+
+  /**
+   * Build the wire action out of the capability slot. The title is the only
+   * client contribution, and merge accepts none at all: its head, its
+   * pull-request identity and its revision are all the server's own reading.
+   */
+  function pullRequestAction(
+    kind: MobilePullRequestReviewEffectKind,
+    grant: ReviewPullRequestGrant,
+    title: string | null,
+  ): MobilePullRequestReviewAction {
+    const expectedPullRequestRevision = WorkContextRevision(
+      grant.expectedPullRequestRevision,
+    );
+    if (kind === 'open_pull_request') {
+      return {
+        kind,
+        payload: {
+          expected_pull_request_revision: expectedPullRequestRevision,
+          title: pullRequestTitle(title),
+        },
+      };
+    }
+    if (grant.pullRequestId === null) {
+      throw new WorkspaceV2GatewayError('review_pull_request_capability_stale');
+    }
+    if (kind === 'update_pull_request') {
+      return {
+        kind,
+        payload: {
+          expected_pull_request_revision: expectedPullRequestRevision,
+          pull_request_id: grant.pullRequestId,
+          title: pullRequestTitle(title),
+        },
+      };
+    }
+    if (
+      title !== null ||
+      grant.expectedHeadRevision === null ||
+      grant.readiness !== 'ready'
+    ) {
+      throw new WorkspaceV2GatewayError('review_pull_request_capability_stale');
+    }
+    return {
+      kind,
+      payload: {
+        expected_head_revision: grant.expectedHeadRevision,
+        expected_pull_request_revision: expectedPullRequestRevision,
+        pull_request_id: grant.pullRequestId,
+      },
+    };
+  }
+
+  function fencePullRequestAction(
+    workspace: ReviewWorkspaceIdentity,
+    expectedRevision: bigint,
+    authority: ReviewAuthority,
+    action: MobilePullRequestReviewAction,
+    idempotencyKey: string,
+    snapshot: ReviewSnapshot,
+  ): void {
+    validateReviewActionAgainstSnapshot(
+      {
+        schema: 'automonique.platform/review/v1',
+        platform_version: 2n,
+        actor: authorization.actor_id,
+        authentication: 'user_session',
+        authority,
+        workspace,
+        expected_revision: WorkContextRevision(expectedRevision),
+        idempotency_key: IdempotencyKey(idempotencyKey),
+        action,
+      },
+      snapshot,
+    );
   }
 
   return {
@@ -1239,7 +1501,7 @@ export function createWorkspaceV2Gateway(
         authority,
         action,
         idempotencyKey: idempotencyKeyValue,
-        rerunRecovery: null,
+        confirmedRecovery: null,
         signal,
         send: (idempotencyKey, combined) =>
           options.client.executeReviewAction(
@@ -1401,7 +1663,185 @@ export function createWorkspaceV2Gateway(
         authority: prepared.authority,
         action: prepared.action,
         idempotencyKey: idempotencyKeyValue,
-        rerunRecovery: {
+        confirmedRecovery: {
+          confirmationDigest: prepared.confirmationDigest,
+          expectedWorkspaceRevision: prepared.workspaceRevision,
+          receiptCorrelationDigest: prepared.receiptCorrelationDigest,
+        },
+        signal,
+        send: (idempotencyKey, combined) =>
+          options.client.executeConfirmedReviewAction(
+            prepared.workspace,
+            WorkContextRevision(prepared.snapshotRevision),
+            prepared.action,
+            idempotencyKey,
+            prepared.confirmationDigest,
+            WorkContextRevision(prepared.workspaceRevision),
+            prepared.receiptCorrelationDigest,
+            combined,
+          ),
+      });
+    },
+
+    async loadReviewPullRequestGrants(
+      projectValue,
+      workspace,
+      expectedWorkspaceRevision,
+      expectedRevision,
+      signal,
+    ) {
+      const project = ProjectId(projectValue);
+      const offered = MOBILE_PULL_REQUEST_REVIEW_EFFECT_KINDS.filter((kind) =>
+        reviewEffectKinds.includes(kind),
+      );
+      const snapshot = requirePullRequestTarget(
+        project,
+        workspace,
+        expectedWorkspaceRevision,
+        expectedRevision,
+      );
+      const base = {
+        project,
+        workspace,
+        workspaceRevision: expectedWorkspaceRevision,
+        snapshotRevision: expectedRevision,
+      };
+      // No delegated pull-request grant means no reason to ask the server what
+      // it would have allowed. Nothing is claimed and nothing is read.
+      if (offered.length === 0) {
+        return deepFreeze({
+          ...base,
+          open_pull_request: null,
+          update_pull_request: null,
+          merge_pull_request: null,
+        });
+      }
+      requireDelegatedAction('get_review_capabilities');
+      const capabilities = await readReviewCapabilities(
+        project,
+        workspace,
+        expectedWorkspaceRevision,
+        expectedRevision,
+        signal,
+      );
+      return deepFreeze({
+        ...base,
+        open_pull_request: pullRequestGrant(
+          'open_pull_request',
+          capabilities,
+          snapshot,
+        ),
+        update_pull_request: pullRequestGrant(
+          'update_pull_request',
+          capabilities,
+          snapshot,
+        ),
+        merge_pull_request: pullRequestGrant(
+          'merge_pull_request',
+          capabilities,
+          snapshot,
+        ),
+      });
+    },
+
+    async previewPullRequestAction(
+      projectValue,
+      workspace,
+      expectedWorkspaceRevision,
+      expectedRevision,
+      kind,
+      title,
+      signal,
+    ) {
+      for (const grant of MOBILE_CONFIRMED_REVIEW_EFFECT_GRANTS[kind]) {
+        requireDelegatedAction(grant);
+      }
+      if (reviewReceiptStore === undefined) {
+        throw new WorkspaceV2GatewayError('review_effect_unavailable');
+      }
+      const project = ProjectId(projectValue);
+      const snapshot = requirePullRequestTarget(
+        project,
+        workspace,
+        expectedWorkspaceRevision,
+        expectedRevision,
+      );
+      const capabilities = await readReviewCapabilities(
+        project,
+        workspace,
+        expectedWorkspaceRevision,
+        expectedRevision,
+        signal,
+      );
+      const grant = pullRequestGrant(kind, capabilities, snapshot);
+      const slot = capabilities[kind];
+      if (grant === null || slot === null) {
+        throw new WorkspaceV2GatewayError(
+          'review_pull_request_capability_withheld',
+        );
+      }
+      const action = pullRequestAction(kind, grant, title);
+      fencePullRequestAction(
+        workspace,
+        expectedRevision,
+        grant.authority,
+        action,
+        'mobile-pull-request-preview',
+        snapshot,
+      );
+      const prepared = deepFreeze({
+        project,
+        workspace,
+        workspaceRevision: expectedWorkspaceRevision,
+        snapshotRevision: expectedRevision,
+        authority: grant.authority,
+        action,
+        // Verbatim server material. Nothing here is derived on the client.
+        confirmationDigest: slot.confirmation_digest,
+        receiptCorrelationDigest: slot.receipt_correlation_digest,
+        pullRequestId: grant.pullRequestId,
+        expectedHeadRevision: grant.expectedHeadRevision,
+        readiness: grant.readiness,
+      });
+      pendingPullRequestActions.add(prepared);
+      return prepared;
+    },
+
+    async confirmPullRequestAction(prepared, idempotencyKeyValue, signal) {
+      if (!pendingPullRequestActions.delete(prepared)) {
+        throw new WorkspaceV2GatewayError(
+          'review_confirmation_missing_or_replayed',
+        );
+      }
+      for (const grant of MOBILE_CONFIRMED_REVIEW_EFFECT_GRANTS[
+        prepared.action.kind
+      ]) {
+        requireDelegatedAction(grant);
+      }
+      const snapshot = requirePullRequestTarget(
+        prepared.project,
+        prepared.workspace,
+        prepared.workspaceRevision,
+        prepared.snapshotRevision,
+      );
+      // Re-fence at confirmation. The preview is inert; this is the first and
+      // only point at which the exact target is allowed to still be current.
+      fencePullRequestAction(
+        prepared.workspace,
+        prepared.snapshotRevision,
+        prepared.authority,
+        prepared.action,
+        idempotencyKeyValue,
+        snapshot,
+      );
+      return submitReviewEffect({
+        project: prepared.project,
+        workspace: prepared.workspace,
+        expectedRevision: prepared.snapshotRevision,
+        authority: prepared.authority,
+        action: prepared.action,
+        idempotencyKey: idempotencyKeyValue,
+        confirmedRecovery: {
           confirmationDigest: prepared.confirmationDigest,
           expectedWorkspaceRevision: prepared.workspaceRevision,
           receiptCorrelationDigest: prepared.receiptCorrelationDigest,
@@ -1459,7 +1899,10 @@ export function createWorkspaceV2Gateway(
         id: handle.workspace_id,
       } as ReviewWorkspaceIdentity;
       const response = await guarded(signal, (combined) => {
-        if (handle.action_kind === 'rerun_check') {
+        // Every confirmed-lane write recovers through its own correlation
+        // proof. Falling back to the generic lookup could attribute someone
+        // else's provider attempt to this handle, so it is never attempted.
+        if (isConfirmedReviewEffectKind(handle.action_kind)) {
           if (
             handle.expected_workspace_revision === null ||
             handle.receipt_correlation_digest === null

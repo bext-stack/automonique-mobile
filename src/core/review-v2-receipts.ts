@@ -8,6 +8,11 @@ import {
   type ReviewActionReceipt,
 } from '@automonique/sdk';
 
+import {
+  isConfirmedReviewEffectKind,
+  isPullRequestReviewEffectKind,
+} from './mobile-review-effects';
+
 export const REVIEW_V2_RECEIPT_HANDLE_SCHEMA =
   'automonique.mobile-review-v2-receipt-handle/v3' as const;
 const LEGACY_REVIEW_V2_RECEIPT_HANDLE_SCHEMA =
@@ -37,7 +42,7 @@ export interface ReviewV2ReceiptHandle {
   readonly workspace_kind: 'user_workspace' | 'attempt_workspace';
   readonly workspace_id: string;
   readonly expected_revision: string;
-  readonly authority_kind: 'review' | 'ci';
+  readonly authority_kind: 'review' | 'ci' | 'pull_request';
   readonly authority_id: string;
   readonly actor_id: string;
   readonly action_kind:
@@ -45,7 +50,10 @@ export interface ReviewV2ReceiptHandle {
     | 'approve_review'
     | 'send_comment_to_agent'
     | 'batch_send_comments_to_agent'
-    | 'rerun_check';
+    | 'rerun_check'
+    | 'open_pull_request'
+    | 'update_pull_request'
+    | 'merge_pull_request';
   readonly action_digest: string;
   readonly idempotency_key: string;
   readonly created_at_ms: string;
@@ -107,6 +115,18 @@ function workContextRevision(value: unknown): string {
   } catch {
     throw new Error('review_receipt_handle_invalid');
   }
+}
+
+/**
+ * The one authority a given action family may ever be recorded under. A
+ * pull-request write is never filed under the review authority, so a handle
+ * cannot be replayed into a lane whose grant the actor does not hold.
+ */
+export function receiptAuthorityKind(
+  actionKind: ReviewV2ReceiptHandle['action_kind'],
+): ReviewV2ReceiptHandle['authority_kind'] {
+  if (actionKind === 'rerun_check') return 'ci';
+  return isPullRequestReviewEffectKind(actionKind) ? 'pull_request' : 'review';
 }
 
 function admitReceiptCorrelationDigest(value: unknown): string {
@@ -176,7 +196,7 @@ function admitReceiptHandle(
   if (
     !/^sha256:[0-9a-f]{64}$/u.test(authorizationDigest) ||
     !/^sha256:[0-9a-f]{64}$/u.test(actionDigest) ||
-    (actionKind === 'rerun_check') !== (authorityKind === 'ci')
+    authorityKind !== receiptAuthorityKind(actionKind)
   ) {
     throw new Error('review_receipt_handle_invalid');
   }
@@ -199,6 +219,7 @@ function admitReceiptHandle(
   if (schema !== REVIEW_V2_RECEIPT_HANDLE_SCHEMA) {
     return base as LegacyReviewV2ReceiptHandle | LegacyReviewV1ReceiptHandle;
   }
+  const confirmed = isConfirmedReviewEffectKind(actionKind);
   const expectedWorkspaceRevision =
     candidate.expected_workspace_revision === null
       ? null
@@ -210,7 +231,7 @@ function admitReceiptHandle(
   if (
     (expectedWorkspaceRevision === null) !==
       (receiptCorrelationDigest === null) ||
-    (actionKind === 'rerun_check') !== (receiptCorrelationDigest !== null)
+    confirmed !== (receiptCorrelationDigest !== null)
   ) {
     throw new Error('review_receipt_handle_invalid');
   }
@@ -233,8 +254,11 @@ export function admitReviewV2ReceiptHandle(
       'send_comment_to_agent',
       'batch_send_comments_to_agent',
       'rerun_check',
+      'open_pull_request',
+      'update_pull_request',
+      'merge_pull_request',
     ],
-    ['review', 'ci'],
+    ['review', 'ci', 'pull_request'],
   ) as ReviewV2ReceiptHandle;
 }
 

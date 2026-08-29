@@ -46,7 +46,9 @@ import type {
   ReviewActionSubmission,
   ReadOnlyWorkspaceV2Gateway,
   PreparedCheckRerun,
+  PreparedPullRequestAction,
   PreparedWorkspaceMutation,
+  ReviewPullRequestGrants,
   WorkspaceLifecycleIntent,
   WorkspaceMutationConfirmation,
   WorkspaceMutationReconciliation,
@@ -55,6 +57,7 @@ import type {
 import type { WorkspaceV2ReceiptHandle } from '@/core/workspace-v2-receipts';
 import type {
   MobileDirectReviewAction,
+  MobilePullRequestReviewEffectKind,
   MobileSupportedReviewAction,
 } from '@/core/mobile-review-effects';
 import type { SessionSummary } from '@/core/types';
@@ -145,6 +148,24 @@ interface WorkspaceContextValue {
   }) => Promise<PreparedCheckRerun>;
   readonly confirmCheckRerun: (
     prepared: PreparedCheckRerun,
+    idempotencyKey: string,
+  ) => Promise<ReviewActionSubmission>;
+  readonly loadReviewPullRequestGrants: (options: {
+    readonly projectId: string;
+    readonly workspaceId: string;
+    readonly workspaceRevision: string;
+    readonly reviewRevision: string;
+  }) => Promise<ReviewPullRequestGrants>;
+  readonly previewPullRequestAction: (options: {
+    readonly projectId: string;
+    readonly workspaceId: string;
+    readonly workspaceRevision: string;
+    readonly reviewRevision: string;
+    readonly kind: MobilePullRequestReviewEffectKind;
+    readonly title: string | null;
+  }) => Promise<PreparedPullRequestAction>;
+  readonly confirmPullRequestAction: (
+    prepared: PreparedPullRequestAction,
     idempotencyKey: string,
   ) => Promise<ReviewActionSubmission>;
   readonly reconcileReviewAction: (
@@ -1213,6 +1234,169 @@ export function WorkspaceProvider({
     [gateway, profile, refresh],
   );
 
+  /**
+   * Ask the server which pull-request families it has actually earned for this
+   * delegation at this exact generation. The render layer draws a control only
+   * for a slot this returns; a withheld slot draws nothing at all.
+   */
+  const loadReviewPullRequestGrants = useCallback(
+    async (options: {
+      readonly projectId: string;
+      readonly workspaceId: string;
+      readonly workspaceRevision: string;
+      readonly reviewRevision: string;
+    }): Promise<ReviewPullRequestGrants> => {
+      if (gateway === null || profile === null) {
+        throw new Error('review_pull_request_grants_unavailable');
+      }
+      const detail = detailsRef.current.find(
+        (candidate) =>
+          candidate.serverIdentity ===
+            gateway.authorizationScope.serverIdentity &&
+          candidate.workspaceId === options.workspaceId &&
+          candidate.workspaceRevision === options.workspaceRevision &&
+          candidate.review?.revision === options.reviewRevision,
+      );
+      const server = catalogRef.current.servers.find(
+        (candidate) =>
+          candidate.serverIdentity ===
+          gateway.authorizationScope.serverIdentity,
+      );
+      if (
+        statusRef.current.phase !== 'live' ||
+        server?.authorization !== 'active' ||
+        server.staleProjectIds.includes(options.projectId) ||
+        detail === undefined
+      ) {
+        throw new Error('review_pull_request_grants_unavailable');
+      }
+      return gateway.loadReviewPullRequestGrants(
+        options.projectId,
+        { kind: 'user_workspace', id: UserWorkspaceId(options.workspaceId) },
+        BigInt(options.workspaceRevision),
+        BigInt(options.reviewRevision),
+      );
+    },
+    [gateway, profile],
+  );
+
+  const previewPullRequestAction = useCallback(
+    async (options: {
+      readonly projectId: string;
+      readonly workspaceId: string;
+      readonly workspaceRevision: string;
+      readonly reviewRevision: string;
+      readonly kind: MobilePullRequestReviewEffectKind;
+      readonly title: string | null;
+    }): Promise<PreparedPullRequestAction> => {
+      if (gateway === null || profile === null || reviewOperation.current) {
+        throw new Error('review_mutation_unavailable');
+      }
+      const detail = detailsRef.current.find(
+        (candidate) =>
+          candidate.serverIdentity ===
+            gateway.authorizationScope.serverIdentity &&
+          candidate.workspaceId === options.workspaceId &&
+          candidate.workspaceRevision === options.workspaceRevision &&
+          candidate.review?.revision === options.reviewRevision,
+      );
+      const server = catalogRef.current.servers.find(
+        (candidate) =>
+          candidate.serverIdentity ===
+          gateway.authorizationScope.serverIdentity,
+      );
+      if (
+        statusRef.current.phase !== 'live' ||
+        server?.authorization !== 'active' ||
+        server.staleProjectIds.includes(options.projectId) ||
+        detail === undefined ||
+        !gateway.reviewEffectKinds.includes(options.kind)
+      ) {
+        throw new Error('review_mutation_unavailable');
+      }
+      reviewOperation.current = true;
+      setReviewBusy(true);
+      try {
+        return await gateway.previewPullRequestAction(
+          options.projectId,
+          { kind: 'user_workspace', id: UserWorkspaceId(options.workspaceId) },
+          BigInt(options.workspaceRevision),
+          BigInt(options.reviewRevision),
+          options.kind,
+          options.title,
+        );
+      } finally {
+        reviewOperation.current = false;
+        setReviewBusy(false);
+      }
+    },
+    [gateway, profile],
+  );
+
+  const confirmPullRequestAction = useCallback(
+    async (
+      prepared: PreparedPullRequestAction,
+      idempotencyKey: string,
+    ): Promise<ReviewActionSubmission> => {
+      if (gateway === null || profile === null || reviewOperation.current) {
+        throw new Error('review_mutation_unavailable');
+      }
+      const detail = detailsRef.current.find(
+        (candidate) =>
+          candidate.serverIdentity ===
+            gateway.authorizationScope.serverIdentity &&
+          candidate.workspaceId ===
+            ('id' in prepared.workspace ? prepared.workspace.id : '') &&
+          candidate.workspaceRevision ===
+            prepared.workspaceRevision.toString() &&
+          candidate.review?.revision === prepared.snapshotRevision.toString(),
+      );
+      const server = catalogRef.current.servers.find(
+        (candidate) =>
+          candidate.serverIdentity ===
+          gateway.authorizationScope.serverIdentity,
+      );
+      if (
+        statusRef.current.phase !== 'live' ||
+        server?.authorization !== 'active' ||
+        server.staleProjectIds.includes(prepared.project) ||
+        detail === undefined ||
+        !gateway.reviewEffectKinds.includes(prepared.action.kind)
+      ) {
+        throw new Error('review_mutation_unavailable');
+      }
+      reviewOperation.current = true;
+      setReviewBusy(true);
+      try {
+        const result = await gateway.confirmPullRequestAction(
+          prepared,
+          idempotencyKey,
+        );
+        if (result.receipt !== null) {
+          const receipt = result.receipt;
+          setReviewReceipts((current) => [
+            {
+              projectId: prepared.project,
+              workspaceId:
+                'id' in prepared.workspace ? prepared.workspace.id : '',
+              actionKind: prepared.action.kind,
+              receipt,
+            },
+            ...current.filter(
+              (projection) =>
+                projection.receipt.idempotency_key !== receipt.idempotency_key,
+            ),
+          ]);
+        }
+        await refresh();
+        return result;
+      } finally {
+        reviewOperation.current = false;
+        setReviewBusy(false);
+      }
+    },
+    [gateway, profile, refresh],
+  );
   const reconcileReviewAction = useCallback(
     async (idempotencyKey: string): Promise<ReviewActionReconciliation> => {
       if (gateway === null || profile === null || reviewOperation.current) {
@@ -1602,6 +1786,9 @@ export function WorkspaceProvider({
         executeReviewAction,
         previewCheckRerun,
         confirmCheckRerun,
+        loadReviewPullRequestGrants,
+        previewPullRequestAction,
+        confirmPullRequestAction,
         reconcileReviewAction,
         prepareWorkspaceMutation,
         confirmWorkspaceMutation,

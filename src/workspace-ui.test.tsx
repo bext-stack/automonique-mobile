@@ -255,6 +255,13 @@ function workspaceValue() {
       identity === WORKSPACE_FIXTURE_IDENTITY && id === workspace.id
         ? detail
         : null,
+    // The default fixture server grants no pull-request capability, which is
+    // what the live server still answers. Tests that need a control say so.
+    loadReviewPullRequestGrants: jest
+      .fn()
+      .mockRejectedValue(new Error('review_pull_request_grants_unavailable')),
+    previewPullRequestAction: jest.fn(),
+    confirmPullRequestAction: jest.fn(),
   };
 }
 
@@ -536,23 +543,24 @@ test('unsupported typed review families stay inert with exact adapter categories
       'effect unavailable',
     ],
     ['Preview exact rerun for check check-1', 'action not delegated'],
-    [
-      'Open pull request',
-      'platform_v2_review_pull_request_adapter_unavailable',
-    ],
-    [
-      'Update pull request',
-      'platform_v2_review_pull_request_adapter_unavailable',
-    ],
-    [
-      'Merge pull request',
-      'platform_v2_review_pull_request_adapter_unavailable',
-    ],
   ] as const;
   for (const [label, category] of expectations) {
     const control = view.getByLabelText(`${label}, unavailable: ${category}`);
     expect(control).toBeDisabled();
     fireEvent.press(control);
+  }
+  // A withheld pull-request capability leaves no control at all, not a
+  // disabled one: there is nothing here for a tap to reach.
+  expect(
+    view.getByLabelText('No pull request controls are available'),
+  ).toBeTruthy();
+  expect(view.queryByLabelText('Earned pull request controls')).toBeNull();
+  for (const label of [
+    'Open pull request',
+    'Update pull request',
+    'Merge pull request',
+  ] as const) {
+    expect(view.queryByText(label)).toBeNull();
   }
   expect(executeReviewAction).not.toHaveBeenCalled();
   expect(view.queryByLabelText('Exact review action confirmation')).toBeNull();
