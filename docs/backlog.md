@@ -113,10 +113,14 @@ Remaining tracked work is grouped in the
   - Partial detail coverage is explicit; cached and offline state is read-only;
     revocation retains server/object tombstones; task notes are scoped to an
     exact workspace revision.
-  - Create/resume and terminal remain visibly unavailable until separately
-    granted production UI adapters exist. Concurrent active multi-server
-    credentials, live-server acceptance, and device evidence remain external
-    gates.
+  - Terminal remains visibly unavailable until a separately granted production
+    UI adapter exists.
+  - A task is findable by search across every authorized host while another
+    server holds mutation authority, and opening it moves the single mutation
+    slot, the retained v1 projection, and the selected profile together so the
+    exact retained session resumes from the phone. Mutation authority stays one
+    server at a time by design; live-server acceptance and device evidence
+    remain external gates.
 
 ## In progress — scoped review and attention controls
 

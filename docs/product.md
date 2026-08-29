@@ -228,12 +228,14 @@ when the lineage origin names the exact attempt and work session that the same
 live Platform v2 read bound to that retained session; the current selected v1
 projection must independently contain its exact target and revision. Cached
 data and revision-scoped drafts survive offline, but non-chat
-destinations and every workspace mutation fail closed. Create/resume remain
-visibly disabled because no production UI adapter binds those intents to
-server-issued previews and receipts yet. Concurrent active credentials for
-multiple servers and live-server acceptance remain pending because the
-credential lifecycle currently admits one active server generation at a time.
-Terminal
+destinations and every workspace mutation fail closed. Each paired server keeps
+its own credential and is read concurrently, so a task can be found on any
+authorized host by search and its retained session resumed from the phone.
+Opening a workspace on another host moves the single mutation slot with it;
+mutation authority stays deliberately one server at a time, and the retained v1
+projection, the workspace gateway, and the selected profile all move together
+so a deep link never resumes a session the current slot does not hold.
+Live-server acceptance remains an external gate. Terminal
 relay, attachments, uploads, and background mutation remain separate
 risk-reviewed work. See
 [workspace-companion-threat-model.md](workspace-companion-threat-model.md).
