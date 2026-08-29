@@ -255,6 +255,13 @@ function workspaceValue() {
       identity === WORKSPACE_FIXTURE_IDENTITY && id === workspace.id
         ? detail
         : null,
+    // The default fixture server grants no pull-request capability, which is
+    // what the live server still answers. Tests that need a control say so.
+    loadReviewPullRequestGrants: jest
+      .fn()
+      .mockRejectedValue(new Error('review_pull_request_grants_unavailable')),
+    previewPullRequestAction: jest.fn(),
+    confirmPullRequestAction: jest.fn(),
   };
 }
 
@@ -536,23 +543,24 @@ test('unsupported typed review families stay inert with exact adapter categories
       'effect unavailable',
     ],
     ['Preview exact rerun for check check-1', 'action not delegated'],
-    [
-      'Open pull request',
-      'platform_v2_review_pull_request_adapter_unavailable',
-    ],
-    [
-      'Update pull request',
-      'platform_v2_review_pull_request_adapter_unavailable',
-    ],
-    [
-      'Merge pull request',
-      'platform_v2_review_pull_request_adapter_unavailable',
-    ],
   ] as const;
   for (const [label, category] of expectations) {
     const control = view.getByLabelText(`${label}, unavailable: ${category}`);
     expect(control).toBeDisabled();
     fireEvent.press(control);
+  }
+  // A withheld pull-request capability leaves no control at all, not a
+  // disabled one: there is nothing here for a tap to reach.
+  expect(
+    view.getByLabelText('No pull request controls are available'),
+  ).toBeTruthy();
+  expect(view.queryByLabelText('Earned pull request controls')).toBeNull();
+  for (const label of [
+    'Open pull request',
+    'Update pull request',
+    'Merge pull request',
+  ] as const) {
+    expect(view.queryByText(label)).toBeNull();
   }
   expect(executeReviewAction).not.toHaveBeenCalled();
   expect(view.queryByLabelText('Exact review action confirmation')).toBeNull();
@@ -2055,3 +2063,239 @@ test.each([
     expect(view.getByText('Retained session unavailable')).toBeTruthy();
   },
 );
+
+const ALL_PULL_REQUEST_GRANTS = [
+  'get_review',
+  'get_review_capabilities',
+  'open_pull_request',
+  'update_pull_request',
+  'merge_pull_request',
+  'get_review_receipt',
+] as const;
+
+/**
+ * Render the review surface with an exact set of delegated grants and an exact
+ * set of capability slots, and hand back the mock the surface asked for its
+ * grants with.
+ */
+async function renderPullRequestSurface(options: {
+  readonly delegatedActions: readonly string[];
+  readonly slots: {
+    readonly open_pull_request?: unknown;
+    readonly update_pull_request?: unknown;
+    readonly merge_pull_request?: unknown;
+  };
+  readonly pullRequest?: Record<string, unknown>;
+}) {
+  const base = workspaceValue();
+  const server = base.catalog.servers[0]!;
+  const workspace = server.workspaces[0]!;
+  const withReview = {
+    ...workspace,
+    navigation: [
+      ...workspace.navigation,
+      { destination: 'review' as const, revision: workspace.revision },
+    ],
+  };
+  const snapshot = {
+    ...detail.review.snapshot,
+    ...(options.pullRequest === undefined
+      ? {}
+      : {
+          pull_request: {
+            ...detail.review.snapshot.pull_request,
+            ...options.pullRequest,
+          },
+        }),
+  };
+  const pullRequestDetail = {
+    ...detail,
+    review: {
+      ...detail.review,
+      snapshot,
+      pullRequest: snapshot.pull_request,
+    },
+  };
+  const loadReviewPullRequestGrants = jest.fn().mockResolvedValue({
+    project: workspace.projectId,
+    workspace: { kind: 'user_workspace', id: workspace.id },
+    workspaceRevision: BigInt(workspace.revision),
+    snapshotRevision: BigInt(detail.review.revision),
+    open_pull_request: options.slots.open_pull_request ?? null,
+    update_pull_request: options.slots.update_pull_request ?? null,
+    merge_pull_request: options.slots.merge_pull_request ?? null,
+  });
+  const previewPullRequestAction = jest.fn();
+  mockUseWorkspaces.mockReturnValue({
+    ...base,
+    catalog: {
+      ...base.catalog,
+      servers: [{ ...server, workspaces: [withReview] }],
+    },
+    details: [pullRequestDetail],
+    reviewBusy: false,
+    reviewReceipts: [],
+    pendingReviewReceipts: [],
+    executeReviewAction: jest.fn(),
+    reconcileReviewAction: jest.fn(),
+    loadReviewPullRequestGrants,
+    previewPullRequestAction,
+    confirmPullRequestAction: jest.fn(),
+    findWorkspace: () => withReview,
+    findDetail: () => pullRequestDetail,
+  });
+  mockUseMobileLifecycle.mockReturnValue({
+    state: {
+      phase: 'ready',
+      profile: { serverIdentity: WORKSPACE_FIXTURE_IDENTITY },
+    },
+    workspaceGateway: {
+      authorizationScope: {
+        serverIdentity: WORKSPACE_FIXTURE_IDENTITY,
+        actions: options.delegatedActions,
+      },
+      // The gateway derives this from the same per-family grant sets, so a
+      // withheld grant is absent here exactly as it is absent from the scope.
+      reviewEffectKinds: PULL_REQUEST_KINDS.filter((kind) =>
+        ['get_review_capabilities', kind, 'get_review_receipt'].every((grant) =>
+          options.delegatedActions.includes(grant),
+        ),
+      ),
+    },
+  });
+  mockRouteParams = {
+    server: WORKSPACE_FIXTURE_IDENTITY,
+    workspace: workspace.id,
+    revision: workspace.revision,
+    destination: 'review',
+    review_revision: detail.review.revision,
+  };
+  const view = await render(<WorkspaceDetailScreen />);
+  await waitFor(() =>
+    expect(loadReviewPullRequestGrants).toHaveBeenCalledTimes(1),
+  );
+  await waitFor(() =>
+    expect(view.queryByLabelText('Earned pull request controls')).toBeTruthy(),
+  );
+  return { previewPullRequestAction, view, workspace };
+}
+
+const PULL_REQUEST_KINDS = [
+  'open_pull_request',
+  'update_pull_request',
+  'merge_pull_request',
+] as const;
+
+const PULL_REQUEST_AUTHORITY = { kind: 'pull_request', id: 'pr-local' };
+
+/**
+ * The withholding demonstration.
+ *
+ * A merge moves code into a protected branch and can start a deployment, so it
+ * is the grant most likely to be held back from a phone. This does not assert
+ * that a disabled merge button says the right thing; it renders the surface and
+ * shows there is no merge control in the tree to press, while the family the
+ * delegation does hold is present and reaches the confirmed preview.
+ */
+test('a delegation without the merge grant renders no merge control while the families it holds still work', async () => {
+  const { previewPullRequestAction, view, workspace } =
+    await renderPullRequestSurface({
+      delegatedActions: ALL_PULL_REQUEST_GRANTS.filter(
+        (action) => action !== 'merge_pull_request',
+      ),
+      // The server read an open, ready pull request and minted both update and
+      // merge. Only the delegation is missing the merge grant.
+      slots: {
+        update_pull_request: {
+          authority: PULL_REQUEST_AUTHORITY,
+          expectedPullRequestRevision: 1n,
+          pullRequestId: '34',
+          expectedHeadRevision: null,
+          readiness: null,
+        },
+      },
+    });
+
+  // There is no merge affordance at all: not a disabled button, not a label,
+  // not a tooltip. `getByLabelText` would find a disabled control; nothing here
+  // finds anything.
+  expect(view.queryByText('Merge pull request')).toBeNull();
+  expect(view.queryByLabelText(/merge pull request/iu)).toBeNull();
+  expect(view.queryByText(/head abc/u)).toBeNull();
+  // Neither does the family whose slot the server did not mint.
+  expect(view.queryByText('Open pull request')).toBeNull();
+
+  // The family it does hold is offered, and is a real control.
+  expect(view.getByText('Update pull request')).toBeTruthy();
+  const update = view.getByLabelText(
+    'Preview exact update pull request, unavailable: title required',
+  );
+  expect(update).toBeDisabled();
+  await act(async () => {
+    fireEvent.changeText(
+      view.getByLabelText('Pull request title'),
+      'Exact bounded title',
+    );
+    await Promise.resolve();
+  });
+  const enabled = view.getByLabelText('Preview exact update pull request');
+  expect(enabled).not.toBeDisabled();
+  await act(async () => {
+    fireEvent.press(enabled);
+    await Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(previewPullRequestAction).toHaveBeenCalledTimes(1),
+  );
+  expect(previewPullRequestAction).toHaveBeenCalledWith({
+    projectId: workspace.projectId,
+    workspaceId: workspace.id,
+    workspaceRevision: workspace.revision,
+    reviewRevision: detail.review.revision,
+    kind: 'update_pull_request',
+    title: 'Exact bounded title',
+  });
+});
+
+test('a fully granted delegation still renders no control for a slot the server withheld', async () => {
+  // Every grant is delegated. The server nonetheless minted only `open`,
+  // because its own preflight found no pull request to update or merge.
+  const { view } = await renderPullRequestSurface({
+    delegatedActions: ALL_PULL_REQUEST_GRANTS,
+    pullRequest: { head_revision: null, id: null, state: 'absent' },
+    slots: {
+      open_pull_request: {
+        authority: PULL_REQUEST_AUTHORITY,
+        expectedPullRequestRevision: 1n,
+        pullRequestId: null,
+        expectedHeadRevision: null,
+        readiness: null,
+      },
+    },
+  });
+  expect(view.getByText('Open pull request')).toBeTruthy();
+  expect(view.queryByText('Update pull request')).toBeNull();
+  expect(view.queryByText('Merge pull request')).toBeNull();
+});
+
+test('a merge control shows the exact head and the readiness the server reported', async () => {
+  const { view } = await renderPullRequestSurface({
+    delegatedActions: ALL_PULL_REQUEST_GRANTS,
+    slots: {
+      merge_pull_request: {
+        authority: PULL_REQUEST_AUTHORITY,
+        expectedPullRequestRevision: 1n,
+        pullRequestId: '34',
+        expectedHeadRevision: 'abc',
+        readiness: 'ready',
+      },
+    },
+  });
+  expect(view.getByText('Merge pull request')).toBeTruthy();
+  // The head comes from the capability slot, never from the local projection.
+  expect(view.getByText(/head abc/u)).toBeTruthy();
+  // Merge takes no client field, so it needs no title to become available.
+  expect(
+    view.getByLabelText('Preview exact merge pull request'),
+  ).not.toBeDisabled();
+});

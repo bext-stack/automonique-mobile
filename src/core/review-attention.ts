@@ -14,6 +14,12 @@ import type {
   WorkspaceCompanionCatalog,
 } from './workspace-companion';
 import { admitWorkspaceDeepLink } from './workspace-companion';
+import {
+  isPullRequestReviewEffectKind,
+  reviewEffectGrants,
+  type MobilePullRequestReviewAction,
+  type MobileSupportedReviewEffectKind,
+} from './mobile-review-effects';
 import type { SessionSummary } from './types';
 import type { WorkspaceCatalogDetail } from './workspace-v2-catalog';
 import { projectReviewRenderSemantics } from './review-render-semantics';
@@ -516,9 +522,41 @@ function actionAuthority(
         snapshot.checks.find((check) => check.id === action.payload.check_id)
           ?.authority ?? null
       );
+    case 'open_pull_request':
+    case 'update_pull_request':
+    case 'merge_pull_request':
+      return snapshot.pull_request.authority;
     default:
       return null;
   }
+}
+
+/**
+ * Whether the server's own pull-request reading still matches what this action
+ * claims. Merge is checked hardest: it is refused unless the server reports
+ * this exact head, an open state, and its own readiness verdict.
+ */
+function pullRequestTargetCurrent(
+  snapshot: ReviewSnapshot,
+  action: MobilePullRequestReviewAction,
+): boolean {
+  const target = snapshot.pull_request;
+  if (
+    target.freshness.observed_revision !==
+    action.payload.expected_pull_request_revision
+  ) {
+    return false;
+  }
+  if (action.kind === 'open_pull_request') return target.state === 'absent';
+  if (target.id !== action.payload.pull_request_id) return false;
+  if (action.kind === 'update_pull_request') {
+    return ['draft', 'open'].includes(target.state);
+  }
+  return (
+    target.head_revision === action.payload.expected_head_revision &&
+    target.state === 'open' &&
+    target.readiness === 'ready'
+  );
 }
 
 export function reviewActionAvailability(options: {
@@ -534,15 +572,12 @@ export function reviewActionAvailability(options: {
   if (options.projectStale) return { enabled: false, reason: 'stale_project' };
   if (!options.exactReviewRevision)
     return { enabled: false, reason: 'review_not_current' };
-  const rerun = options.action.kind === 'rerun_check';
+  // Each family names its own grant set, so a delegation that holds one
+  // pull-request grant does not thereby enable its siblings.
   if (
-    rerun
-      ? !['get_review_capabilities', 'rerun_check', 'get_review_receipt'].every(
-          (grant) => options.delegatedActions.includes(grant),
-        )
-      : !['execute_review_action', 'get_review_receipt'].every((grant) =>
-          options.delegatedActions.includes(grant),
-        )
+    !reviewEffectGrants(
+      options.action.kind as MobileSupportedReviewEffectKind,
+    ).every((grant) => options.delegatedActions.includes(grant))
   ) {
     return { enabled: false, reason: 'action_not_delegated' };
   }
@@ -564,6 +599,18 @@ export function reviewActionAvailability(options: {
       !['passed', 'failed', 'cancelled'].includes(check.state) ||
       check.freshness.observed_revision !==
         action.payload.expected_check_revision
+    ) {
+      return { enabled: false, reason: 'target_already_settled' };
+    }
+  } else if (isPullRequestReviewEffectKind(options.action.kind)) {
+    if (options.snapshot.pull_request.freshness.state !== 'fresh') {
+      return { enabled: false, reason: 'authority_stale' };
+    }
+    if (
+      !pullRequestTargetCurrent(
+        options.snapshot,
+        options.action as MobilePullRequestReviewAction,
+      )
     ) {
       return { enabled: false, reason: 'target_already_settled' };
     }

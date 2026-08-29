@@ -66,9 +66,13 @@ import {
   type ReviewV2ReceiptStore,
 } from './review-v2-receipts';
 import {
+  MOBILE_CONFIRMED_REVIEW_EFFECT_KINDS,
   MOBILE_DIRECT_REVIEW_EFFECT_KINDS,
+  MOBILE_PULL_REQUEST_REVIEW_EFFECT_KINDS,
   MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS,
   MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES,
+  isConfirmedReviewEffectKind,
+  isPullRequestReviewEffectKind,
   unavailableReviewEffectCategory,
   type MobileDirectReviewAction,
   type MobileSupportedReviewAction,
@@ -569,13 +573,9 @@ test('executes and durably reconciles an authority-bound review action', async (
     reviewStore,
   );
   await negotiate(gateway);
-  expect(gateway.reviewEffectKinds).toEqual([
-    'add_comment',
-    'approve_review',
-    'send_comment_to_agent',
-    'batch_send_comments_to_agent',
-    'rerun_check',
-  ]);
+  expect(gateway.reviewEffectKinds).toEqual(
+    MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS,
+  );
   expect(Object.isFrozen(gateway.reviewEffectKinds)).toBe(true);
   await gateway.loadProject(project);
   await gateway.loadReview(project, userWorkspaceIdentity);
@@ -1025,6 +1025,13 @@ test('fetches an inert exact rerun capability and persists custody before the se
                 ),
               },
             ],
+            agent_deliverable_comments: [],
+            open_pull_request: null,
+            update_pull_request: null,
+            merge_pull_request: null,
+            // Staging is ShellDeck’s surface; a phone is granted none of it.
+            staging: [],
+            conflict_resolutions: [],
           },
         },
       },
@@ -1306,6 +1313,13 @@ test('refuses stale or ambiguous rerun capabilities before durable custody', asy
                 ),
               },
             ],
+            agent_deliverable_comments: [],
+            open_pull_request: null,
+            update_pull_request: null,
+            merge_pull_request: null,
+            // Staging is ShellDeck’s surface; a phone is granted none of it.
+            staging: [],
+            conflict_resolutions: [],
           },
         },
       },
@@ -1381,6 +1395,13 @@ test('rerun persistence failure is known never-started and invokes no provider m
                 ),
               },
             ],
+            agent_deliverable_comments: [],
+            open_pull_request: null,
+            update_pull_request: null,
+            merge_pull_request: null,
+            // Staging is ShellDeck’s surface; a phone is granted none of it.
+            staging: [],
+            conflict_resolutions: [],
           },
         },
       },
@@ -1416,7 +1437,7 @@ test('rerun persistence failure is known never-started and invokes no provider m
   expect(adapter.pendingSteps).toBe(0);
 });
 
-test('keeps check rerun behind its three grants without widening direct review execution', async () => {
+test('keeps every confirmed family behind its own three grants without widening direct review execution', async () => {
   const legacyReviewAuthorization: DelegatedMobileV2Authorization = {
     ...reviewAuthorization(),
     actions: MOBILE_V2_ACTIONS.filter(
@@ -1464,7 +1485,38 @@ test('keeps check rerun behind its three grants without widening direct review e
       authorizationDigest,
       memoryReviewReceiptStore(),
     ).gateway.reviewEffectKinds,
-  ).toEqual(['rerun_check']);
+  ).toEqual(MOBILE_CONFIRMED_REVIEW_EFFECT_KINDS);
+
+  // Withholding one pull-request grant withholds exactly that family. The
+  // siblings it was delegated alongside are unaffected.
+  for (const withheld of MOBILE_PULL_REQUEST_REVIEW_EFFECT_KINDS) {
+    const partial = gatewayFor(
+      [],
+      1_500,
+      memoryReceiptStore(),
+      {
+        ...reviewAuthorization(),
+        actions: MOBILE_V2_ACTIONS.filter((action) => action !== withheld),
+      },
+      undefined,
+      authorizationDigest,
+      memoryReviewReceiptStore(),
+    );
+    expect(partial.gateway.reviewEffectKinds).toEqual(
+      MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS.filter((kind) => kind !== withheld),
+    );
+    await expect(
+      partial.gateway.previewPullRequestAction(
+        project,
+        userWorkspaceIdentity,
+        9n,
+        7n,
+        withheld,
+        withheld === 'merge_pull_request' ? null : 'Exact title',
+      ),
+    ).rejects.toMatchObject({ category: 'mobile_v2_action_unauthorized' });
+    expect(partial.adapter.pendingSteps).toBe(0);
+  }
 
   const noReceiptAuthorization: DelegatedMobileV2Authorization = {
     ...reviewAuthorization(),
@@ -1521,26 +1573,6 @@ test('every unsupported review family refuses before a request or durable handle
         file_id: 'file-1',
         proposal_id: 'proposal-1',
         resolution: 'keep_current',
-      },
-    },
-    {
-      kind: 'open_pull_request',
-      payload: { expected_pull_request_revision: 1n, title: 'Exact title' },
-    },
-    {
-      kind: 'update_pull_request',
-      payload: {
-        expected_pull_request_revision: 1n,
-        pull_request_id: 'pr-1',
-        title: 'Exact title',
-      },
-    },
-    {
-      kind: 'merge_pull_request',
-      payload: {
-        expected_head_revision: 'head-1',
-        expected_pull_request_revision: 1n,
-        pull_request_id: 'pr-1',
       },
     },
   ] as const;
@@ -3260,14 +3292,32 @@ test('confirmation UX exposes the exact preview and separate grant or deny actio
   expect(onDeny).toHaveBeenCalledTimes(1);
 });
 
-function supportedEffectSnapshot(): ReviewSnapshot {
-  return {
+function supportedEffectSnapshot(
+  kind: MobileSupportedReviewEffectKind,
+): ReviewSnapshot {
+  const base = {
     ...reviewSnapshotWithAgentComment(),
     checks: reviewSnapshotWithFailedCheck().checks,
+  } as ReviewSnapshot;
+  if (kind === 'open_pull_request' || !isPullRequestReviewEffectKind(kind)) {
+    return base;
+  }
+  return {
+    ...base,
+    pull_request: {
+      ...base.pull_request,
+      head_revision: supportedEffectHeadRevision,
+      id: supportedEffectPullRequestId,
+      readiness: kind === 'merge_pull_request' ? 'ready' : 'unknown',
+      state: kind === 'merge_pull_request' ? 'open' : 'draft',
+    },
   } as ReviewSnapshot;
 }
 
 const supportedEffectCommentBody = 'Exact bounded finding.';
+const supportedEffectPullRequestTitle = 'Exact bounded pull-request title.';
+const supportedEffectPullRequestId = 'pr-1';
+const supportedEffectHeadRevision = 'head-1';
 
 function supportedEffectAction(
   kind: MobileSupportedReviewEffectKind,
@@ -3314,6 +3364,32 @@ function supportedEffectAction(
           expected_check_revision: WorkContextRevision(5n),
         },
       };
+    case 'open_pull_request':
+      return {
+        kind: 'open_pull_request',
+        payload: {
+          expected_pull_request_revision: WorkContextRevision(1n),
+          title: supportedEffectPullRequestTitle,
+        },
+      };
+    case 'update_pull_request':
+      return {
+        kind: 'update_pull_request',
+        payload: {
+          expected_pull_request_revision: WorkContextRevision(1n),
+          pull_request_id: supportedEffectPullRequestId,
+          title: supportedEffectPullRequestTitle,
+        },
+      };
+    case 'merge_pull_request':
+      return {
+        kind: 'merge_pull_request',
+        payload: {
+          expected_head_revision: supportedEffectHeadRevision,
+          expected_pull_request_revision: WorkContextRevision(1n),
+          pull_request_id: supportedEffectPullRequestId,
+        },
+      };
   }
 }
 
@@ -3327,14 +3403,34 @@ function supportedEffectAction(
 test.each([...MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS])(
   'the %s effect is actor-attributed, scoped, revision-bound, and reconciled exactly once',
   async (kind) => {
-    const snapshot = supportedEffectSnapshot();
+    const snapshot = supportedEffectSnapshot(kind);
     const action = supportedEffectAction(kind);
     const rerun = kind === 'rerun_check';
+    const pullRequest = isPullRequestReviewEffectKind(kind);
+    const confirmed = isConfirmedReviewEffectKind(kind);
     const authority = rerun
       ? snapshot.checks[0]!.authority
-      : snapshot.review.authority;
+      : pullRequest
+        ? snapshot.pull_request.authority
+        : snapshot.review.authority;
     const idempotencyKey = IdempotencyKey(`mobile-effect-${kind}`);
     const confirmationDigest = ReviewConfirmationDigest('ab'.repeat(32));
+    const pullRequestSlotBase = {
+      authority,
+      confirmation_digest: confirmationDigest,
+      expected_pull_request_revision: WorkContextRevision(1n),
+      receipt_correlation_digest: rerunReceiptCorrelationDigest,
+    };
+    const updateSlot = {
+      ...pullRequestSlotBase,
+      pull_request_id: supportedEffectPullRequestId,
+    };
+    const mergeSlot = {
+      ...pullRequestSlotBase,
+      expected_head_revision: supportedEffectHeadRevision,
+      pull_request_id: supportedEffectPullRequestId,
+      readiness: 'ready' as const,
+    };
     const capabilityStep = {
       lane: 'v2' as const,
       request: {
@@ -3351,13 +3447,26 @@ test.each([...MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS])(
           workspace_revision: WorkContextRevision(9n),
           rerunnable_checks: [
             {
-              authority,
+              // Always the CI authority: a check capability is never filed
+              // under the review or pull-request authority.
+              authority: snapshot.checks[0]!.authority,
               check_id: 'check-1',
               confirmation_digest: confirmationDigest,
               receipt_correlation_digest: rerunReceiptCorrelationDigest,
               expected_check_revision: WorkContextRevision(5n),
             },
           ],
+          agent_deliverable_comments: [],
+          // Only the slot under test is minted. The other two stay withheld,
+          // so nothing about this family can be inferred from a sibling.
+          open_pull_request:
+            kind === 'open_pull_request' ? pullRequestSlotBase : null,
+          update_pull_request:
+            kind === 'update_pull_request' ? updateSlot : null,
+          merge_pull_request: kind === 'merge_pull_request' ? mergeSlot : null,
+          // Staging is ShellDeck’s surface; a phone is granted none of it.
+          staging: [],
+          conflict_resolutions: [],
         },
       },
     };
@@ -3374,7 +3483,7 @@ test.each([...MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS])(
           },
           result: { kind: 'review_result', review: snapshot },
         },
-        ...(rerun ? [capabilityStep] : []),
+        ...(confirmed ? [capabilityStep] : []),
         {
           lane: 'v2',
           request: {
@@ -3383,7 +3492,7 @@ test.each([...MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS])(
               workspace: userWorkspaceIdentity,
               expected_revision: WorkContextRevision(7n),
               action,
-              ...(rerun
+              ...(confirmed
                 ? {
                     confirmation_digest: confirmationDigest,
                     expected_workspace_revision: WorkContextRevision(9n),
@@ -3409,7 +3518,7 @@ test.each([...MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS])(
             },
           },
         },
-        ...(rerun ? [capabilityStep] : []),
+        ...(confirmed ? [capabilityStep] : []),
         // Any further transport consumes this sentinel, so a replay is visible
         // as a missing pending step rather than as an ambiguous outcome.
         {
@@ -3428,26 +3537,41 @@ test.each([...MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS])(
     await gateway.loadProject(project);
     await gateway.loadReview(project, userWorkspaceIdentity);
 
+    const title =
+      kind === 'merge_pull_request' ? null : supportedEffectPullRequestTitle;
     const submit = async (key: string) => {
-      if (!rerun) {
-        return gateway.executeReviewAction(
-          project,
-          userWorkspaceIdentity,
-          7n,
-          authority,
-          action as MobileDirectReviewAction,
+      if (rerun) {
+        return gateway.confirmCheckRerun(
+          await gateway.previewCheckRerun(
+            project,
+            userWorkspaceIdentity,
+            9n,
+            7n,
+            'check-1',
+            5n,
+          ),
           key,
         );
       }
-      return gateway.confirmCheckRerun(
-        await gateway.previewCheckRerun(
-          project,
-          userWorkspaceIdentity,
-          9n,
-          7n,
-          'check-1',
-          5n,
-        ),
+      if (pullRequest) {
+        return gateway.confirmPullRequestAction(
+          await gateway.previewPullRequestAction(
+            project,
+            userWorkspaceIdentity,
+            9n,
+            7n,
+            kind,
+            title,
+          ),
+          key,
+        );
+      }
+      return gateway.executeReviewAction(
+        project,
+        userWorkspaceIdentity,
+        7n,
+        authority,
+        action as MobileDirectReviewAction,
         key,
       );
     };
@@ -3466,7 +3590,7 @@ test.each([...MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS])(
         workspace_id: userWorkspaceIdentity.id,
         actor_id: 'operator-mobile',
         expected_revision: '7',
-        authority_kind: rerun ? 'ci' : 'review',
+        authority_kind: rerun ? 'ci' : pullRequest ? 'pull_request' : 'review',
         authority_id: authority.id,
         action_kind: kind,
         idempotency_key: idempotencyKey,
@@ -3506,15 +3630,75 @@ test.each([...MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS])(
             'check-1',
             5n,
           )
-        : gateway.executeReviewAction(
-            'project-foreign',
-            userWorkspaceIdentity,
-            7n,
-            authority,
-            action as MobileDirectReviewAction,
-            'mobile-effect-foreign',
-          ),
+        : pullRequest
+          ? gateway.previewPullRequestAction(
+              'project-foreign',
+              userWorkspaceIdentity,
+              9n,
+              7n,
+              kind,
+              title,
+            )
+          : gateway.executeReviewAction(
+              'project-foreign',
+              userWorkspaceIdentity,
+              7n,
+              authority,
+              action as MobileDirectReviewAction,
+              'mobile-effect-foreign',
+            ),
     ).rejects.toMatchObject({ category: 'mobile_v2_project_unauthorized' });
+    expect(adapter.pendingSteps).toBe(1);
+  },
+);
+
+test.each([...MOBILE_CONFIRMED_REVIEW_EFFECT_KINDS])(
+  'the unconfirmed entry point refuses %s before any handle or request',
+  async (kind) => {
+    const snapshot = supportedEffectSnapshot(kind);
+    const reviewStore = memoryReviewReceiptStore();
+    const { gateway, adapter } = gatewayFor(
+      [
+        { lane: 'negotiation', result: negotiatedV2 },
+        projectSnapshotStep(9n),
+        {
+          lane: 'v2',
+          request: {
+            kind: 'get_review',
+            request: { project, workspace: userWorkspaceIdentity },
+          },
+          result: { kind: 'review_result', review: snapshot },
+        },
+        {
+          lane: 'error',
+          error: new WorkspaceV2GatewayError('unexpected_unconfirmed_write'),
+        },
+      ],
+      1_500,
+      memoryReceiptStore(),
+      reviewAuthorization(),
+      undefined,
+      authorizationDigest,
+      reviewStore,
+    );
+    await negotiate(gateway);
+    await gateway.loadProject(project);
+    await gateway.loadReview(project, userWorkspaceIdentity);
+    // Holding `execute_review_action` is never evidence of a CI or
+    // pull-request grant, and this lane has no server digest to carry.
+    await expect(
+      gateway.executeReviewAction(
+        project,
+        userWorkspaceIdentity,
+        7n,
+        kind === 'rerun_check'
+          ? snapshot.checks[0]!.authority
+          : snapshot.pull_request.authority,
+        supportedEffectAction(kind) as unknown as MobileDirectReviewAction,
+        `mobile-effect-unconfirmed-${kind}`,
+      ),
+    ).rejects.toMatchObject({ category: 'review_confirmation_required' });
+    expect(reviewStore.handles).toEqual([]);
     expect(adapter.pendingSteps).toBe(1);
   },
 );

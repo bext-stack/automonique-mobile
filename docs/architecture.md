@@ -277,14 +277,31 @@ and comment revisions. Its durable mobile handle contains only the action
 digest and lookup coordinates, never comment content or a replayable provider
 message. CI rerun is completed through its own capability-read, rerun, and
 receipt grants, bound to the server-issued confirmation and
-receipt-correlation digests. The Git and pull-request families continue to
-return explicit adapter-unavailable categories and remain inert disabled rows.
-For pull requests that is a contract limit rather than a missing screen:
-`ReviewCapabilities` in the pinned SDK advertises only `rerunnable_checks`, so
-no confirmation or receipt-correlation digest can bind a pull-request write,
-and `MOBILE_PLATFORM_V2_ACTIONS` contains no pull-request grant to delegate.
-Mobile does not probe their support by sending an action, persist a
-speculative handle, or infer their authority from the coarse review grant.
+receipt-correlation digests.
+
+The three pull-request families travel the same confirmed lane, each behind
+its own capability slot and its own delegated grant. `ReviewCapabilities` now
+carries `open_pull_request`, `update_pull_request` and `merge_pull_request`
+independently, each with its own confirmation and receipt-correlation digest;
+merge additionally carries the head the server observed and its readiness
+verdict. The gateway ANDs slot and grant per family and returns null for
+either failure, so a withheld family produces no control rather than a
+disabled one, and no family's availability is derived from a sibling. Their
+receipt handles are filed under the `pull_request` authority and, like check
+rerun, require complete custody and recover only through the correlated
+receipt lookup. The Git families continue to return explicit
+adapter-unavailable categories.
+
+Mobile does not probe support by sending an action, persist a speculative
+handle, or infer authority from the coarse review grant. The unconfirmed
+`executeReviewAction` entry point refuses every confirmed kind outright, ahead
+of the project scope check and therefore ahead of any durable handle or
+request, so no unbound or uncorrelated write exists on any path.
+
+`ReviewCapabilities` also carries `staging` and `conflict_resolutions` for the
+four Git families. They are ShellDeck's surface: the mobile grant surface
+delegates none of them, so the gateway never requests one and those families
+keep returning their adapter-unavailable category.
 
 Provider credentials, raw provider/tool output, routing policy, and an offline
 mutation queue never cross or live inside the mobile boundary.

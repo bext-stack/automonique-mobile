@@ -4,7 +4,6 @@ import { Link, useLocalSearchParams } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import type { ReviewAction } from '@automonique/sdk';
 
 import { Screen } from '@/components/screen';
 import { WorkspaceMutationConfirmation } from '@/components/workspace-mutation-confirmation';
@@ -34,12 +33,17 @@ import {
 import type { WorkspaceCatalogDetail } from '@/core/workspace-v2-catalog';
 import type {
   PreparedCheckRerun,
+  PreparedPullRequestAction,
   PreparedWorkspaceMutation,
+  ReviewPullRequestGrant,
+  ReviewPullRequestGrants,
   WorkspaceMutationReconciliation,
 } from '@/core/workspace-v2-gateway';
 import {
-  MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES,
+  isPullRequestReviewEffectKind,
   type MobileDirectReviewAction,
+  type MobilePullRequestReviewAction,
+  type MobilePullRequestReviewEffectKind,
   type MobileSupportedReviewAction,
 } from '@/core/mobile-review-effects';
 import { useMobile } from '@/providers/mobile-provider';
@@ -196,39 +200,70 @@ function AnchoredDraftEditor({
   );
 }
 
-type UnavailableReviewEffectKind = Exclude<
-  ReviewAction['kind'],
-  MobileSupportedReviewAction['kind']
->;
+const MAX_PULL_REQUEST_TITLE_BYTES = 256;
 
-function UnavailableReviewEffect({
-  kind,
-  label,
-}: {
-  readonly kind: UnavailableReviewEffectKind;
+/**
+ * Fixed render order for the three families. Each row is drawn only when the
+ * server minted its slot for this delegation, so a withheld family leaves no
+ * trace in the surface at all.
+ */
+const PULL_REQUEST_CONTROLS = [
+  { kind: 'open_pull_request', label: 'Open pull request' },
+  { kind: 'update_pull_request', label: 'Update pull request' },
+  { kind: 'merge_pull_request', label: 'Merge pull request' },
+] as const satisfies readonly {
+  readonly kind: MobilePullRequestReviewEffectKind;
   readonly label: string;
-}) {
-  const palette = usePalette();
-  const category = MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES[kind];
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled: true }}
-      accessibilityLabel={`${label}, unavailable: ${category}`}
-      disabled
-      style={[
-        styles.reviewAction,
-        { borderColor: palette.border, opacity: 0.48 },
-      ]}
-    >
-      <Text style={{ color: palette.textMuted, fontWeight: '800' }}>
-        {label} · unavailable
-      </Text>
-      <Text style={[styles.meta, { color: palette.textMuted }]}>
-        {category}
-      </Text>
-    </Pressable>
-  );
+}[];
+
+/**
+ * Rebuild the wire action from the grant so availability can be probed against
+ * the live snapshot. The title never affects availability, so the draft is
+ * passed through as-is and the server-minted action is built again at preview.
+ */
+function pullRequestProbeAction(
+  kind: MobilePullRequestReviewEffectKind,
+  grant: ReviewPullRequestGrant,
+  title: string,
+): MobilePullRequestReviewAction {
+  const expected = grant.expectedPullRequestRevision;
+  if (kind === 'open_pull_request') {
+    return {
+      kind,
+      payload: { expected_pull_request_revision: expected, title },
+    };
+  }
+  if (kind === 'update_pull_request') {
+    return {
+      kind,
+      payload: {
+        expected_pull_request_revision: expected,
+        pull_request_id: grant.pullRequestId ?? '',
+        title,
+      },
+    };
+  }
+  return {
+    kind,
+    payload: {
+      expected_head_revision: grant.expectedHeadRevision ?? '',
+      expected_pull_request_revision: expected,
+      pull_request_id: grant.pullRequestId ?? '',
+    },
+  };
+}
+
+function pullRequestSummary(
+  prepared: PreparedPullRequestAction,
+  workspaceId: string,
+): string {
+  if (prepared.action.kind === 'open_pull_request') {
+    return `Open a pull request titled "${prepared.action.payload.title}" for workspace ${workspaceId}, against the exact pull-request revision ${prepared.action.payload.expected_pull_request_revision.toString()} the server observed. No Git, CI, filesystem, or provider-session authority is delegated by this action.`;
+  }
+  if (prepared.action.kind === 'update_pull_request') {
+    return `Retitle pull request ${prepared.action.payload.pull_request_id} to "${prepared.action.payload.title}", against the exact pull-request revision ${prepared.action.payload.expected_pull_request_revision.toString()} the server observed. Nothing is merged and no branch moves.`;
+  }
+  return `Merge pull request ${prepared.action.payload.pull_request_id} at exactly head ${prepared.action.payload.expected_head_revision}, pull-request revision ${prepared.action.payload.expected_pull_request_revision.toString()}. The server observed this head and reported readiness "${prepared.readiness ?? 'unknown'}"; the device computed none of it. Merging moves code into a protected branch and can start a deployment.`;
 }
 
 function ReviewControlSurface({
@@ -254,6 +289,9 @@ function ReviewControlSurface({
     executeReviewAction,
     previewCheckRerun,
     confirmCheckRerun,
+    loadReviewPullRequestGrants,
+    previewPullRequestAction,
+    confirmPullRequestAction,
     reconcileReviewAction,
     reviewBusy,
     reviewReceipts,
@@ -273,9 +311,13 @@ function ReviewControlSurface({
     readonly cancelled: () => void;
     readonly idempotencyKey: string;
     readonly rerunPreview: PreparedCheckRerun | null;
+    readonly pullRequestPreview: PreparedPullRequestAction | null;
     readonly phase: 'confirm' | 'reconcile' | 'cleanup' | 'terminal';
     readonly outcome: string | null;
   } | null>(null);
+  const [loadedPullRequestGrants, setPullRequestGrants] =
+    useState<ReviewPullRequestGrants | null>(null);
+  const [pullRequestTitle, setPullRequestTitle] = useState('');
   const [confirmationBusy, setConfirmationBusy] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const snapshot = review.snapshot;
@@ -339,6 +381,18 @@ function ReviewControlSurface({
     server.authorization === 'active' &&
     workspaceGateway?.authorizationScope.serverIdentity ===
       server.serverIdentity;
+  // A grant read belongs to one exact generation. Going offline or falling
+  // behind the review revision withdraws every control immediately, without
+  // waiting for the next read to land.
+  const pullRequestGrants =
+    live &&
+    exactReviewRevision &&
+    loadedPullRequestGrants?.snapshotRevision.toString() === review.revision &&
+    loadedPullRequestGrants.workspaceRevision.toString() ===
+      workspace.revision &&
+    loadedPullRequestGrants.project === workspace.projectId
+      ? loadedPullRequestGrants
+      : null;
   const availability = (
     action: Parameters<typeof reviewActionAvailability>[0]['action'],
   ) =>
@@ -358,6 +412,15 @@ function ReviewControlSurface({
         throw new Error('review_confirmation_missing');
       }
       return confirmCheckRerun(pending.rerunPreview, pending.idempotencyKey);
+    }
+    if (isPullRequestReviewEffectKind(action.kind)) {
+      if (pending.pullRequestPreview === null) {
+        throw new Error('review_confirmation_missing');
+      }
+      return confirmPullRequestAction(
+        pending.pullRequestPreview,
+        pending.idempotencyKey,
+      );
     }
     return executeReviewAction({
       projectId: workspace.projectId,
@@ -388,6 +451,7 @@ function ReviewControlSurface({
       cancelled,
       idempotencyKey: `mobile-review-${Crypto.randomUUID()}`,
       rerunPreview,
+      pullRequestPreview: null,
       phase: 'confirm',
       outcome: null,
     });
@@ -414,6 +478,7 @@ function ReviewControlSurface({
         cancelled: () => undefined,
         idempotencyKey: `mobile-review-${Crypto.randomUUID()}`,
         rerunPreview: preview,
+        pullRequestPreview: null,
         phase: 'confirm',
         outcome: null,
       });
@@ -422,6 +487,76 @@ function ReviewControlSurface({
         error instanceof Error
           ? error.message
           : 'review_rerun_preview_unavailable',
+      );
+    } finally {
+      setConfirmationBusy(false);
+    }
+  };
+  /**
+   * Earned, not inferred. The controls that exist are exactly the slots this
+   * read returns; a failed or refused read leaves no pull-request control on
+   * screen rather than an optimistic one.
+   */
+  useEffect(() => {
+    if (!live || !exactReviewRevision) return;
+    let active = true;
+    void loadReviewPullRequestGrants({
+      projectId: workspace.projectId,
+      workspaceId: workspace.id,
+      workspaceRevision: workspace.revision,
+      reviewRevision: review.revision,
+    })
+      .then((value) => {
+        if (active) setPullRequestGrants(value);
+      })
+      .catch(() => {
+        if (active) setPullRequestGrants(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    exactReviewRevision,
+    live,
+    loadReviewPullRequestGrants,
+    review.revision,
+    workspace.id,
+    workspace.projectId,
+    workspace.revision,
+  ]);
+  const preparePullRequestAction = async (
+    kind: MobilePullRequestReviewEffectKind,
+  ): Promise<void> => {
+    if (pending !== null || reviewBusy || confirmationBusy) return;
+    setConfirmationBusy(true);
+    setReviewError(null);
+    try {
+      const preview = await previewPullRequestAction({
+        projectId: workspace.projectId,
+        workspaceId: workspace.id,
+        workspaceRevision: workspace.revision,
+        reviewRevision: review.revision,
+        kind,
+        // Merge accepts no client field at all: its whole payload is the
+        // server's own reading of the pull request.
+        title: kind === 'merge_pull_request' ? null : pullRequestTitle,
+      });
+      setPending({
+        action: preview.action,
+        summary: pullRequestSummary(preview, workspace.id),
+        completed: async () => undefined,
+        cancelled: () => undefined,
+        idempotencyKey: `mobile-review-${Crypto.randomUUID()}`,
+        rerunPreview: null,
+        pullRequestPreview: preview,
+        phase: 'confirm',
+        outcome: null,
+      });
+    } catch (error) {
+      setReviewError(
+        error instanceof Error
+          ? error.message
+          : 'review_pull_request_preview_unavailable',
       );
     } finally {
       setConfirmationBusy(false);
@@ -561,6 +696,9 @@ function ReviewControlSurface({
     (handle) =>
       handle.action_kind === 'send_comment_to_agent' ||
       handle.action_kind === 'batch_send_comments_to_agent',
+  );
+  const pullRequestPending = scopedReceiptHandles.some((handle) =>
+    isPullRequestReviewEffectKind(handle.action_kind),
   );
   const batchTargets = snapshot.comments
     .filter((comment) => ['not_sent', 'refused'].includes(comment.agent_state))
@@ -852,6 +990,26 @@ function ReviewControlSurface({
                 </Text>
               </View>
             )}
+          {pending.pullRequestPreview !== null && (
+            <View accessibilityLabel="Exact pull request preview">
+              <Text style={[styles.meta, { color: palette.text }]}>
+                Server-issued inert preview
+              </Text>
+              <Text style={[styles.meta, { color: palette.textMuted }]}>
+                Pull request{' '}
+                {pending.pullRequestPreview.pullRequestId ?? 'not yet created'}{' '}
+                · pull-request authority{' '}
+                {pending.pullRequestPreview.authority.id}
+              </Text>
+              {pending.pullRequestPreview.expectedHeadRevision !== null && (
+                <Text style={[styles.meta, { color: palette.warning }]}>
+                  Merging exactly head{' '}
+                  {pending.pullRequestPreview.expectedHeadRevision} · server
+                  readiness {pending.pullRequestPreview.readiness ?? 'unknown'}
+                </Text>
+              )}
+            </View>
+          )}
           {pending.action.kind === 'batch_send_comments_to_agent' && (
             <View accessibilityLabel="Exact batch review targets">
               <Text style={[styles.meta, { color: palette.text }]}>
@@ -991,10 +1149,9 @@ function ReviewControlSurface({
       <Text style={[styles.subtitle, { color: palette.textMuted }]}>
         Draft state is explicit: local drafts are not sent to an agent. Git
         stage, unstage, and commit remain unavailable. Persisted comments can be
-        sent only through the exact retained-agent actions above. Pull-request
-        effects are shown below with the server adapter category that keeps each
-        control inert. Check reruns appear only when the server delegates the
-        separate capability-read and rerun grants; tapping one fetches an inert
+        sent only through the exact retained-agent actions above. Check reruns
+        and pull-request actions appear only for a capability the server minted
+        for this delegation, one family at a time; tapping one fetches an inert
         exact preview before confirmation.
       </Text>
       {snapshot.comments.map((comment) => (
@@ -1103,20 +1260,109 @@ function ReviewControlSurface({
         Pull request: {snapshot.pull_request.id ?? 'not reported'} ·{' '}
         {snapshot.pull_request.state} · {snapshot.pull_request.readiness}
       </Text>
-      <View style={styles.reviewActions}>
-        <UnavailableReviewEffect
-          kind="open_pull_request"
-          label="Open pull request"
-        />
-        <UnavailableReviewEffect
-          kind="update_pull_request"
-          label="Update pull request"
-        />
-        <UnavailableReviewEffect
-          kind="merge_pull_request"
-          label="Merge pull request"
-        />
-      </View>
+      {pullRequestGrants === null ? (
+        <Text
+          accessibilityLabel="No pull request controls are available"
+          style={[styles.subtitle, { color: palette.textMuted }]}
+        >
+          No pull-request control is offered: the server has not granted this
+          delegation a pull-request capability at this revision.
+        </Text>
+      ) : (
+        <View
+          accessibilityLabel="Earned pull request controls"
+          style={styles.pullRequestControls}
+        >
+          {(pullRequestGrants.open_pull_request !== null ||
+            pullRequestGrants.update_pull_request !== null) && (
+            <TextInput
+              accessibilityLabel="Pull request title"
+              editable={!reviewBusy && !confirmationBusy && pending === null}
+              onChangeText={(value) => {
+                if (
+                  new TextEncoder().encode(value).byteLength <=
+                  MAX_PULL_REQUEST_TITLE_BYTES
+                ) {
+                  setPullRequestTitle(value);
+                }
+              }}
+              placeholder="Pull request title…"
+              placeholderTextColor={palette.textMuted}
+              style={[
+                styles.pullRequestTitle,
+                { borderColor: palette.border, color: palette.text },
+              ]}
+              value={pullRequestTitle}
+            />
+          )}
+          <View style={styles.reviewActions}>
+            {PULL_REQUEST_CONTROLS.map(({ kind, label }) => {
+              const grant = pullRequestGrants[kind];
+              // A withheld slot renders nothing. There is deliberately no
+              // disabled row here: an absent grant is not a hint.
+              if (grant === null) return null;
+              const titled = kind !== 'merge_pull_request';
+              const actionAvailability = availability(
+                pullRequestProbeAction(kind, grant, pullRequestTitle),
+              );
+              const enabled =
+                actionAvailability.enabled &&
+                !reviewBusy &&
+                !confirmationBusy &&
+                pending === null &&
+                !pullRequestPending &&
+                (!titled || pullRequestTitle.trim().length > 0);
+              const unavailable = actionAvailability.enabled
+                ? titled && pullRequestTitle.trim().length === 0
+                  ? ', unavailable: title required'
+                  : ''
+                : `, unavailable: ${actionAvailability.reason.replaceAll('_', ' ')}`;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !enabled }}
+                  accessibilityLabel={`Preview exact ${label.toLowerCase()}${unavailable}`}
+                  disabled={!enabled}
+                  key={kind}
+                  onPress={() => void preparePullRequestAction(kind)}
+                  style={[
+                    styles.reviewAction,
+                    {
+                      borderColor:
+                        kind === 'merge_pull_request'
+                          ? palette.warning
+                          : palette.accent,
+                      opacity: enabled ? 1 : 0.48,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      color:
+                        kind === 'merge_pull_request'
+                          ? palette.warning
+                          : palette.accent,
+                      fontWeight: '800',
+                    }}
+                  >
+                    {label}
+                  </Text>
+                  <Text style={[styles.meta, { color: palette.textMuted }]}>
+                    pull-request revision{' '}
+                    {grant.expectedPullRequestRevision.toString()}
+                    {grant.pullRequestId === null
+                      ? ''
+                      : ` · ${grant.pullRequestId}`}
+                    {grant.expectedHeadRevision === null
+                      ? ''
+                      : ` · head ${grant.expectedHeadRevision}`}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -1999,4 +2245,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   commentRow: { gap: 3, paddingVertical: 5 },
+  pullRequestControls: { gap: 8 },
+  pullRequestTitle: {
+    borderRadius: 12,
+    borderWidth: 1,
+    fontSize: 15,
+    padding: 12,
+  },
 });
