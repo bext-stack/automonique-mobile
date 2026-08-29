@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-import type {
-  LineageProjection,
-  ReviewSnapshot,
-  WorkContextRecord,
+import {
+  ProjectId,
+  UserWorkspaceId,
+  type LineageProjection,
+  type ReviewSnapshot,
+  type WorkContextRecord,
 } from '@automonique/sdk';
 
+import {
+  applyAttentionSnapshot,
+  createAttentionSourceBoard,
+  markAttentionSourceUnavailable,
+  type AttentionSourceBoard,
+} from './attention-source-board';
+import { deriveAttentionSourceInventory } from './attention-source-inventory';
 import { decimalRevision } from './types';
 import {
   projectReviewRenderSemantics,
@@ -76,6 +85,11 @@ export interface WorkspaceCatalogDetail {
   readonly workspaceRevision: string;
   readonly lineageAvailable: boolean;
   readonly lineage: LineageProjection | null;
+  /**
+   * The authoritative attention board, or null when this server or grant set
+   * cannot serve one. Null means "unknown", never "nothing needs you".
+   */
+  readonly attention: AttentionSourceBoard | null;
   /** Exact live binding from a lineage work-session origin to its retained target. */
   readonly sessionBindings: readonly {
     readonly workSessionId: string;
@@ -450,17 +464,77 @@ function graphs(
 interface DetailRead {
   readonly lineage: LineageProjection | null;
   readonly review: ReviewSnapshot | null;
+  readonly attention: AttentionSourceBoard | null;
   readonly failures: number;
+}
+
+/**
+ * Read every inventoried source once. The first read of a session has no
+ * predecessor and the server is normally well past revision one, so it is
+ * admitted as an authenticated baseline. A source that fails stays inventoried
+ * and hidden, so a partial board never reads as an empty inbox, and an
+ * inventory this client cannot derive yields no board at all rather than a
+ * guessed one.
+ */
+async function readAttentionBoard(
+  gateway: ReadOnlyWorkspaceV2Gateway,
+  project: string,
+  workspaceId: string,
+  records: readonly WorkContextRecord[],
+  review: ReviewSnapshot | null,
+  signal: AbortSignal | undefined,
+): Promise<AttentionSourceBoard | null> {
+  if (
+    !gateway.authorizationScope.actions.includes(
+      'get_attention_source_snapshot',
+    )
+  ) {
+    return null;
+  }
+  const target = {
+    project: ProjectId(project),
+    userWorkspace: UserWorkspaceId(workspaceId),
+  };
+  let inventory;
+  try {
+    inventory = deriveAttentionSourceInventory(
+      target,
+      records,
+      review === null ? 'absent' : 'present',
+    );
+  } catch {
+    return null;
+  }
+  let board = createAttentionSourceBoard(target, inventory.sources);
+  for (const source of inventory.sources) {
+    try {
+      const snapshot = await timed(signal, (combined) =>
+        gateway.loadAttentionSourceSnapshot(
+          project,
+          workspaceId,
+          source,
+          combined,
+        ),
+      );
+      board = applyAttentionSnapshot(board, source, snapshot, {
+        mode: 'baseline',
+      }).board;
+    } catch {
+      board = markAttentionSourceUnavailable(board, source, 'transport');
+    }
+  }
+  return board;
 }
 
 async function readDetail(
   gateway: ReadOnlyWorkspaceV2Gateway,
   project: string,
   workspace: WorkContextRecord,
+  records: readonly WorkContextRecord[],
   signal: AbortSignal | undefined,
 ): Promise<DetailRead> {
   if (workspace.identity.kind !== 'user_workspace') {
-    return { lineage: null, review: null, failures: 2 };
+    return { attention: null, lineage: null, review: null, failures: 2 };
   }
   const workspaceIdentity = workspace.identity;
   const [lineageResult, reviewResult] = await Promise.allSettled([
@@ -475,9 +549,19 @@ async function readDetail(
         )
       : Promise.reject(new Error('review_not_granted')),
   ]);
+  const review =
+    reviewResult.status === 'fulfilled' ? reviewResult.value : null;
   return {
+    attention: await readAttentionBoard(
+      gateway,
+      project,
+      workspaceIdentity.id,
+      records,
+      review,
+      signal,
+    ),
     lineage: lineageResult.status === 'fulfilled' ? lineageResult.value : null,
-    review: reviewResult.status === 'fulfilled' ? reviewResult.value : null,
+    review,
     failures:
       Number(lineageResult.status === 'rejected') +
       Number(reviewResult.status === 'rejected'),
@@ -570,6 +654,9 @@ export async function buildWorkspaceServerCatalog(
       project,
       hosts: [...hostRecords.values()],
       graphs: workspaceGraphs,
+      // Attention sources are derived from this exact project snapshot, never
+      // rediscovered by a second query with different admission.
+      records: snapshot.records,
     };
   });
 
@@ -653,6 +740,9 @@ export async function buildWorkspaceServerCatalog(
     0,
     MAX_WORKSPACE_DETAIL_READS,
   );
+  const projectRecords = new Map<string, readonly WorkContextRecord[]>(
+    inventories.map((inventory) => [inventory.projectId, inventory.records]),
+  );
   const detailReads = new Map<string, DetailRead>();
   for (
     let index = 0;
@@ -670,6 +760,7 @@ export async function buildWorkspaceServerCatalog(
           options.gateway,
           recordId(graph.project),
           graph.workspace,
+          projectRecords.get(recordId(graph.project)) ?? [],
           options.signal,
         ),
       })),
@@ -695,6 +786,7 @@ export async function buildWorkspaceServerCatalog(
       lineageAvailable:
         detail?.lineage !== null && detail?.lineage !== undefined,
       lineage: detail?.lineage ?? null,
+      attention: detail?.attention ?? null,
       sessionBindings: graph.sessions.map(
         ({ attemptWorkspaceId, record: session, target }) => ({
           workSessionId: recordId(session),

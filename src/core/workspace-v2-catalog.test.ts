@@ -786,3 +786,119 @@ test('reports exact successful and failed project scopes for partial merging', a
     failedProjectCount: 1,
   });
 });
+
+function attentionSnapshotFor(
+  source: { readonly kind: string; readonly id: string },
+  workspaceId: string,
+) {
+  return {
+    items: [
+      {
+        id: `item-${source.kind}`,
+        nested_agent_path: [],
+        observed_at_ms: 1_000n,
+        platform_session:
+          source.kind === 'provider_session'
+            ? { authority: 'automonique', id: 'retained-0', kind: 'session' }
+            : null,
+        reason:
+          source.kind === 'provider_session'
+            ? 'agent_working'
+            : 'approval_required',
+        revision: 4n,
+        state: source.kind === 'provider_session' ? 'working' : 'needs_you',
+        unread: true,
+      },
+    ],
+    observed_at_ms: 1_000n,
+    previous_revision: 3n,
+    project: 'project-1',
+    revision: 4n,
+    schema: 'automonique.platform/attention/v1',
+    semantics: 'atomic_replace',
+    source,
+    user_workspace: workspaceId,
+  };
+}
+
+function attentionGateway(
+  loadAttentionSourceSnapshot: jest.Mock,
+  granted = true,
+) {
+  const { gateway } = fakeGateway(1);
+  return {
+    ...gateway,
+    authorizationScope: {
+      ...gateway.authorizationScope,
+      actions: [
+        ...gateway.authorizationScope.actions,
+        ...(granted ? ['get_attention_source_snapshot'] : []),
+      ],
+    },
+    loadAttentionSourceSnapshot,
+  } as unknown as WorkspaceV2Gateway;
+}
+
+test('attaches the authoritative attention board for every inventoried source', async () => {
+  const loadAttentionSourceSnapshot = jest.fn(
+    async (
+      _project: string,
+      workspaceId: string,
+      source: { readonly kind: string; readonly id: string },
+    ) => attentionSnapshotFor(source, workspaceId),
+  );
+  const result = await buildWorkspaceServerCatalog({
+    gateway: attentionGateway(loadAttentionSourceSnapshot),
+    origin: 'https://ops.example.test',
+    serverLabel: 'ops.example.test',
+  });
+  const board = result.details[0]!.attention;
+  expect(board).not.toBeNull();
+  expect(board!.sources.map((source) => `${source.kind}:${source.id}`)).toEqual(
+    [
+      'orchestration:workspace-0',
+      'provider_session:work-session-0',
+      'review:workspace-0',
+    ],
+  );
+  expect(loadAttentionSourceSnapshot).toHaveBeenCalledTimes(3);
+});
+
+test('hides a source that fails without discarding the rest of the board', async () => {
+  const loadAttentionSourceSnapshot = jest.fn(
+    async (
+      _project: string,
+      workspaceId: string,
+      source: { readonly kind: string; readonly id: string },
+    ) => {
+      if (source.kind === 'provider_session') {
+        throw new Error('temporarily_unavailable');
+      }
+      return attentionSnapshotFor(source, workspaceId);
+    },
+  );
+  const result = await buildWorkspaceServerCatalog({
+    gateway: attentionGateway(loadAttentionSourceSnapshot),
+    origin: 'https://ops.example.test',
+    serverLabel: 'ops.example.test',
+  });
+  const board = result.details[0]!.attention;
+  expect(board).not.toBeNull();
+  expect(board!.sources).toHaveLength(3);
+  expect(
+    [...board!.slots.values()].filter(
+      (slot) => slot.status.kind === 'unavailable',
+    ),
+  ).toHaveLength(1);
+});
+
+test('serves no board at all when the attention read is not granted', async () => {
+  const loadAttentionSourceSnapshot = jest.fn();
+  const result = await buildWorkspaceServerCatalog({
+    gateway: attentionGateway(loadAttentionSourceSnapshot, false),
+    origin: 'https://ops.example.test',
+    serverLabel: 'ops.example.test',
+  });
+  expect(result.details[0]!.attention).toBeNull();
+  expect(loadAttentionSourceSnapshot).not.toHaveBeenCalled();
+});

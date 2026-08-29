@@ -162,6 +162,7 @@ const detail = {
   workspaceId: 'workspace-34',
   workspaceRevision: '12',
   lineageAvailable: true,
+  attention: null,
   lineage: null,
   sessionBindings: [],
   review: {
@@ -936,6 +937,7 @@ test('attention exposes structured parents and admits only exact review and reta
   const structuredDetail = {
     ...detail,
     lineageAvailable: true,
+    attention: null,
     lineage,
     sessionBindings: [
       {
@@ -1059,6 +1061,7 @@ test('attention disables a nested session when the selected live scope is foreig
       {
         ...detail,
         lineageAvailable: true,
+        attention: null,
         lineage,
         sessionBindings: [
           {
@@ -1119,6 +1122,7 @@ test('attention renders and links authoritative lineage when review is unavailab
       {
         ...detail,
         lineageAvailable: true,
+        attention: null,
         lineage,
         sessionBindings: [
           {

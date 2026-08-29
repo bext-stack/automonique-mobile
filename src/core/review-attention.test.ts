@@ -110,6 +110,7 @@ function detail(snapshot = review()): WorkspaceCatalogDetail {
     workspaceId: 'workspace-34',
     workspaceRevision: '12',
     lineageAvailable: false,
+    attention: null,
     lineage: null,
     sessionBindings: [],
     review: {
@@ -331,6 +332,7 @@ test('attention links review anchors and typed lineage sessions without inferrin
   const currentDetail = {
     ...detail(anchoredSnapshot),
     lineageAvailable: true,
+    attention: null,
     lineage,
     sessionBindings: [
       {
@@ -478,6 +480,7 @@ test('projects and admits lineage-only attention without inventing review state'
   const lineageOnlyDetail: WorkspaceCatalogDetail = {
     ...detail(),
     lineageAvailable: true,
+    attention: null,
     lineage,
     sessionBindings: [
       {

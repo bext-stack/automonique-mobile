@@ -4,6 +4,12 @@ import { Link } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Screen } from '@/components/screen';
+import { admitAuthoritativeAttentionDeepLink } from '@/core/attention-source-navigation';
+import {
+  projectAuthoritativeAttentionNodes,
+  summarizeAuthoritativeAttention,
+  type AuthoritativeAttentionNode,
+} from '@/core/attention-source-projection';
 import {
   admitAttentionDeepLink,
   projectAttentionNodes,
@@ -21,6 +27,46 @@ const labels = {
   blocked: 'Blocked',
   done: 'Done',
 } as const;
+
+const sourceRelationships = {
+  review: 'Review attention',
+  orchestration: 'Workspace orchestration',
+  provider_session: 'Provider session',
+} as const;
+
+/**
+ * A row the surface can render, from either the authoritative attention board
+ * or, only where no board exists, the older review/lineage inference. The two
+ * are never mixed for one workspace, and a derived row says so.
+ */
+interface AttentionRow {
+  readonly key: string;
+  readonly state: keyof typeof labels;
+  readonly title: string;
+  readonly relationship: string;
+  readonly unread: number;
+  readonly depth: number;
+  readonly semanticKey: string;
+  readonly revision: string | null;
+  readonly authoritative: boolean;
+}
+
+function authoritativeRow(node: AuthoritativeAttentionNode): AttentionRow {
+  return {
+    authoritative: true,
+    depth: node.depth,
+    key: node.key,
+    relationship:
+      node.parentKey === null
+        ? sourceRelationships[node.source.kind]
+        : 'Nested agent',
+    revision: node.revision,
+    semanticKey: node.semanticKey,
+    state: node.state,
+    title: node.reason.replaceAll('_', ' '),
+    unread: node.unread ? 1 : 0,
+  };
+}
 
 export default function AttentionScreen() {
   const palette = usePalette();
@@ -48,6 +94,43 @@ export default function AttentionScreen() {
     const serverDiscriminator = duplicateServerDisplay
       ? `${server.label} · ${server.origin} · ${server.serverIdentity}`
       : `${server.label} · ${server.origin}`;
+    const retainedSessions =
+      lifecycleState.phase === 'ready' &&
+      lifecycleState.profile?.serverIdentity === detail.serverIdentity
+        ? snapshot.sessions
+        : [];
+
+    // A workspace that serves the authoritative board is rendered only from
+    // it. Falling back per row would let one workspace show two different
+    // answers to "what needs me".
+    if (detail.attention !== null) {
+      return projectAuthoritativeAttentionNodes(detail.attention).map(
+        (node) => {
+          let href: ReturnType<
+            typeof admitAuthoritativeAttentionDeepLink
+          > | null = null;
+          try {
+            href = admitAuthoritativeAttentionDeepLink({
+              catalog,
+              details,
+              detail,
+              node,
+              retainedSessions,
+            });
+          } catch {
+            href = null;
+          }
+          return {
+            detail,
+            href,
+            row: authoritativeRow(node),
+            serverDiscriminator,
+            workspace,
+          };
+        },
+      );
+    }
+
     const nodes = projectAttentionNodes(
       detail.review?.snapshot ?? null,
       detail.lineage,
@@ -60,18 +143,41 @@ export default function AttentionScreen() {
           details,
           detail,
           node,
-          retainedSessions:
-            lifecycleState.phase === 'ready' &&
-            lifecycleState.profile?.serverIdentity === detail.serverIdentity
-              ? snapshot.sessions
-              : [],
+          retainedSessions,
         });
       } catch {
         href = null;
       }
-      return { detail, href, node, serverDiscriminator, workspace };
+      return {
+        detail,
+        href,
+        row: {
+          authoritative: false,
+          depth: node.depth,
+          key: node.key,
+          relationship:
+            node.parentLabel === null
+              ? node.kind === 'review'
+                ? 'Review summary'
+                : 'Top-level orchestration'
+              : `Nested under ${node.parentLabel}`,
+          revision: node.revision,
+          semanticKey: node.semanticKey,
+          state: node.state,
+          title: node.label,
+          unread: node.unread,
+        } satisfies AttentionRow,
+        serverDiscriminator,
+        workspace,
+      };
     });
   });
+
+  const partialBoards = details.filter(
+    (candidate) =>
+      candidate.attention !== null &&
+      summarizeAuthoritativeAttention(candidate.attention).partial,
+  ).length;
 
   return (
     <Screen>
@@ -139,13 +245,7 @@ export default function AttentionScreen() {
           </Text>
         </Pressable>
       </View>
-      {rows.map(({ detail, href, node, serverDiscriminator, workspace }) => {
-        const relationship =
-          node.parentLabel === null
-            ? node.kind === 'review'
-              ? 'Review summary'
-              : 'Top-level orchestration'
-            : `Nested under ${node.parentLabel}`;
+      {rows.map(({ detail, href, row, serverDiscriminator, workspace }) => {
         const destination =
           href?.pathname === '/workspace/[server]/[workspace]/session/[session]'
             ? 'exact retained session'
@@ -153,7 +253,7 @@ export default function AttentionScreen() {
         const card = (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`${labels[node.state]}. ${node.label}. ${relationship}. ${node.unread} unread. ${workspace.title}. Server ${serverDiscriminator}.`}
+            accessibilityLabel={`${labels[row.state]}. ${row.title}. ${row.relationship}. ${row.unread} unread. ${workspace.title}. Server ${serverDiscriminator}.`}
             accessibilityHint={
               href === null
                 ? 'No exact current navigation coordinate is available.'
@@ -166,46 +266,48 @@ export default function AttentionScreen() {
               {
                 backgroundColor: palette.surface,
                 borderColor: palette.border,
-                marginLeft: Math.min(node.depth, 4) * 12,
+                marginLeft: Math.min(row.depth, 4) * 12,
                 opacity: href === null ? 0.65 : 1,
               },
             ]}
           >
             <View style={styles.row}>
               <Text style={[styles.cardTitle, { color: palette.text }]}>
-                {labels[node.state]}
+                {labels[row.state]}
               </Text>
-              {node.unread > 0 && (
+              {row.unread > 0 && (
                 <View
-                  accessibilityLabel={`${node.unread} unread`}
+                  accessibilityLabel={`${row.unread} unread`}
                   style={[styles.badge, { backgroundColor: palette.accent }]}
                 >
                   <Text
                     style={{ color: palette.accentText, fontWeight: '900' }}
                   >
-                    {node.unread}
+                    {row.unread}
                   </Text>
                 </View>
               )}
             </View>
-            <Text style={{ color: palette.text }}>{node.label}</Text>
+            <Text style={{ color: palette.text }}>{row.title}</Text>
             <Text style={[styles.meta, { color: palette.textMuted }]}>
-              {relationship}
+              {row.relationship}
             </Text>
             <Text style={[styles.meta, { color: palette.textMuted }]}>
-              {serverDiscriminator} · {workspace.title} · {node.semanticKey} ·
-              source revision {node.revision ?? 'not applicable'} · review
-              revision {detail.review?.revision ?? 'unavailable'}
+              {serverDiscriminator} · {workspace.title} · {row.semanticKey} ·
+              source revision {row.revision ?? 'not applicable'} ·{' '}
+              {row.authoritative
+                ? 'authoritative attention source'
+                : `derived from review revision ${detail.review?.revision ?? 'unavailable'}`}
             </Text>
           </Pressable>
         );
         return href === null ? (
-          <View key={`${detail.serverIdentity}:${workspace.id}:${node.key}`}>
+          <View key={`${detail.serverIdentity}:${workspace.id}:${row.key}`}>
             {card}
           </View>
         ) : (
           <Link
-            key={`${detail.serverIdentity}:${workspace.id}:${node.key}`}
+            key={`${detail.serverIdentity}:${workspace.id}:${row.key}`}
             asChild
             href={{ pathname: href.pathname, params: href.params }}
           >
@@ -213,6 +315,16 @@ export default function AttentionScreen() {
           </Link>
         );
       })}
+      {partialBoards > 0 && (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={[styles.warning, { color: palette.warning }]}
+        >
+          {partialBoards === 1
+            ? 'One workspace is showing a partial attention board: at least one source is refused or unavailable.'
+            : `${partialBoards} workspaces are showing a partial attention board: at least one source is refused or unavailable.`}
+        </Text>
+      )}
       {rows.length === 0 && (
         <View
           style={[
