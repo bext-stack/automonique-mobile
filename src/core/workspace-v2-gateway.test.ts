@@ -67,8 +67,12 @@ import {
 } from './review-v2-receipts';
 import {
   MOBILE_DIRECT_REVIEW_EFFECT_KINDS,
+  MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS,
   MOBILE_UNAVAILABLE_REVIEW_EFFECT_CATEGORIES,
   unavailableReviewEffectCategory,
+  type MobileDirectReviewAction,
+  type MobileSupportedReviewAction,
+  type MobileSupportedReviewEffectKind,
 } from './mobile-review-effects';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
@@ -3255,3 +3259,262 @@ test('confirmation UX exposes the exact preview and separate grant or deny actio
   expect(onConfirm).toHaveBeenCalledTimes(1);
   expect(onDeny).toHaveBeenCalledTimes(1);
 });
+
+function supportedEffectSnapshot(): ReviewSnapshot {
+  return {
+    ...reviewSnapshotWithAgentComment(),
+    checks: reviewSnapshotWithFailedCheck().checks,
+  } as ReviewSnapshot;
+}
+
+const supportedEffectCommentBody = 'Exact bounded finding.';
+
+function supportedEffectAction(
+  kind: MobileSupportedReviewEffectKind,
+): MobileSupportedReviewAction {
+  switch (kind) {
+    case 'add_comment':
+      return {
+        kind: 'add_comment',
+        payload: {
+          anchor: {
+            file_id: 'file-1',
+            hunk_id: 'hunk-1',
+            line: 1n,
+            side: 'new',
+          },
+          body: supportedEffectCommentBody,
+          comment_id: 'comment-2',
+        },
+      };
+    case 'approve_review':
+      return {
+        kind: 'approve_review',
+        payload: { expected_review_revision: 3n },
+      };
+    case 'send_comment_to_agent':
+      return {
+        kind: 'send_comment_to_agent',
+        payload: { comment_id: 'comment-1', expected_comment_revision: 4n },
+      };
+    case 'batch_send_comments_to_agent':
+      return {
+        kind: 'batch_send_comments_to_agent',
+        payload: {
+          comments: [
+            { comment_id: 'comment-1', expected_comment_revision: 4n },
+          ],
+        },
+      };
+    case 'rerun_check':
+      return {
+        kind: 'rerun_check',
+        payload: {
+          check_id: 'check-1',
+          expected_check_revision: WorkContextRevision(5n),
+        },
+      };
+  }
+}
+
+/**
+ * One enumerating fence over the whole supported effect family. Every mutation
+ * mobile can perform must be actor-attributed, project-scoped, revision-bound,
+ * durably recorded before its first transport, and reconciled exactly once by
+ * idempotency key. Adding a kind to `MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS`
+ * without those properties fails here rather than in production.
+ */
+test.each([...MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS])(
+  'the %s effect is actor-attributed, scoped, revision-bound, and reconciled exactly once',
+  async (kind) => {
+    const snapshot = supportedEffectSnapshot();
+    const action = supportedEffectAction(kind);
+    const rerun = kind === 'rerun_check';
+    const authority = rerun
+      ? snapshot.checks[0]!.authority
+      : snapshot.review.authority;
+    const idempotencyKey = IdempotencyKey(`mobile-effect-${kind}`);
+    const confirmationDigest = ReviewConfirmationDigest('ab'.repeat(32));
+    const capabilityStep = {
+      lane: 'v2' as const,
+      request: {
+        kind: 'get_review_capabilities' as const,
+        request: { project, workspace: userWorkspaceIdentity },
+      },
+      result: {
+        kind: 'review_capabilities' as const,
+        capabilities: {
+          schema: PLATFORM_SCHEMA_V2 as typeof PLATFORM_SCHEMA_V2,
+          project,
+          workspace: userWorkspaceIdentity,
+          snapshot_revision: WorkContextRevision(7n),
+          workspace_revision: WorkContextRevision(9n),
+          rerunnable_checks: [
+            {
+              authority,
+              check_id: 'check-1',
+              confirmation_digest: confirmationDigest,
+              receipt_correlation_digest: rerunReceiptCorrelationDigest,
+              expected_check_revision: WorkContextRevision(5n),
+            },
+          ],
+        },
+      },
+    };
+    const reviewStore = memoryReviewReceiptStore();
+    const { gateway, adapter } = gatewayFor(
+      [
+        { lane: 'negotiation', result: negotiatedV2 },
+        projectSnapshotStep(9n),
+        {
+          lane: 'v2',
+          request: {
+            kind: 'get_review',
+            request: { project, workspace: userWorkspaceIdentity },
+          },
+          result: { kind: 'review_result', review: snapshot },
+        },
+        ...(rerun ? [capabilityStep] : []),
+        {
+          lane: 'v2',
+          request: {
+            kind: 'execute_review_action',
+            request: {
+              workspace: userWorkspaceIdentity,
+              expected_revision: WorkContextRevision(7n),
+              action,
+              ...(rerun
+                ? {
+                    confirmation_digest: confirmationDigest,
+                    expected_workspace_revision: WorkContextRevision(9n),
+                    receipt_correlation_digest: rerunReceiptCorrelationDigest,
+                  }
+                : {}),
+              idempotency_key: idempotencyKey,
+            },
+          },
+          result: {
+            kind: 'review_receipt',
+            receipt: {
+              schema: 'automonique.platform/review/v1',
+              platform_version: 2n,
+              receipt_id: `receipt-${kind}`,
+              action_id: `action-${kind}`,
+              actor: 'operator-mobile',
+              idempotency_key: idempotencyKey,
+              outcome: 'accepted',
+              reconciliation: 'poll_receipt',
+              revision: null,
+              current_revision: null,
+            },
+          },
+        },
+        ...(rerun ? [capabilityStep] : []),
+        // Any further transport consumes this sentinel, so a replay is visible
+        // as a missing pending step rather than as an ambiguous outcome.
+        {
+          lane: 'error',
+          error: new WorkspaceV2GatewayError('unexpected_effect_replay'),
+        },
+      ],
+      1_500,
+      memoryReceiptStore(),
+      reviewAuthorization(),
+      undefined,
+      authorizationDigest,
+      reviewStore,
+    );
+    await negotiate(gateway);
+    await gateway.loadProject(project);
+    await gateway.loadReview(project, userWorkspaceIdentity);
+
+    const submit = async (key: string) => {
+      if (!rerun) {
+        return gateway.executeReviewAction(
+          project,
+          userWorkspaceIdentity,
+          7n,
+          authority,
+          action as MobileDirectReviewAction,
+          key,
+        );
+      }
+      return gateway.confirmCheckRerun(
+        await gateway.previewCheckRerun(
+          project,
+          userWorkspaceIdentity,
+          9n,
+          7n,
+          'check-1',
+          5n,
+        ),
+        key,
+      );
+    };
+
+    await expect(submit(idempotencyKey)).resolves.toMatchObject({
+      kind: 'submitted',
+      idempotencyKey,
+      receipt: { actor: 'operator-mobile', idempotency_key: idempotencyKey },
+      projectionRefreshRequired: true,
+    });
+    expect(reviewStore.handles).toEqual([
+      expect.objectContaining({
+        schema: REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
+        project,
+        workspace_kind: 'user_workspace',
+        workspace_id: userWorkspaceIdentity.id,
+        actor_id: 'operator-mobile',
+        expected_revision: '7',
+        authority_kind: rerun ? 'ci' : 'review',
+        authority_id: authority.id,
+        action_kind: kind,
+        idempotency_key: idempotencyKey,
+      }),
+    ]);
+    // The durable handle stays a lookup coordinate, never replayable content.
+    expect(JSON.stringify(reviewStore.handles)).not.toContain(
+      supportedEffectCommentBody,
+    );
+    expect(JSON.stringify(reviewStore.handles)).not.toContain(
+      confirmationDigest,
+    );
+
+    // The same key never reaches transport twice. The ambiguous outcome alone
+    // would not prove that, so the executed requests are counted directly.
+    await expect(submit(idempotencyKey)).resolves.toMatchObject({
+      kind: 'ambiguous',
+      idempotencyKey,
+      receipt: null,
+      projectionRefreshRequired: true,
+    });
+    expect(reviewStore.handles).toHaveLength(1);
+    expect(
+      adapter.requests.filter(
+        (request) => request.kind === 'execute_review_action',
+      ),
+    ).toHaveLength(1);
+
+    // A project outside the delegated roots is refused before any transport.
+    await expect(
+      rerun
+        ? gateway.previewCheckRerun(
+            'project-foreign',
+            userWorkspaceIdentity,
+            9n,
+            7n,
+            'check-1',
+            5n,
+          )
+        : gateway.executeReviewAction(
+            'project-foreign',
+            userWorkspaceIdentity,
+            7n,
+            authority,
+            action as MobileDirectReviewAction,
+            'mobile-effect-foreign',
+          ),
+    ).rejects.toMatchObject({ category: 'mobile_v2_project_unauthorized' });
+    expect(adapter.pendingSteps).toBe(1);
+  },
+);

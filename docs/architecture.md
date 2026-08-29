@@ -275,10 +275,16 @@ single/batch retained-agent comment-delivery actions. Agent delivery is bound
 to the current review authority, workspace/review revision, exact comment IDs
 and comment revisions. Its durable mobile handle contains only the action
 digest and lookup coordinates, never comment content or a replayable provider
-message. Git, CI, and pull-request families continue to return explicit
-adapter-unavailable categories and remain inert disabled rows. Mobile does not
-probe their support by sending an action, persist a speculative handle, or
-infer their authority from the coarse review grant.
+message. CI rerun is completed through its own capability-read, rerun, and
+receipt grants, bound to the server-issued confirmation and
+receipt-correlation digests. The Git and pull-request families continue to
+return explicit adapter-unavailable categories and remain inert disabled rows.
+For pull requests that is a contract limit rather than a missing screen:
+`ReviewCapabilities` in the pinned SDK advertises only `rerunnable_checks`, so
+no confirmation or receipt-correlation digest can bind a pull-request write,
+and `MOBILE_PLATFORM_V2_ACTIONS` contains no pull-request grant to delegate.
+Mobile does not probe their support by sending an action, persist a
+speculative handle, or infer their authority from the coarse review grant.
 
 Provider credentials, raw provider/tool output, routing policy, and an offline
 mutation queue never cross or live inside the mobile boundary.
