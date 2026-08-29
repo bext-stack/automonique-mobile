@@ -11,7 +11,6 @@ import {
   PLATFORM_SCHEMA_V1,
   PLATFORM_SCHEMA_V2,
   PlatformV2Client,
-  PlatformVersionNumber,
   ProjectId,
   ReceiptId,
   ReviewConfirmationDigest,
@@ -31,7 +30,6 @@ import {
   type JsonValue,
   type MutationApproval,
   type MutationPreview,
-  type ReviewActionReceipt,
   type ReviewSnapshot,
   type WorkContextMutationIntent,
   type WorkContextRecord,
@@ -1031,6 +1029,9 @@ test('fetches an inert exact rerun capability and persists custody before the se
             open_pull_request: null,
             update_pull_request: null,
             merge_pull_request: null,
+            // Staging is ShellDeck’s surface; a phone is granted none of it.
+            staging: [],
+            conflict_resolutions: [],
           },
         },
       },
@@ -1316,6 +1317,9 @@ test('refuses stale or ambiguous rerun capabilities before durable custody', asy
             open_pull_request: null,
             update_pull_request: null,
             merge_pull_request: null,
+            // Staging is ShellDeck’s surface; a phone is granted none of it.
+            staging: [],
+            conflict_resolutions: [],
           },
         },
       },
@@ -1395,6 +1399,9 @@ test('rerun persistence failure is known never-started and invokes no provider m
             open_pull_request: null,
             update_pull_request: null,
             merge_pull_request: null,
+            // Staging is ShellDeck’s surface; a phone is granted none of it.
+            staging: [],
+            conflict_resolutions: [],
           },
         },
       },
@@ -3393,22 +3400,37 @@ function supportedEffectAction(
  * idempotency key. Adding a kind to `MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS`
  * without those properties fails here rather than in production.
  */
-test.each(
-  MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS.filter(
-    (kind) => !isPullRequestReviewEffectKind(kind),
-  ),
-)(
+test.each([...MOBILE_SUPPORTED_REVIEW_EFFECT_KINDS])(
   'the %s effect is actor-attributed, scoped, revision-bound, and reconciled exactly once',
   async (kind) => {
     const snapshot = supportedEffectSnapshot(kind);
     const action = supportedEffectAction(kind);
     const rerun = kind === 'rerun_check';
+    const pullRequest = isPullRequestReviewEffectKind(kind);
     const confirmed = isConfirmedReviewEffectKind(kind);
     const authority = rerun
       ? snapshot.checks[0]!.authority
-      : snapshot.review.authority;
+      : pullRequest
+        ? snapshot.pull_request.authority
+        : snapshot.review.authority;
     const idempotencyKey = IdempotencyKey(`mobile-effect-${kind}`);
     const confirmationDigest = ReviewConfirmationDigest('ab'.repeat(32));
+    const pullRequestSlotBase = {
+      authority,
+      confirmation_digest: confirmationDigest,
+      expected_pull_request_revision: WorkContextRevision(1n),
+      receipt_correlation_digest: rerunReceiptCorrelationDigest,
+    };
+    const updateSlot = {
+      ...pullRequestSlotBase,
+      pull_request_id: supportedEffectPullRequestId,
+    };
+    const mergeSlot = {
+      ...pullRequestSlotBase,
+      expected_head_revision: supportedEffectHeadRevision,
+      pull_request_id: supportedEffectPullRequestId,
+      readiness: 'ready' as const,
+    };
     const capabilityStep = {
       lane: 'v2' as const,
       request: {
@@ -3437,9 +3459,14 @@ test.each(
           agent_deliverable_comments: [],
           // Only the slot under test is minted. The other two stay withheld,
           // so nothing about this family can be inferred from a sibling.
-          open_pull_request: null,
-          update_pull_request: null,
-          merge_pull_request: null,
+          open_pull_request:
+            kind === 'open_pull_request' ? pullRequestSlotBase : null,
+          update_pull_request:
+            kind === 'update_pull_request' ? updateSlot : null,
+          merge_pull_request: kind === 'merge_pull_request' ? mergeSlot : null,
+          // Staging is ShellDeck’s surface; a phone is granted none of it.
+          staging: [],
+          conflict_resolutions: [],
         },
       },
     };
@@ -3510,6 +3537,8 @@ test.each(
     await gateway.loadProject(project);
     await gateway.loadReview(project, userWorkspaceIdentity);
 
+    const title =
+      kind === 'merge_pull_request' ? null : supportedEffectPullRequestTitle;
     const submit = async (key: string) => {
       if (rerun) {
         return gateway.confirmCheckRerun(
@@ -3520,6 +3549,19 @@ test.each(
             7n,
             'check-1',
             5n,
+          ),
+          key,
+        );
+      }
+      if (pullRequest) {
+        return gateway.confirmPullRequestAction(
+          await gateway.previewPullRequestAction(
+            project,
+            userWorkspaceIdentity,
+            9n,
+            7n,
+            kind,
+            title,
           ),
           key,
         );
@@ -3548,7 +3590,7 @@ test.each(
         workspace_id: userWorkspaceIdentity.id,
         actor_id: 'operator-mobile',
         expected_revision: '7',
-        authority_kind: rerun ? 'ci' : 'review',
+        authority_kind: rerun ? 'ci' : pullRequest ? 'pull_request' : 'review',
         authority_id: authority.id,
         action_kind: kind,
         idempotency_key: idempotencyKey,
@@ -3588,282 +3630,25 @@ test.each(
             'check-1',
             5n,
           )
-        : gateway.executeReviewAction(
-            'project-foreign',
-            userWorkspaceIdentity,
-            7n,
-            authority,
-            action as MobileDirectReviewAction,
-            'mobile-effect-foreign',
-          ),
+        : pullRequest
+          ? gateway.previewPullRequestAction(
+              'project-foreign',
+              userWorkspaceIdentity,
+              9n,
+              7n,
+              kind,
+              title,
+            )
+          : gateway.executeReviewAction(
+              'project-foreign',
+              userWorkspaceIdentity,
+              7n,
+              authority,
+              action as MobileDirectReviewAction,
+              'mobile-effect-foreign',
+            ),
     ).rejects.toMatchObject({ category: 'mobile_v2_project_unauthorized' });
     expect(adapter.pendingSteps).toBe(1);
-  },
-);
-
-/**
- * A recording stand-in for the Platform v2 client.
- *
- * The vendored TypeScript wire encoder cannot yet serialise a confirmed
- * pull-request action (see the tripwire test below), so the gateway contract
- * for those families is proved against the client interface directly. Every
- * property under test here is the gateway's own: what it persists, when it
- * persists it, and how many times it is willing to dispatch.
- */
-function recordingPullRequestClient(options: {
-  readonly snapshot: ReviewSnapshot;
-  readonly capabilities: unknown;
-  readonly receipt: ReviewActionReceipt;
-  readonly workspaceRevision: bigint;
-}) {
-  const confirmed: {
-    readonly action: unknown;
-    readonly idempotencyKey: string;
-    readonly confirmationDigest: string;
-    readonly expectedWorkspaceRevision: bigint;
-    readonly receiptCorrelationDigest: string;
-  }[] = [];
-  const capabilityReads: number[] = [];
-  const client = {
-    async negotiate() {
-      return negotiatedV2;
-    },
-    async queryWorkContexts() {
-      return {
-        kind: 'work_context_page' as const,
-        page: {
-          after: null,
-          has_more: false,
-          items: [
-            record(projectIdentity, 'Mobile'),
-            record(hostIdentity, 'Mobile host'),
-            record(checkoutIdentity, 'Mobile checkout', 2n),
-            record(
-              userWorkspaceIdentity,
-              'Issue 34',
-              options.workspaceRevision,
-            ),
-          ],
-          next_cursor: null,
-          requested_limit: WorkContextPageLimit(128n),
-          schema: PLATFORM_SCHEMA_V2,
-        },
-      };
-    },
-    async getReview() {
-      return { kind: 'review_result' as const, review: options.snapshot };
-    },
-    async getReviewCapabilities() {
-      capabilityReads.push(capabilityReads.length);
-      return {
-        kind: 'review_capabilities' as const,
-        capabilities: options.capabilities,
-      };
-    },
-    async executeReviewAction() {
-      throw new Error('unconfirmed_transport_must_not_be_used');
-    },
-    async executeConfirmedReviewAction(
-      _workspace: unknown,
-      _expectedRevision: unknown,
-      action: unknown,
-      idempotencyKey: string,
-      confirmationDigest: string,
-      expectedWorkspaceRevision: bigint,
-      receiptCorrelationDigest: string,
-    ) {
-      confirmed.push({
-        action,
-        idempotencyKey,
-        confirmationDigest,
-        expectedWorkspaceRevision,
-        receiptCorrelationDigest,
-      });
-      return { kind: 'review_receipt' as const, receipt: options.receipt };
-    },
-    async getCorrelatedReviewReceipt() {
-      return { kind: 'review_receipt' as const, receipt: options.receipt };
-    },
-    async getReviewReceipt() {
-      throw new Error('uncorrelated_lookup_must_not_be_used');
-    },
-  };
-  return { capabilityReads, client, confirmed };
-}
-
-test.each([...MOBILE_PULL_REQUEST_REVIEW_EFFECT_KINDS])(
-  'the %s effect is actor-attributed, scoped, revision-bound, and reconciled exactly once',
-  async (kind) => {
-    const snapshot = supportedEffectSnapshot(kind);
-    const authority = snapshot.pull_request.authority;
-    const idempotencyKey = IdempotencyKey(`mobile-effect-${kind}`);
-    const confirmationDigest = ReviewConfirmationDigest('ab'.repeat(32));
-    const slot = {
-      authority,
-      confirmation_digest: confirmationDigest,
-      expected_pull_request_revision: WorkContextRevision(1n),
-      receipt_correlation_digest: rerunReceiptCorrelationDigest,
-      ...(kind === 'open_pull_request'
-        ? {}
-        : { pull_request_id: supportedEffectPullRequestId }),
-      ...(kind === 'merge_pull_request'
-        ? {
-            expected_head_revision: supportedEffectHeadRevision,
-            readiness: 'ready' as const,
-          }
-        : {}),
-    };
-    const receipt: ReviewActionReceipt = {
-      schema: 'automonique.platform/review/v1',
-      platform_version: 2n,
-      receipt_id: `receipt-${kind}`,
-      action_id: `action-${kind}`,
-      actor: 'operator-mobile',
-      idempotency_key: idempotencyKey,
-      outcome: 'accepted',
-      reconciliation: 'poll_receipt',
-      revision: null,
-      current_revision: null,
-    };
-    const recorder = recordingPullRequestClient({
-      capabilities: {
-        schema: PLATFORM_SCHEMA_V2,
-        project,
-        workspace: userWorkspaceIdentity,
-        snapshot_revision: WorkContextRevision(7n),
-        workspace_revision: WorkContextRevision(9n),
-        rerunnable_checks: [],
-        agent_deliverable_comments: [],
-        // Only the family under test is minted, so nothing about it can be
-        // inferred from a sibling slot.
-        open_pull_request: kind === 'open_pull_request' ? slot : null,
-        update_pull_request: kind === 'update_pull_request' ? slot : null,
-        merge_pull_request: kind === 'merge_pull_request' ? slot : null,
-      },
-      receipt,
-      snapshot,
-      workspaceRevision: 9n,
-    });
-    const reviewStore = memoryReviewReceiptStore();
-    const gateway = createWorkspaceV2Gateway({
-      authorization: reviewAuthorization(),
-      authorizationDigest: async () => authorizationDigest,
-      client: recorder.client as unknown as Parameters<
-        typeof createWorkspaceV2Gateway
-      >[0]['client'],
-      now: () => 1_500,
-      receiptStore: memoryReceiptStore(),
-      reviewReceiptStore: reviewStore,
-    });
-    await gateway.negotiate();
-    await gateway.loadProject(project);
-    await gateway.loadReview(project, userWorkspaceIdentity);
-
-    const title =
-      kind === 'merge_pull_request' ? null : supportedEffectPullRequestTitle;
-    const submit = async (key: string) =>
-      gateway.confirmPullRequestAction(
-        await gateway.previewPullRequestAction(
-          project,
-          userWorkspaceIdentity,
-          9n,
-          7n,
-          kind,
-          title,
-        ),
-        key,
-      );
-
-    await expect(submit(idempotencyKey)).resolves.toMatchObject({
-      kind: 'submitted',
-      idempotencyKey,
-      receipt: { actor: 'operator-mobile', idempotency_key: idempotencyKey },
-      projectionRefreshRequired: true,
-    });
-
-    // Durable custody exists, is attributed to the delegated actor, is scoped
-    // to the delegated project and workspace, and is bound to the exact review
-    // revision the control was rendered from.
-    expect(reviewStore.handles).toEqual([
-      expect.objectContaining({
-        schema: REVIEW_V2_RECEIPT_HANDLE_SCHEMA,
-        project,
-        workspace_kind: 'user_workspace',
-        workspace_id: userWorkspaceIdentity.id,
-        actor_id: 'operator-mobile',
-        expected_revision: '7',
-        authority_kind: 'pull_request',
-        authority_id: authority.id,
-        action_kind: kind,
-        idempotency_key: idempotencyKey,
-        expected_workspace_revision: '9',
-        receipt_correlation_digest: rerunReceiptCorrelationDigest,
-      }),
-    ]);
-    // The handle is a lookup coordinate, never replayable content, and never a
-    // copy of the confirmation the server minted.
-    expect(JSON.stringify(reviewStore.handles)).not.toContain(
-      confirmationDigest,
-    );
-    expect(JSON.stringify(reviewStore.handles)).not.toContain(
-      supportedEffectPullRequestTitle,
-    );
-
-    // Exactly one dispatch, carrying the server's own digests verbatim.
-    expect(recorder.confirmed).toHaveLength(1);
-    expect(recorder.confirmed[0]).toMatchObject({
-      idempotencyKey,
-      confirmationDigest,
-      expectedWorkspaceRevision: 9n,
-      receiptCorrelationDigest: rerunReceiptCorrelationDigest,
-    });
-
-    // The same key never reaches transport twice.
-    await expect(submit(idempotencyKey)).resolves.toMatchObject({
-      kind: 'ambiguous',
-      idempotencyKey,
-      receipt: null,
-      projectionRefreshRequired: true,
-    });
-    expect(reviewStore.handles).toHaveLength(1);
-    expect(recorder.confirmed).toHaveLength(1);
-
-    // Recovery is correlated. The stub throws on the uncorrelated lookup, so
-    // a generic fallback would fail this rather than pass silently.
-    await expect(
-      gateway.reconcileReviewAction(idempotencyKey),
-    ).resolves.toMatchObject({
-      handle: { action_kind: kind, idempotency_key: idempotencyKey },
-      receipt: { idempotency_key: idempotencyKey },
-    });
-    expect(recorder.confirmed).toHaveLength(1);
-
-    // A project outside the delegated roots is refused before any read.
-    const readsBefore = recorder.capabilityReads.length;
-    await expect(
-      gateway.previewPullRequestAction(
-        'project-foreign',
-        userWorkspaceIdentity,
-        9n,
-        7n,
-        kind,
-        title,
-      ),
-    ).rejects.toMatchObject({ category: 'mobile_v2_project_unauthorized' });
-    expect(recorder.capabilityReads).toHaveLength(readsBefore);
-
-    // A stale review revision is refused before any read.
-    await expect(
-      gateway.previewPullRequestAction(
-        project,
-        userWorkspaceIdentity,
-        9n,
-        6n,
-        kind,
-        title,
-      ),
-    ).rejects.toMatchObject({ category: 'review_target_revision_stale' });
-    expect(recorder.capabilityReads).toHaveLength(readsBefore);
   },
 );
 
@@ -3914,60 +3699,6 @@ test.each([...MOBILE_CONFIRMED_REVIEW_EFFECT_KINDS])(
       ),
     ).rejects.toMatchObject({ category: 'review_confirmation_required' });
     expect(reviewStore.handles).toEqual([]);
-    expect(adapter.pendingSteps).toBe(1);
-  },
-);
-
-/**
- * Tripwire for the one remaining upstream gap.
- *
- * `ReviewAction::requires_confirmation` in the Rust protocol already names all
- * three pull-request families, and the daemon mints and checks their
- * confirmation digests. The generated TypeScript request encoder in
- * `protocol/generated/platform-v2-transport.ts` was not updated with it and
- * still allows the confirmation triple only on `rerun_check`, so the vendored
- * client refuses to serialise a confirmed pull-request write.
- *
- * This test pins that refusal. When the SDK is re-vendored past the fix it
- * starts failing, which is the signal to fold the pull-request families back
- * into the wire-level enumeration above.
- */
-test.each([...MOBILE_CONFIRMED_REVIEW_EFFECT_KINDS])(
-  'the vendored transport encodes a confirmed %s only for the check family',
-  async (kind) => {
-    const adapter = new DeterministicPlatformV2Adapter([
-      { lane: 'negotiation', result: negotiatedV2 },
-      {
-        lane: 'error',
-        error: new WorkspaceV2GatewayError('reached_the_wire'),
-      },
-    ]);
-    const client = new PlatformV2Client(adapter);
-    await client.negotiate({
-      schema: PLATFORM_NEGOTIATION_SCHEMA_V1,
-      versions: [PlatformVersionNumber(1n), PlatformVersionNumber(2n)],
-    });
-    const attempt = client.executeConfirmedReviewAction(
-      userWorkspaceIdentity,
-      WorkContextRevision(7n),
-      supportedEffectAction(kind),
-      IdempotencyKey('mobile-effect-wire-probe'),
-      ReviewConfirmationDigest('ab'.repeat(32)),
-      WorkContextRevision(9n),
-      rerunReceiptCorrelationDigest,
-    );
-    if (kind === 'rerun_check') {
-      // Encodes, so the request reaches the fixture and consumes its step.
-      await expect(attempt).rejects.toMatchObject({
-        category: 'reached_the_wire',
-      });
-      expect(adapter.pendingSteps).toBe(0);
-      return;
-    }
-    // Refused during encoding: nothing is dispatched and the step is untouched.
-    await expect(attempt).rejects.toMatchObject({
-      category: 'invalid_json_value',
-    });
     expect(adapter.pendingSteps).toBe(1);
   },
 );

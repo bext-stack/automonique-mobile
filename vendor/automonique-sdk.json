@@ -2,9 +2,9 @@
   "package": "@automonique/sdk",
   "version": "0.1.0",
   "sourceRepository": "https://github.com/bext-stack/automonique",
-  "sourceCommit": "ef0a2f02ceac8c96cf0e3327d61a675585d0c1f7",
+  "sourceCommit": "524073c3a55ec73d57e4b05abf5ba3eb0abd4cb7",
   "schemaDigest": "sha256:1c3f561d137a14321cee480b8035341dd70b526ca501f2d5efd7f817a6e4b845",
-  "aggregateSchemaDigest": "sha256:05b016857b99061a5a4cf3e6ebd1bfb0d89c3cecef26ae69d8f05769692fa1d6",
+  "aggregateSchemaDigest": "sha256:68db610d67952d45ccdaf95a7d9de85a7dc2363eeb3101c769a5f3251ee4425e",
   "archive": "automonique-sdk-0.1.0.tgz",
-  "archiveSha256": "9907971d4ae2ca2e78763f02ef9dd9c9a3d3649d107be7c483bdc830789609c6"
+  "archiveSha256": "0fab5eaa8ca351ff687e2ace60023a9443bb71e29f5868eb58729019bb169480"
 }
