@@ -215,7 +215,11 @@ Pull-request update/merge, generic execute, and shell fallback remain
 unavailable. The mobile UI renders a check rerun as active only for an exact
 fresh terminal check and all three dedicated grants; pull-request
 open/update/merge remain disabled typed controls with the production server's
-explicit unavailable adapter category. The coarse `execute_review_action`
+explicit unavailable adapter category. That is a contract limit, not a
+deferred screen: the pinned SDK's `ReviewCapabilities` advertises only
+`rerunnable_checks`, so no server-issued confirmation or receipt-correlation
+digest exists for a pull-request effect, and `MOBILE_PLATFORM_V2_ACTIONS`
+carries no pull-request grant to delegate. The coarse `execute_review_action`
 grant is never treated as CI or pull-request authority. Agent delivery
 instead uses the review authority and server-bound retained-session adapter;
 it never exposes a generic provider-message destination.

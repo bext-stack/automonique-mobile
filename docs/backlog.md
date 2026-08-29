@@ -150,9 +150,18 @@ Remaining tracked work is grouped in the
   - [x] Add a separately delegated check-rerun adapter with authoritative
         capability fetch, inert exact preview, separate confirmation, durable
         receipt reconciliation, and check notification/deep-link continuity.
+  - [x] Fence every supported effect kind with one enumerating contract test:
+        actor-attributed, project-scoped, revision-bound, durably recorded
+        before its first transport, and never sent twice for one idempotency
+        key.
   - [ ] Add separately delegated server adapters for pull-request update and
         merge; they remain explicitly unavailable and there is no generic
-        execute or shell fallback.
+        execute or shell fallback. Blocked upstream, not deferred: the pinned
+        SDK's `ReviewCapabilities` advertises only `rerunnable_checks`, so a
+        pull-request effect has no server-issued confirmation or
+        receipt-correlation digest, and `MOBILE_PLATFORM_V2_ACTIONS` has no
+        pull-request grant. Unblocking it needs both added in
+        `bext-stack/automonique` and a new vendored SDK pin.
   - [ ] Record live Mobile/ShellDeck/web fixture parity plus an authorized
         background-notification deep-link pass.
   - [ ] Record immutable iOS/EAS, VoiceOver/TalkBack, and independent-review
