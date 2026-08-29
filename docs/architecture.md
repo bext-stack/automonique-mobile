@@ -277,14 +277,31 @@ and comment revisions. Its durable mobile handle contains only the action
 digest and lookup coordinates, never comment content or a replayable provider
 message. CI rerun is completed through its own capability-read, rerun, and
 receipt grants, bound to the server-issued confirmation and
-receipt-correlation digests. The Git and pull-request families continue to
-return explicit adapter-unavailable categories and remain inert disabled rows.
-For pull requests that is a contract limit rather than a missing screen:
-`ReviewCapabilities` in the pinned SDK advertises only `rerunnable_checks`, so
-no confirmation or receipt-correlation digest can bind a pull-request write,
-and `MOBILE_PLATFORM_V2_ACTIONS` contains no pull-request grant to delegate.
-Mobile does not probe their support by sending an action, persist a
-speculative handle, or infer their authority from the coarse review grant.
+receipt-correlation digests.
+
+The three pull-request families travel the same confirmed lane, each behind
+its own capability slot and its own delegated grant. `ReviewCapabilities` now
+carries `open_pull_request`, `update_pull_request` and `merge_pull_request`
+independently, each with its own confirmation and receipt-correlation digest;
+merge additionally carries the head the server observed and its readiness
+verdict. The gateway ANDs slot and grant per family and returns null for
+either failure, so a withheld family produces no control rather than a
+disabled one, and no family's availability is derived from a sibling. Their
+receipt handles are filed under the `pull_request` authority and, like check
+rerun, require complete custody and recover only through the correlated
+receipt lookup. The Git families continue to return explicit
+adapter-unavailable categories.
+
+Mobile does not probe support by sending an action, persist a speculative
+handle, or infer authority from the coarse review grant. It also cannot yet
+complete a pull-request write against a real server: the Rust protocol's
+`ReviewAction::requires_confirmation` names all three families and the daemon
+mints their confirmation digests, but the generated TypeScript request encoder
+in `protocol/generated/platform-v2-transport.ts` still permits the
+confirmation triple only on `rerun_check`. The vendored client therefore
+refuses to serialise the request, which fails closed. A tripwire test in
+`src/core/workspace-v2-gateway.test.ts` pins that refusal so it cannot pass
+unnoticed once the SDK is re-vendored past the fix.
 
 Provider credentials, raw provider/tool output, routing policy, and an offline
 mutation queue never cross or live inside the mobile boundary.
