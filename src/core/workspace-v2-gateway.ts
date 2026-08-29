@@ -1464,6 +1464,12 @@ export function createWorkspaceV2Gateway(
       if (unavailableCategory !== null) {
         throw new WorkspaceV2GatewayError(unavailableCategory);
       }
+      // The confirmed families are unreachable through this entry point. It
+      // holds only `execute_review_action`, which is not evidence of a CI or
+      // pull-request grant, and it has no server-minted digest to send.
+      if (isConfirmedReviewEffectKind(action.kind)) {
+        throw new WorkspaceV2GatewayError('review_confirmation_required');
+      }
       const project = ProjectId(projectValue);
       requireProject(project);
       requireReviewWorkspaceInSnapshot(projectSnapshots, project, workspace);

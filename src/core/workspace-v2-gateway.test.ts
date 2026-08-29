@@ -3867,6 +3867,57 @@ test.each([...MOBILE_PULL_REQUEST_REVIEW_EFFECT_KINDS])(
   },
 );
 
+test.each([...MOBILE_CONFIRMED_REVIEW_EFFECT_KINDS])(
+  'the unconfirmed entry point refuses %s before any handle or request',
+  async (kind) => {
+    const snapshot = supportedEffectSnapshot(kind);
+    const reviewStore = memoryReviewReceiptStore();
+    const { gateway, adapter } = gatewayFor(
+      [
+        { lane: 'negotiation', result: negotiatedV2 },
+        projectSnapshotStep(9n),
+        {
+          lane: 'v2',
+          request: {
+            kind: 'get_review',
+            request: { project, workspace: userWorkspaceIdentity },
+          },
+          result: { kind: 'review_result', review: snapshot },
+        },
+        {
+          lane: 'error',
+          error: new WorkspaceV2GatewayError('unexpected_unconfirmed_write'),
+        },
+      ],
+      1_500,
+      memoryReceiptStore(),
+      reviewAuthorization(),
+      undefined,
+      authorizationDigest,
+      reviewStore,
+    );
+    await negotiate(gateway);
+    await gateway.loadProject(project);
+    await gateway.loadReview(project, userWorkspaceIdentity);
+    // Holding `execute_review_action` is never evidence of a CI or
+    // pull-request grant, and this lane has no server digest to carry.
+    await expect(
+      gateway.executeReviewAction(
+        project,
+        userWorkspaceIdentity,
+        7n,
+        kind === 'rerun_check'
+          ? snapshot.checks[0]!.authority
+          : snapshot.pull_request.authority,
+        supportedEffectAction(kind) as unknown as MobileDirectReviewAction,
+        `mobile-effect-unconfirmed-${kind}`,
+      ),
+    ).rejects.toMatchObject({ category: 'review_confirmation_required' });
+    expect(reviewStore.handles).toEqual([]);
+    expect(adapter.pendingSteps).toBe(1);
+  },
+);
+
 /**
  * Tripwire for the one remaining upstream gap.
  *
