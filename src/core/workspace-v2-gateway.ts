@@ -18,6 +18,8 @@ import {
   mutationPreviewDigest,
   validateReviewActionAgainstSnapshot,
   decodeWorkContextMutationApproval,
+  type AttentionSource,
+  type AttentionSourceSnapshot,
   type LineageProjection,
   type MutationApproval,
   type MutationPreview,
@@ -188,6 +190,17 @@ export interface WorkspaceV2Gateway {
     workspace: ReviewWorkspaceIdentity,
     signal?: AbortSignal,
   ): Promise<ReviewSnapshot>;
+  /**
+   * The authoritative attention read. Callers reduce the result through an
+   * `AttentionSourceBoard`; the gateway never derives attention from review
+   * state, and never widens the read past a project the authorization roots.
+   */
+  loadAttentionSourceSnapshot(
+    project: string,
+    userWorkspace: string,
+    source: AttentionSource,
+    signal?: AbortSignal,
+  ): Promise<AttentionSourceSnapshot>;
   executeReviewAction(
     project: string,
     workspace: ReviewWorkspaceIdentity,
@@ -263,6 +276,7 @@ export type ReadOnlyWorkspaceV2Gateway = Pick<
   | 'loadProject'
   | 'loadLineage'
   | 'loadReview'
+  | 'loadAttentionSourceSnapshot'
 >;
 
 export class WorkspaceV2GatewayError extends Error {
@@ -305,6 +319,12 @@ interface WorkspaceV2Client {
     workspace: ReviewWorkspaceIdentity,
     signal?: AbortSignal,
   ): ReturnType<PlatformV2Client['getReview']>;
+  getAttentionSourceSnapshot(
+    source: AttentionSource,
+    project: ProjectIdValue,
+    userWorkspace: UserWorkspaceIdValue,
+    signal?: AbortSignal,
+  ): ReturnType<PlatformV2Client['getAttentionSourceSnapshot']>;
   getReviewCapabilities(
     project: ProjectIdValue,
     workspace: ReviewWorkspaceIdentity,
@@ -1123,6 +1143,45 @@ export function createWorkspaceV2Gateway(
       const snapshot = deepFreeze(response.review);
       reviewSnapshots.set(reviewSnapshotKey(project, workspace), snapshot);
       return snapshot;
+    },
+
+    async loadAttentionSourceSnapshot(
+      projectValue,
+      userWorkspaceValue,
+      source,
+      signal,
+    ) {
+      requireAction('get_attention_source_snapshot');
+      const project = ProjectId(projectValue);
+      requireProject(project);
+      // The workspace must already be in this project's admitted snapshot, so
+      // an attention read can never be the thing that discovers a workspace.
+      snapshotRecord(
+        projectSnapshots,
+        project,
+        'user_workspace',
+        userWorkspaceValue,
+      );
+      const userWorkspace = UserWorkspaceId(userWorkspaceValue);
+      const response = await guarded(signal, (combined) =>
+        options.client.getAttentionSourceSnapshot(
+          source,
+          project,
+          userWorkspace,
+          combined,
+        ),
+      );
+      if (response.kind === 'platform_v2_refused') refusal(response.refusal);
+      const snapshot = response.snapshot;
+      if (
+        snapshot.source.kind !== source.kind ||
+        snapshot.source.id !== source.id ||
+        snapshot.project !== project ||
+        snapshot.user_workspace !== userWorkspace
+      ) {
+        throw new WorkspaceV2GatewayError('attention_snapshot_mismatch');
+      }
+      return deepFreeze(snapshot);
     },
 
     async executeReviewAction(
