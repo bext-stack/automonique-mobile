@@ -202,4 +202,17 @@ describe('authoritative attention projection', () => {
       unread: 1,
     });
   });
+
+  it('calls a board that has read nothing partial, not empty', () => {
+    const unread = createAttentionSourceBoard(target, [
+      reviewSource,
+      providerSource,
+    ]);
+    expect(projectAuthoritativeAttentionNodes(unread)).toHaveLength(0);
+    expect(summarizeAuthoritativeAttention(unread)).toMatchObject({
+      hiddenSources: [reviewSource, providerSource],
+      partial: true,
+      unread: 0,
+    });
+  });
 });
