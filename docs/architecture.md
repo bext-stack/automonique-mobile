@@ -293,15 +293,15 @@ receipt lookup. The Git families continue to return explicit
 adapter-unavailable categories.
 
 Mobile does not probe support by sending an action, persist a speculative
-handle, or infer authority from the coarse review grant. It also cannot yet
-complete a pull-request write against a real server: the Rust protocol's
-`ReviewAction::requires_confirmation` names all three families and the daemon
-mints their confirmation digests, but the generated TypeScript request encoder
-in `protocol/generated/platform-v2-transport.ts` still permits the
-confirmation triple only on `rerun_check`. The vendored client therefore
-refuses to serialise the request, which fails closed. A tripwire test in
-`src/core/workspace-v2-gateway.test.ts` pins that refusal so it cannot pass
-unnoticed once the SDK is re-vendored past the fix.
+handle, or infer authority from the coarse review grant. The unconfirmed
+`executeReviewAction` entry point refuses every confirmed kind outright, ahead
+of the project scope check and therefore ahead of any durable handle or
+request, so no unbound or uncorrelated write exists on any path.
+
+`ReviewCapabilities` also carries `staging` and `conflict_resolutions` for the
+four Git families. They are ShellDeck's surface: the mobile grant surface
+delegates none of them, so the gateway never requests one and those families
+keep returning their adapter-unavailable category.
 
 Provider credentials, raw provider/tool output, routing policy, and an offline
 mutation queue never cross or live inside the mobile boundary.

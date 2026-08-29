@@ -233,13 +233,10 @@ transport, carrying the server's digests verbatim. Agent delivery instead uses
 the review authority and server-bound retained-session adapter; it never
 exposes a generic provider-message destination.
 
-One upstream gap keeps the pull-request lane from completing in the field. The
-Rust protocol's `ReviewAction::requires_confirmation` already names all three
-families and the daemon mints and checks their confirmation digests, but the
-generated TypeScript request encoder still admits the confirmation triple only
-for `rerun_check`, so the vendored client refuses to serialise a confirmed
-pull-request write. Nothing unbound is sent in the meantime; a tripwire test
-pins the refusal and fails once the SDK is re-vendored past the fix.
+Git staging, committing and conflict resolution stay unavailable on a phone.
+The server can now describe them, but the mobile grant surface delegates none
+of them, so those four families keep their explicit adapter-unavailable
+category and render no control.
 
 Exact chat jumps additionally require the workspace revision, typed retained
 session relation, session revision, and an exact session in the bounded v1
