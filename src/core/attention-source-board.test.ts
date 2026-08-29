@@ -486,4 +486,56 @@ describe('attention source board', () => {
       kind: 'available',
     });
   });
+
+  it('refuses a baseline built on a predecessor older than the retained one', () => {
+    const first = applyAttentionSnapshot(
+      board(),
+      reviewSource,
+      snapshot({
+        items: [
+          item({ observed_at_ms: 5_000n, revision: WorkContextRevision(5n) }),
+        ],
+        observed_at_ms: 5_000n,
+        previous_revision: WorkContextRevision(4n),
+        revision: WorkContextRevision(5n),
+      }),
+      { mode: 'baseline' },
+    ).board;
+
+    // Bridging a predecessor this client never saw is exactly what a baseline
+    // is for, so revision 9 over predecessor 6 is admitted.
+    expect(
+      applyAttentionSnapshot(
+        first,
+        reviewSource,
+        snapshot({
+          items: [
+            item({ observed_at_ms: 9_000n, revision: WorkContextRevision(9n) }),
+          ],
+          observed_at_ms: 9_000n,
+          previous_revision: WorkContextRevision(6n),
+          revision: WorkContextRevision(9n),
+        }),
+        { mode: 'baseline' },
+      ).outcome,
+    ).toBe('replaced');
+
+    // Claiming a predecessor below the retained revision is a different
+    // history, not a resynchronization of this one.
+    expect(() =>
+      applyAttentionSnapshot(
+        first,
+        reviewSource,
+        snapshot({
+          items: [
+            item({ observed_at_ms: 9_000n, revision: WorkContextRevision(9n) }),
+          ],
+          observed_at_ms: 9_000n,
+          previous_revision: WorkContextRevision(2n),
+          revision: WorkContextRevision(9n),
+        }),
+        { mode: 'baseline' },
+      ),
+    ).toThrow('attention_baseline_invalid');
+  });
 });
