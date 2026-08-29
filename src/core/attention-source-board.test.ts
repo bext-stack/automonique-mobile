@@ -451,4 +451,39 @@ describe('attention source board', () => {
       },
     ]);
   });
+
+  it('reports an inventoried but never-read source as unobserved, not empty', () => {
+    const fresh = board();
+    expect(attentionSourceStatus(fresh, reviewSource)).toEqual({
+      kind: 'unavailable',
+      reason: 'not_observed',
+    });
+    expect(unavailableAttentionSources(fresh)).toHaveLength(2);
+    expect(visibleAttentionItems(fresh)).toHaveLength(0);
+
+    const read = applyAttentionSnapshot(fresh, reviewSource, snapshot(), {
+      mode: 'continuous',
+    }).board;
+    expect(attentionSourceStatus(read, reviewSource)).toEqual({
+      kind: 'available',
+    });
+    expect(unavailableAttentionSources(read)).toHaveLength(1);
+  });
+
+  it('carries a re-added source back in as unobserved rather than empty', () => {
+    const read = applyAttentionSnapshot(board(), reviewSource, snapshot(), {
+      mode: 'continuous',
+    }).board;
+    const readmitted = replaceAttentionInventory(
+      replaceAttentionInventory(read, [reviewSource]),
+      [reviewSource, orchestrationSource],
+    );
+    expect(attentionSourceStatus(readmitted, orchestrationSource)).toEqual({
+      kind: 'unavailable',
+      reason: 'not_observed',
+    });
+    expect(attentionSourceStatus(readmitted, reviewSource)).toEqual({
+      kind: 'available',
+    });
+  });
 });

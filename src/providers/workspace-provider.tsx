@@ -71,10 +71,13 @@ import {
   attentionNotificationKey,
   admitReviewNotification,
   decodeAttentionNotificationData,
+  encodeAttentionSourceNotificationData,
   encodeReviewNotificationData,
   encodeSessionAttentionNotificationData,
   type NotificationPermission,
 } from '@/core/review-notifications';
+import { admitAttentionSourceNotificationDeepLink } from '@/core/attention-source-navigation';
+import { projectAuthoritativeAttentionNodes } from '@/core/attention-source-projection';
 import { reviewNotificationRuntime } from '@/core/review-notification-runtime';
 import {
   loadAttentionNotificationKeys,
@@ -479,12 +482,19 @@ export function WorkspaceProvider({
               detailsRef.current,
               decoded.request,
             )
-          : admitSessionAttentionDeepLink({
-              catalog: catalogRef.current,
-              details: detailsRef.current,
-              request: decoded.request,
-              retainedSessions: retainedSessionsRef.current,
-            });
+          : decoded.target === 'attention_source'
+            ? admitAttentionSourceNotificationDeepLink({
+                catalog: catalogRef.current,
+                details: detailsRef.current,
+                request: decoded.request,
+                retainedSessions: retainedSessionsRef.current,
+              })
+            : admitSessionAttentionDeepLink({
+                catalog: catalogRef.current,
+                details: detailsRef.current,
+                request: decoded.request,
+                retainedSessions: retainedSessionsRef.current,
+              });
       routerRef.current.push({
         pathname: route.pathname,
         params: route.params,
@@ -538,7 +548,9 @@ export function WorkspaceProvider({
             data:
               decoded.target === 'review'
                 ? encodeReviewNotificationData(decoded.request)
-                : encodeSessionAttentionNotificationData(decoded.request),
+                : decoded.target === 'attention_source'
+                  ? encodeAttentionSourceNotificationData(decoded.request)
+                  : encodeSessionAttentionNotificationData(decoded.request),
           });
         } catch {
           notifiedAttention.current.delete(notificationKey);
@@ -589,6 +601,39 @@ export function WorkspaceProvider({
           } catch {
             // Stale or incomplete review coordinates remain inert.
           }
+        }
+        // A workspace that serves the authoritative board notifies only from
+        // it, bound to the exact item revision the alert was raised at.
+        if (detail.attention != null) {
+          for (const node of projectAuthoritativeAttentionNodes(
+            detail.attention,
+          )) {
+            if (node.state !== 'needs_you' || !node.unread) continue;
+            const request = {
+              serverIdentity: detail.serverIdentity,
+              authorizationRevision: server.authorizationRevision,
+              principalGeneration: server.principalGeneration,
+              workspaceId: workspace.id,
+              workspaceRevision: workspace.revision,
+              sourceKind: node.source.kind,
+              sourceId: node.source.id,
+              itemId: node.itemId,
+              itemRevision: node.revision,
+            };
+            try {
+              const route = admitAttentionSourceNotificationDeepLink({
+                catalog: liveCatalog,
+                details: liveDetails,
+                request,
+                retainedSessions: retainedSessionsRef.current,
+              });
+              await schedule({ target: 'attention_source', request }, route, 1);
+            } catch {
+              // A row without an exact current coordinate stays visible but
+              // cannot create a notification or navigation capability.
+            }
+          }
+          continue;
         }
         for (const node of projectAttentionNodes(null, detail.lineage)) {
           if (
