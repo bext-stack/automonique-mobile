@@ -259,7 +259,8 @@ describe('attention source board', () => {
       'unauthorized',
     );
     expect(visibleAttentionItems(refused)).toHaveLength(0);
-    expect(retainedAttentionSnapshot(refused, reviewSource)).toBeNull();
+    // The projection is hidden, but the chain it sits on is not forgotten.
+    expect(retainedAttentionSnapshot(refused, reviewSource)?.revision).toBe(1n);
     expect(attentionSourceStatus(refused, reviewSource)).toEqual({
       category: 'unauthorized',
       kind: 'refused',
