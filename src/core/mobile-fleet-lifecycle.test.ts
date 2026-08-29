@@ -196,6 +196,7 @@ test('hydrates ready servers with a two-server bound and exposes read-only proje
     'loadProject',
     'loadLineage',
     'loadReview',
+    'loadAttentionSourceSnapshot',
   ]);
   expect(workspaceReads[1]!.gateway).not.toHaveProperty('prepareMutation');
   expect(workspaceReads[1]!.gateway).not.toHaveProperty('executeReviewAction');

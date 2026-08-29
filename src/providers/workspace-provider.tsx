@@ -335,6 +335,7 @@ export function WorkspaceProvider({
             loadProject: gateway.loadProject,
             loadLineage: gateway.loadLineage,
             loadReview: gateway.loadReview,
+            loadAttentionSourceSnapshot: gateway.loadAttentionSourceSnapshot,
           };
     if (readOnlyServers === undefined) {
       return selectedReadGateway === null || profile === null

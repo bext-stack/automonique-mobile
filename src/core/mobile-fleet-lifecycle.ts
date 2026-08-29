@@ -542,6 +542,7 @@ export class MobileFleetLifecycleCoordinator {
           loadProject: gateway.loadProject,
           loadLineage: gateway.loadLineage,
           loadReview: gateway.loadReview,
+          loadAttentionSourceSnapshot: gateway.loadAttentionSourceSnapshot,
         },
       });
     }
