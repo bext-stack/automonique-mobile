@@ -18,6 +18,7 @@ const checkOnly = process.argv.slice(2).includes('--check');
 const deriveDigests = process.argv.slice(2).includes('--derive-digests');
 const notificationsRoot = join(root, 'node_modules', 'expo-notifications');
 const packagePath = join(notificationsRoot, 'package.json');
+const moduleConfigPath = join(notificationsRoot, 'expo-module.config.json');
 const EXPECTED_VERSION = '57.0.15';
 
 const files = {
@@ -26,35 +27,18 @@ const files = {
     pristine:
       '1c9afeb0e10915012febd59eab6534814c49b8732b33ce67309d019e4517b5ae',
     hardened:
-      'cb59d4348dc25f73423b83eb7179a3a023795bf186cafe4749ba4b9e4738ea99',
+      'aa33beb15ad737082e1e144c25801eef712ef0ec896a732e61ba81d8b01225cc',
     transform(contents) {
       contents = replaceExactlyOnce(
         contents,
         '  namespace "expo.modules.notifications"\n',
-        `  namespace "expo.modules.notifications"\n  sourceSets {\n    main.java {\n      // Automonique is local-notifications-only. Remote push is excluded fail-closed.\n      exclude 'expo/modules/notifications/notifications/RemoteMessageSerializer.java'\n      exclude 'expo/modules/notifications/notifications/background/BackgroundRemoteNotificationTaskConsumer.kt'\n      exclude 'expo/modules/notifications/notifications/background/ExpoBackgroundNotificationTasksModule.kt'\n      exclude 'expo/modules/notifications/notifications/model/RemoteNotificationContent.kt'\n      exclude 'expo/modules/notifications/notifications/model/triggers/FirebaseNotificationTrigger.kt'\n      exclude 'expo/modules/notifications/service/ExpoFirebaseMessagingService.kt'\n      exclude 'expo/modules/notifications/service/delegates/FirebaseMessagingDelegate.kt'\n      exclude 'expo/modules/notifications/service/interfaces/FirebaseMessagingDelegate.kt'\n      exclude 'expo/modules/notifications/tokens/PushTokenModule.kt'\n      exclude 'expo/modules/notifications/tokens/interfaces/FirebaseTokenListener.kt'\n      exclude 'expo/modules/notifications/topics/TopicSubscriptionModule.kt'\n    }\n  }\n`,
+        `  namespace "expo.modules.notifications"\n  sourceSets {\n    main.java {\n      // Automonique is local-notifications-only. Remote push is excluded fail-closed.\n      exclude 'expo/modules/notifications/notifications/RemoteMessageSerializer.java'\n      exclude 'expo/modules/notifications/notifications/background/BackgroundRemoteNotificationTaskConsumer.kt'\n      exclude 'expo/modules/notifications/notifications/model/RemoteNotificationContent.kt'\n      exclude 'expo/modules/notifications/notifications/model/triggers/FirebaseNotificationTrigger.kt'\n      exclude 'expo/modules/notifications/service/ExpoFirebaseMessagingService.kt'\n      exclude 'expo/modules/notifications/service/delegates/FirebaseMessagingDelegate.kt'\n      exclude 'expo/modules/notifications/service/interfaces/FirebaseMessagingDelegate.kt'\n      exclude 'expo/modules/notifications/tokens/interfaces/FirebaseTokenListener.kt'\n    }\n  }\n`,
       );
       return replaceExactlyOnce(
         contents,
         '  // release notes in https://firebase.google.com/support/release-notes/android - cmd + f "Cloud Messaging version"\n  implementation \'com.google.firebase:firebase-messaging:25.0.1\'\n\n',
         '',
       );
-    },
-  },
-  config: {
-    path: join(notificationsRoot, 'expo-module.config.json'),
-    pristine:
-      'a1559b061b54e1a9e2438d2484cf6fbfea1374de47a760b18b8c51acbed04c8c',
-    hardened:
-      '78f773d0337bb0d63ad9f64d55955042718d8763d119f848a2443ba0bdb680f4',
-    transform(contents) {
-      for (const moduleLine of [
-        '      "expo.modules.notifications.notifications.background.ExpoBackgroundNotificationTasksModule",\n',
-        '      "expo.modules.notifications.tokens.PushTokenModule",\n',
-        '      "expo.modules.notifications.topics.TopicSubscriptionModule",\n',
-      ]) {
-        contents = replaceExactlyOnce(contents, moduleLine, '');
-      }
-      return contents;
     },
   },
   manifest: {
@@ -220,6 +204,150 @@ const files = {
       return `${contents.slice(0, start)}${contents.slice(end)}`;
     },
   },
+  backgroundTasksModule: {
+    path: join(
+      notificationsRoot,
+      'android',
+      'src',
+      'main',
+      'java',
+      'expo',
+      'modules',
+      'notifications',
+      'notifications',
+      'background',
+      'ExpoBackgroundNotificationTasksModule.kt',
+    ),
+    pristine:
+      'ec5560cc037fd2ffb7417d4f7e4b28b931ee9e76fbec175d33c19f3689ef0e96',
+    hardened:
+      'e29bb468d3e87afa52527466ba51efeface886e37d268b43e4df33793df50fc2',
+    transform() {
+      return `package expo.modules.notifications.notifications.background
+
+import expo.modules.kotlin.exception.CodedException
+import expo.modules.kotlin.modules.Module
+import expo.modules.kotlin.modules.ModuleDefinition
+
+private class RemotePushDisabledException :
+  CodedException("Automonique disables remote push notifications.")
+
+private fun rejectRemotePush(): Unit {
+  throw RemotePushDisabledException()
+}
+
+class ExpoBackgroundNotificationTasksModule : Module() {
+  override fun definition() = ModuleDefinition {
+    Name("ExpoBackgroundNotificationTasksModule")
+
+    AsyncFunction("registerTaskAsync") { _: String ->
+      rejectRemotePush()
+    }
+
+    AsyncFunction("unregisterTaskAsync") { _: String ->
+      rejectRemotePush()
+    }
+  }
+}
+`;
+    },
+  },
+  pushTokenModule: {
+    path: join(
+      notificationsRoot,
+      'android',
+      'src',
+      'main',
+      'java',
+      'expo',
+      'modules',
+      'notifications',
+      'tokens',
+      'PushTokenModule.kt',
+    ),
+    pristine:
+      '102a9274962904a40090e945f2dfc22bc3f63abf5f1fc8f6dc9c8ba5fc2998f2',
+    hardened:
+      'a526c5a228de4ce2f04d0baa2223c6590902f018409791a9f7bf74035d8698c0',
+    transform() {
+      return `package expo.modules.notifications.tokens
+
+import expo.modules.kotlin.exception.CodedException
+import expo.modules.kotlin.modules.Module
+import expo.modules.kotlin.modules.ModuleDefinition
+
+private class RemotePushDisabledException :
+  CodedException("Automonique disables remote push notifications.")
+
+private fun rejectRemotePush(): Unit {
+  throw RemotePushDisabledException()
+}
+
+class PushTokenModule : Module() {
+  override fun definition() = ModuleDefinition {
+    Name("ExpoPushTokenManager")
+
+    Events("onDevicePushToken")
+
+    AsyncFunction("getDevicePushTokenAsync") {
+      rejectRemotePush()
+    }
+
+    AsyncFunction("unregisterForNotificationsAsync") {
+      rejectRemotePush()
+    }
+  }
+}
+`;
+    },
+  },
+  topicSubscriptionModule: {
+    path: join(
+      notificationsRoot,
+      'android',
+      'src',
+      'main',
+      'java',
+      'expo',
+      'modules',
+      'notifications',
+      'topics',
+      'TopicSubscriptionModule.kt',
+    ),
+    pristine:
+      '7d231e755ca031f8bbf5fae7d179cb7407a51c35aa33b066da14627a67675d9d',
+    hardened:
+      '0adf5b51efb06dad189193aedc4e9b7a97bd4b01f028e21207540d1f3402dfa9',
+    transform() {
+      return `package expo.modules.notifications.topics
+
+import expo.modules.kotlin.exception.CodedException
+import expo.modules.kotlin.modules.Module
+import expo.modules.kotlin.modules.ModuleDefinition
+
+private class RemotePushDisabledException :
+  CodedException("Automonique disables remote push notifications.")
+
+private fun rejectRemotePush(): Unit {
+  throw RemotePushDisabledException()
+}
+
+class TopicSubscriptionModule : Module() {
+  override fun definition() = ModuleDefinition {
+    Name("ExpoTopicSubscriptionModule")
+
+    AsyncFunction("subscribeToTopicAsync") { _: String ->
+      rejectRemotePush()
+    }
+
+    AsyncFunction("unsubscribeFromTopicAsync") { _: String ->
+      rejectRemotePush()
+    }
+  }
+}
+`;
+    },
+  },
 };
 
 const remoteOnlySources = {
@@ -227,8 +355,6 @@ const remoteOnlySources = {
     '7e38e7e7936912b5c85708d13c11a88720d7c083b0cd2ffb3804b8bc1b60c95e',
   'notifications/background/BackgroundRemoteNotificationTaskConsumer.kt':
     'e2fe6b43a5e30f45d6acb8552804e2b3576f4cb49d7de74e68f560d8d193332c',
-  'notifications/background/ExpoBackgroundNotificationTasksModule.kt':
-    'ec5560cc037fd2ffb7417d4f7e4b28b931ee9e76fbec175d33c19f3689ef0e96',
   'notifications/model/RemoteNotificationContent.kt':
     '50cd5fd75a11517fae91d64e462bc3d3e3868799116d59ab13f0ee5de19cca33',
   'notifications/model/triggers/FirebaseNotificationTrigger.kt':
@@ -239,12 +365,8 @@ const remoteOnlySources = {
     '51d866114bd62a329c05d45eeb6a18a532849056bec1068ef0101d319a769f32',
   'service/interfaces/FirebaseMessagingDelegate.kt':
     '096bd1145af48cd2a202d594e41f49eac1ac100d4e0a3897e3f50902f171101b',
-  'tokens/PushTokenModule.kt':
-    '102a9274962904a40090e945f2dfc22bc3f63abf5f1fc8f6dc9c8ba5fc2998f2',
   'tokens/interfaces/FirebaseTokenListener.kt':
     '3f50e57d74ed4b64b737e1e68bee13baaaded7995f702cbd7f74d7cea3a44cbf',
-  'topics/TopicSubscriptionModule.kt':
-    '7d231e755ca031f8bbf5fae7d179cb7407a51c35aa33b066da14627a67675d9d',
 };
 
 function sha256(contents) {
@@ -276,6 +398,9 @@ function writeAtomically(path, contents) {
 }
 
 const notificationsPackage = JSON.parse(readFileSync(packagePath, 'utf8'));
+const notificationsModuleConfig = JSON.parse(
+  readFileSync(moduleConfigPath, 'utf8'),
+);
 const rootPackage = JSON.parse(
   readFileSync(join(root, 'package.json'), 'utf8'),
 );
@@ -286,6 +411,16 @@ assert.deepEqual(rootPackage.expo?.autolinking?.android?.buildFromSource, [
 assert.equal(notificationsPackage.name, 'expo-notifications');
 assert.equal(notificationsPackage.version, EXPECTED_VERSION);
 assert.equal(notificationsPackage.license, 'MIT');
+for (const moduleName of [
+  'expo.modules.notifications.notifications.background.ExpoBackgroundNotificationTasksModule',
+  'expo.modules.notifications.tokens.PushTokenModule',
+  'expo.modules.notifications.topics.TopicSubscriptionModule',
+]) {
+  assert.ok(
+    notificationsModuleConfig.android?.modules?.includes(moduleName),
+    `required fail-closed compatibility module is not registered: ${moduleName}`,
+  );
+}
 
 if (deriveDigests) {
   for (const [name, file] of Object.entries(files)) {
