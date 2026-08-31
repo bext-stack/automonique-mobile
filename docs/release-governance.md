@@ -47,6 +47,15 @@ run the complete inspection and notice gates below. An ad hoc local APK without
 that provenance is not publishable. This exception does not authorize an iOS,
 store, signed-device, or production build.
 
+The reviewed preview dependency graph keeps `expo-notifications` for local,
+operator-enabled attention notifications but does not use Expo Application's
+Google Play Install Referrer API. The locked postinstall hardening removes that
+unused function and its `com.android.installreferrer:installreferrer` Maven
+dependency from the exact pinned MIT-licensed `expo-application` source before
+native generation. Both pristine and hardened source digests are pinned; an
+Expo update or partial patch fails validation and requires a fresh review. The
+Maven inventory must prove that the Android SDK Terms dependency is absent.
+
 The reviewed `.github/workflows/android-preview.yml` workflow implements that
 CI path. It is manual-only, accepts no ref input, rejects any dispatch whose
 selected source is not protected `main`, uploads the APK and complete evidence
