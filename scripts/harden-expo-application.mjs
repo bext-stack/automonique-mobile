@@ -144,6 +144,7 @@ const rootPackage = JSON.parse(
 );
 assert.deepEqual(rootPackage.expo?.autolinking?.android?.buildFromSource, [
   'expo-application',
+  'expo-notifications',
 ]);
 assert.equal(applicationPackage.name, 'expo-application');
 assert.equal(
