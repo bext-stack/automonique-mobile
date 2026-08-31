@@ -219,6 +219,16 @@ jobs:
               echo '--- Android emulator failure diagnostics ---'
               "$adb" devices -l || true
               tail -n 240 "$emulator_console" || true
+              echo '--- Last UI hierarchy ---'
+              cat "$PREVIEW_OUTPUT_DIR/emulator-window.xml" || true
+              echo '--- Automonique logcat ---'
+              "$adb" logcat -d -v brief \
+                | grep -E 'dev\.bext\.automonique|ReactNativeJS|AndroidRuntime' \
+                | tail -n 240 || true
+              "$adb" logcat -d -v threadtime \
+                > "$PREVIEW_OUTPUT_DIR/emulator-logcat.txt" || true
+              "$adb" shell dumpsys activity exit-info dev.bext.automonique \
+                > "$PREVIEW_OUTPUT_DIR/emulator-exit-info.txt" || true
             fi
             kill "$emulator_pid" 2>/dev/null || true
             trap - EXIT

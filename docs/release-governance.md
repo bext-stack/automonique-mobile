@@ -58,8 +58,9 @@ Maven inventory must prove that the Android SDK Terms dependency is absent.
 
 The same preview build source-builds `expo-notifications` as a
 local-notifications-only module. A locked, digest-pinned postinstall hardening
-removes Firebase Cloud Messaging, the push-token/topic/background-remote
-modules, and the Firebase service while retaining permission, channels, local
+removes Firebase Cloud Messaging and its service while replacing the
+push-token/topic/background-remote modules with registered fail-closed stubs
+for JavaScript import compatibility, retaining permission, channels, local
 scheduling, presentation, and response handling. Automonique schedules only
 locally derived attention reminders and does not use remote push. Unknown
 package versions, pristine source digests, or hardened outputs fail closed; the
