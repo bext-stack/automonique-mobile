@@ -56,6 +56,15 @@ native generation. Both pristine and hardened source digests are pinned; an
 Expo update or partial patch fails validation and requires a fresh review. The
 Maven inventory must prove that the Android SDK Terms dependency is absent.
 
+The same preview build source-builds `expo-notifications` as a
+local-notifications-only module. A locked, digest-pinned postinstall hardening
+removes Firebase Cloud Messaging, the push-token/topic/background-remote
+modules, and the Firebase service while retaining permission, channels, local
+scheduling, presentation, and response handling. Automonique schedules only
+locally derived attention reminders and does not use remote push. Unknown
+package versions, pristine source digests, or hardened outputs fail closed; the
+aggregate license gate remains unchanged.
+
 The reviewed `.github/workflows/android-preview.yml` workflow implements that
 CI path. It is manual-only, accepts no ref input, rejects any dispatch whose
 selected source is not protected `main`, uploads the APK and complete evidence
