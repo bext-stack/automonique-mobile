@@ -32,7 +32,12 @@ export type ConnectionPhase =
   'live' | 'reconnecting' | 'stale' | 'incompatible';
 
 export type MobileAction =
-  'attach' | 'follow_up' | 'decide_approval' | 'stop_run' | 'start_task';
+  | 'attach'
+  | 'follow_up'
+  | 'decide_approval'
+  | 'stop_run'
+  | 'start_task'
+  | 'manage_work';
 
 export interface ConnectionStatus {
   readonly phase: ConnectionPhase;
@@ -181,6 +186,12 @@ export interface MobileTaskGateway {
 
 export interface MobileAutomoniqueGateway {
   readonly tasks?: MobileTaskGateway;
+  readonly work?: {
+    request(
+      request: import('@automonique/sdk').MobileWorkRequest,
+      signal?: AbortSignal,
+    ): Promise<import('@automonique/sdk').MobileWorkView>;
+  };
   bootstrap(signal?: AbortSignal): Promise<MobileSnapshot>;
   attach(
     session: VersionedTarget,

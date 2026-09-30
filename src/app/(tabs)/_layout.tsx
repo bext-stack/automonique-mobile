@@ -9,6 +9,7 @@ import { usePalette } from '@/theme/palette';
 const icons = {
   index: '⌂',
   sessions: '◉',
+  work: '☷',
   workspaces: '◇',
   attention: '!',
   approvals: '✓',
@@ -55,6 +56,14 @@ export default function OperatorTabs() {
           title: 'Home',
           tabBarAccessibilityLabel: 'Home overview',
           tabBarIcon: ({ color }) => <TabIcon color={color} name="index" />,
+        }}
+      />
+      <Tabs.Screen
+        name="work"
+        options={{
+          title: 'Work',
+          tabBarAccessibilityLabel: 'Slack and ticket queue',
+          tabBarIcon: ({ color }) => <TabIcon color={color} name="work" />,
         }}
       />
       <Tabs.Screen

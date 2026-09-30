@@ -622,7 +622,9 @@ export function createAuthorizedHttpsGateway(
     });
   }
   let gateway = create(options.authorization);
-  if (!options.authorization.actions.includes('start_task')) return gateway;
+  const canStart = options.authorization.actions.includes('start_task');
+  const canManage = options.authorization.actions.includes('manage_work');
+  if (!canStart && !canManage) return gateway;
   let lifecycle: MobileLifecycleClient | null = null;
   async function mobileClient(signal?: AbortSignal) {
     lifecycle ??= await MobileLifecycleClient.discover(
@@ -634,13 +636,34 @@ export function createAuthorizedHttpsGateway(
     return lifecycle;
   }
   return {
-    tasks: {
-      async request(request, signal) {
-        const client = await mobileClient(signal);
-        return client.task(await options.token(), request, signal);
-      },
-    },
+    ...(canManage
+      ? {
+          work: {
+            async request(
+              request: import('@automonique/sdk').MobileWorkRequest,
+              signal?: AbortSignal,
+            ) {
+              const client = await mobileClient(signal);
+              return client.work(await options.token(), request, signal);
+            },
+          },
+        }
+      : {}),
+    ...(canStart
+      ? {
+          tasks: {
+            async request(
+              request: import('@automonique/sdk').MobileTaskRequest,
+              signal?: AbortSignal,
+            ) {
+              const client = await mobileClient(signal);
+              return client.task(await options.token(), request, signal);
+            },
+          },
+        }
+      : {}),
     async bootstrap(signal) {
+      if (!canStart) return gateway.bootstrap(signal);
       const client = await mobileClient(signal);
       const authorization = await client.authorization(
         await options.token(),

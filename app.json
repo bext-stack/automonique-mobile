@@ -21,7 +21,7 @@
     },
     "android": {
       "package": "dev.bext.automonique",
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "backgroundColor": "#0B3529",
         "foregroundImage": "./assets/images/automonique-mark.png"

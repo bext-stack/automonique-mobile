@@ -25,6 +25,7 @@ const ACTIONS: readonly MobileAction[] = [
   'decide_approval',
   'stop_run',
   'start_task',
+  'manage_work',
 ];
 
 function record(value: unknown): Record<string, unknown> {

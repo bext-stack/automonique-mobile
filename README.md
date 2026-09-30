@@ -152,3 +152,11 @@ controls follow [release governance](docs/release-governance.md).
 
 Product code is licensed under the Elastic License 2.0. Third-party packages
 retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+The **Work** tab reads the server-configured Slack channel and lists that
+instance’s GitHub-linked Monique ticket queue. Pair with the explicit
+**Read Slack and manage tickets** permission to submit a ticket, approve its
+pending gate, or reject it with a reason. These controls require a live
+connection and a confirmation; interrupted requests retain their original key
+for an explicit retry. The server must support `/api/mobile/work` and configure
+its channel binding. Existing phone credentials gain no new permissions.
