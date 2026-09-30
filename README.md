@@ -83,16 +83,16 @@ not by itself prove the requested work succeeded; check its session output.
 ## Public Android preview
 
 Download the immutable
-[Automonique Mobile 0.1.0-preview.3 APK](https://www.automonique.fr/downloads/android/0.1.0-preview.3/a0cff28c7404017544eb28d38f790fe90307f44d3b95f25f4ffffd4fca584ee7/automonique-mobile-0.1.0-preview.3.apk).
+[Automonique Mobile 0.1.0-preview.4 APK](https://www.automonique.fr/downloads/android/0.1.0-preview.4/affa6fd6f859b370839246ce34087dacf980fd09841509f6360610e8f1ae91be/automonique-mobile-0.1.0-preview.4.apk).
 
-SHA-256: `a0cff28c7404017544eb28d38f790fe90307f44d3b95f25f4ffffd4fca584ee7`
+SHA-256: `affa6fd6f859b370839246ce34087dacf980fd09841509f6360610e8f1ae91be`
 
-The [v0.1.0-preview.3 GitHub prerelease](https://github.com/bext-stack/automonique-mobile/releases/tag/v0.1.0-preview.3)
+The [v0.1.0-preview.4 GitHub prerelease](https://github.com/bext-stack/automonique-mobile/releases/tag/v0.1.0-preview.4)
 provides the same APK and verification evidence.
 
-The adjacent [publication record](https://www.automonique.fr/downloads/android/0.1.0-preview.3/a0cff28c7404017544eb28d38f790fe90307f44d3b95f25f4ffffd4fca584ee7/publication.json) connects these
+The adjacent [publication record](https://www.automonique.fr/downloads/android/0.1.0-preview.4/affa6fd6f859b370839246ce34087dacf980fd09841509f6360610e8f1ae91be/publication.json) connects these
 exact bytes to protected `main`, retained GitHub Actions run
-[`33435144570`](https://github.com/bext-stack/automonique-mobile/actions/runs/33435144570),
+[`36723481021`](https://github.com/bext-stack/automonique-mobile/actions/runs/36723481021),
 the GitHub artifact attestation, packaged manifest, ABIs, debug-only signer,
 toolchains, and dependency notices.
 
@@ -107,7 +107,7 @@ The earlier
 [0.1.0-preview.2 path](https://www.automonique.fr/downloads/android/0.1.0-preview.2/4c7b7fac529c8060ecc84691b00156c1fc42989c86adab467cdf9f43e959b353/automonique-mobile-0.1.0-preview.2.apk)
 stays published and unchanged; a preview path is never overwritten or
 redirected. The synthetic TalkBack traversal recorded for preview.1 was not
-repeated for preview.2 or preview.3 and does not cover either version.
+repeated for preview.2, preview.3, or preview.4 and does not cover those versions.
 
 ## Requirements
 
