@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
-import type { MobileWorkRequest, MobileWorkView } from '@automonique/sdk';
+import {
+  MobileLifecycleError,
+  type MobileWorkRequest,
+  type MobileWorkView,
+} from '@automonique/sdk';
 import type { MobileAutomoniqueGateway } from './types';
 
 type Mutation = Extract<MobileWorkRequest, { action: 'dispatch' | 'decide' }>;
@@ -12,6 +16,13 @@ interface Store {
   removeItem(key: string): Promise<void>;
 }
 const active = new Set<string>();
+export function isWorkNotApplied(error: unknown): boolean {
+  return (
+    error instanceof MobileLifecycleError &&
+    error.status === 409 &&
+    error.category === 'mobile_work_not_applied'
+  );
+}
 export function createWorkExecution(
   scope: string,
   store: Store,
@@ -74,7 +85,16 @@ export function createWorkExecution(
       if (signal?.aborted) throw new Error('work_request_aborted');
       if (intent !== null) await store.setItem(key, JSON.stringify(request));
       if (signal?.aborted) throw new Error('work_request_aborted');
-      const result = await gateway.request(request, signal);
+      let result: MobileWorkView;
+      try {
+        result = await gateway.request(request, signal);
+      } catch (error) {
+        // A refusal of the first attempt is definitive. A retry may follow an
+        // earlier applied-but-unacknowledged write, so preserve its recovery.
+        if (intent !== null && isWorkNotApplied(error))
+          await store.removeItem(key);
+        throw error;
+      }
       if (result.kind !== 'receipt') throw new Error('work_receipt_missing');
       await store.removeItem(key);
       return result;

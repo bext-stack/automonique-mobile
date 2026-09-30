@@ -2,7 +2,7 @@
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { PropsWithChildren } from 'react';
-import type { MobileWorkRequest } from '@automonique/sdk';
+import { MobileLifecycleError, type MobileWorkRequest } from '@automonique/sdk';
 import WorkScreen from './app/(tabs)/work';
 import { syntheticSnapshot } from './core/fixtures';
 
@@ -150,4 +150,24 @@ test('offline projections cannot read or mutate the queue', async () => {
     view.getByText('Reconnect to read Slack and manage work.'),
   ).toBeTruthy();
   expect(request).not.toHaveBeenCalled();
+});
+
+test('a definite first-attempt refusal explains recovery and keeps new actions available', async () => {
+  const { request } = setup();
+  const view = await render(<WorkScreen />);
+  await waitFor(() => expect(view.getByText('Fixture ticket')).toBeTruthy());
+  request.mockRejectedValueOnce(
+    new MobileLifecycleError(409, 'mobile_work_not_applied'),
+  );
+  await fireEvent.press(view.getByText('Approve ticket'));
+  await fireEvent.press(view.getByText('Confirm action'));
+  await waitFor(() =>
+    expect(
+      view.getByText(
+        'Manage did not apply this request. Check the ticket and refresh the queue before trying again.',
+      ),
+    ).toBeTruthy(),
+  );
+  expect(AsyncStorage.removeItem).toHaveBeenCalled();
+  expect(view.queryByText('Retry same request')).toBeNull();
 });

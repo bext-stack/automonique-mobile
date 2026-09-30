@@ -13,7 +13,11 @@ import {
 } from 'react-native';
 import type { MobileWorkTicket } from '@automonique/sdk';
 import { Screen } from '@/components/screen';
-import { createWorkExecution, type WorkIntent } from '@/core/work-execution';
+import {
+  createWorkExecution,
+  isWorkNotApplied,
+  type WorkIntent,
+} from '@/core/work-execution';
 import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
 
@@ -137,7 +141,7 @@ function WorkContent() {
       if (result.kind === 'receipt')
         setMessage(`Manage confirmed: ${result.status.replaceAll('_', ' ')}.`);
       await reload(signal);
-    } catch {
+    } catch (error) {
       if (signal.aborted) return;
       try {
         setPending((await execution.read()) !== null);
@@ -146,7 +150,9 @@ function WorkContent() {
       }
       setConfirm(null);
       setMessage(
-        'No confirmed result. Refresh the queue before retrying the same request; a retry keeps its original request key.',
+        !retry && isWorkNotApplied(error)
+          ? 'Manage did not apply this request. Check the ticket and refresh the queue before trying again.'
+          : 'No confirmed result. Refresh the queue before retrying the same request; a retry keeps its original request key.',
       );
     } finally {
       active.current = false;

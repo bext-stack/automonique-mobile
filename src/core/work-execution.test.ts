@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 import { createWorkExecution } from './work-execution';
-import type { MobileWorkRequest } from '@automonique/sdk';
+import { MobileLifecycleError, type MobileWorkRequest } from '@automonique/sdk';
 function fixture() {
   const data = new Map<string, string>();
   const store = {
@@ -93,3 +93,61 @@ test('an aborted generation never sends a mutation', async () => {
   );
   expect(f.request).not.toHaveBeenCalled();
 });
+
+test('a verified first-attempt refusal unlocks the queue without retrying', async () => {
+  const f = fixture();
+  const refusal = new MobileLifecycleError(409, 'mobile_work_not_applied');
+  f.request.mockRejectedValueOnce(refusal);
+  const execution = createWorkExecution(
+    'fixture',
+    f.store,
+    f.gateway,
+    () => 'key',
+  );
+  await expect(execution.submit(intent)).rejects.toBe(refusal);
+  expect(await execution.read()).toBeNull();
+  expect(f.request).toHaveBeenCalledTimes(1);
+  await execution.submit(intent);
+  expect(f.request).toHaveBeenCalledTimes(2);
+});
+test('a refusal during recovery cannot erase an earlier uncertain outcome', async () => {
+  const f = fixture();
+  f.request.mockRejectedValueOnce(new Error('network'));
+  const execution = createWorkExecution(
+    'fixture',
+    f.store,
+    f.gateway,
+    () => 'key',
+  );
+  await expect(execution.submit(intent)).rejects.toThrow('network');
+  f.request.mockRejectedValueOnce(
+    new MobileLifecycleError(409, 'mobile_work_not_applied'),
+  );
+  await expect(execution.retry()).rejects.toThrow('mobile_work_not_applied');
+  expect(await execution.read()).toEqual({ ...intent, idempotency_key: 'key' });
+  await expect(execution.submit(intent)).rejects.toThrow(
+    'work_request_pending',
+  );
+});
+test.each([
+  new MobileLifecycleError(409, 'mobile_work_refused'),
+  new MobileLifecycleError(503, 'mobile_work_outcome_unknown'),
+  { status: 409, category: 'mobile_work_not_applied' },
+])(
+  'unknown or unverified refusals preserve the pending request',
+  async (error) => {
+    const f = fixture();
+    f.request.mockRejectedValueOnce(error);
+    const execution = createWorkExecution(
+      'fixture',
+      f.store,
+      f.gateway,
+      () => 'key',
+    );
+    await expect(execution.submit(intent)).rejects.toBe(error);
+    expect(await execution.read()).toEqual({
+      ...intent,
+      idempotency_key: 'key',
+    });
+  },
+);
