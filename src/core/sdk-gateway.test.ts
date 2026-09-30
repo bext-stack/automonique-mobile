@@ -703,6 +703,12 @@ test('retained sessions read history and accept fenced follow-ups without claimi
 
 test('task-enabled pairing admits the canonical session client', async () => {
   const scripted = adapter();
-  const mobile = gateway(scripted, ['attach', 'follow_up', 'start_task']);
+  const mobile = gateway(scripted, [
+    'attach',
+    'follow_up',
+    'stop_run',
+    'decide_approval',
+    'start_task',
+  ]);
   expect((await mobile.bootstrap()).sessions[0]?.followUpAllowed).toBe(true);
 });
