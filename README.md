@@ -59,11 +59,13 @@ the routes, media type, scoping request, ingress constraints, and
 troubleshooting path.
 
 This implementation has passed automated SDK, lifecycle, security, native
-policy, test, and Android/iOS/web export gates. It has not yet been accepted
-against an authorized non-production Automonique installation, and no EAS
-artifact, signed device build, app-store release, or production deployment is
-claimed. Those steps require separately authorized endpoint, account, build,
-device, and release evidence.
+policy, test, and Android/iOS/web export gates. The mobile SDK gateway has also
+read the configured Slack channel and ticket queue against an authorized live
+server, with rejected unauthorized requests and subsequent credential
+revocation verified. Ticket mutations were tested with an isolated Manage
+fixture, including a lost-response retry. This does not establish physical-device
+acceptance or an app-store release. The public Android preview has its own
+build and publication evidence below.
 
 ## Start and continue tasks
 
@@ -80,19 +82,29 @@ Tasks use the server's isolated workspace for each turn; repository delivery
 continues through the existing ticket workflow. A task submission receipt does
 not by itself prove the requested work succeeded; check its session output.
 
+## Slack and ticket queues
+
+The **Work** tab reads the server-configured Slack channel and lists that
+instance’s GitHub-linked Monique ticket queue. Enable the dashboard’s explicit
+Slack and ticket permission when pairing. You can then submit a ticket, approve
+its pending gate, or reject it with a reason. These controls require a live
+connection and a confirmation; interrupted requests retain their original key
+for an explicit retry. The server must support `/api/mobile/work` and configure
+its channel binding. Existing phone credentials gain no new permissions.
+
 ## Public Android preview
 
 Download the immutable
-[Automonique Mobile 0.1.0-preview.4 APK](https://www.automonique.fr/downloads/android/0.1.0-preview.4/affa6fd6f859b370839246ce34087dacf980fd09841509f6360610e8f1ae91be/automonique-mobile-0.1.0-preview.4.apk).
+[Automonique Mobile 0.1.0-preview.5 APK](https://www.automonique.fr/downloads/android/0.1.0-preview.5/378b2fcec49043b9a5e51c8d86717d4e2e53453b2eab0907be43b02e6010df7d/automonique-mobile-0.1.0-preview.5.apk).
 
-SHA-256: `affa6fd6f859b370839246ce34087dacf980fd09841509f6360610e8f1ae91be`
+SHA-256: `378b2fcec49043b9a5e51c8d86717d4e2e53453b2eab0907be43b02e6010df7d`
 
-The [v0.1.0-preview.4 GitHub prerelease](https://github.com/bext-stack/automonique-mobile/releases/tag/v0.1.0-preview.4)
+The [v0.1.0-preview.5 GitHub prerelease](https://github.com/bext-stack/automonique-mobile/releases/tag/v0.1.0-preview.5)
 provides the same APK and verification evidence.
 
-The adjacent [publication record](https://www.automonique.fr/downloads/android/0.1.0-preview.4/affa6fd6f859b370839246ce34087dacf980fd09841509f6360610e8f1ae91be/publication.json) connects these
+The adjacent [publication record](https://www.automonique.fr/downloads/android/0.1.0-preview.5/378b2fcec49043b9a5e51c8d86717d4e2e53453b2eab0907be43b02e6010df7d/publication.json) connects these
 exact bytes to protected `main`, retained GitHub Actions run
-[`36723481021`](https://github.com/bext-stack/automonique-mobile/actions/runs/36723481021),
+[`36764849090`](https://github.com/bext-stack/automonique-mobile/actions/runs/36764849090),
 the GitHub artifact attestation, packaged manifest, ABIs, debug-only signer,
 toolchains, and dependency notices.
 
@@ -107,7 +119,7 @@ The earlier
 [0.1.0-preview.2 path](https://www.automonique.fr/downloads/android/0.1.0-preview.2/4c7b7fac529c8060ecc84691b00156c1fc42989c86adab467cdf9f43e959b353/automonique-mobile-0.1.0-preview.2.apk)
 stays published and unchanged; a preview path is never overwritten or
 redirected. The synthetic TalkBack traversal recorded for preview.1 was not
-repeated for preview.2, preview.3, or preview.4 and does not cover those versions.
+repeated for preview.2, preview.3, preview.4, or preview.5 and does not cover those versions.
 
 ## Requirements
 
@@ -134,8 +146,9 @@ local exports do not claim that signed device binaries or store releases exist.
   scanning a pairing QR code, and scanned offers are never persisted.
 - Scoped access and refresh credentials are stored only with
   `expo-secure-store`; one-time pairing proofs are never persisted.
-- Async Storage contains bounded cached reads, endpoint drafts, and message
-  drafts—never credentials and never an offline mutation outbox.
+- Async Storage contains bounded cached reads, endpoint and message drafts,
+  and the exact pending ticket request for explicit recovery. It stores no
+  credentials, and pending requests are never sent automatically.
 - Screens receive only the narrow `MobileAutomoniqueGateway`; they cannot issue
   arbitrary Platform `execute` requests.
 - Every mutation names an exact target revision and idempotency key. Ambiguous
@@ -152,11 +165,3 @@ controls follow [release governance](docs/release-governance.md).
 
 Product code is licensed under the Elastic License 2.0. Third-party packages
 retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-The **Work** tab reads the server-configured Slack channel and lists that
-instance’s GitHub-linked Monique ticket queue. Pair with the explicit
-**Read Slack and manage tickets** permission to submit a ticket, approve its
-pending gate, or reject it with a reason. These controls require a live
-connection and a confirmation; interrupted requests retain their original key
-for an explicit retry. The server must support `/api/mobile/work` and configure
-its channel binding. Existing phone credentials gain no new permissions.

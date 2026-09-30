@@ -15,7 +15,9 @@ redirect:
 - `POST /api/mobile/pairings/exchange` for the phone's one-time exchange;
 - `/api/mobile/refresh`, `/api/mobile/revoke`, and
   `/api/mobile/authorization` for the scoped credential lifecycle;
-- `POST /api/platform` for authorized session reads and actions.
+- `POST /api/platform` for authorized session reads and actions;
+- `POST /api/mobile/work` when delegated Slack reads and ticket queue controls
+  are enabled.
 
 TLS terminates at the existing proxy or tunnel. The app rejects HTTP, embedded
 URL credentials, redirects, a mismatched origin, a changed server identity, an
@@ -69,6 +71,30 @@ The app decodes the invite locally, shows the exact origin and pinned server
 identity, and asks for confirmation before exchange. It clears the one-time
 offer after the attempt. Issued access and refresh credentials are stored only
 in the operating system's secure credential store.
+
+## Enable Slack and ticket queues
+
+In the authenticated dashboard, open mobile pairing and select **Allow this
+phone to read the configured Slack channel and submit, approve or reject tickets
+for this server’s Manage instance**. Create a new invitation and scan or paste it
+in the app. Existing invitations and paired phones retain their original scope;
+re-pair to add this permission. No session selection is required for work-only
+access. API-created invitations select the `manage_work` action explicitly.
+
+Open **Work** after pairing. The channel panel shows recent messages from the
+channel configured by the server operator. The queue shows the server’s linked
+GitHub tickets and their current state. Paste an exact GitHub issue URL to submit
+it for approval. Review the ticket, then approve or reject its pending gate;
+rejection requires a reason. If a response is interrupted, use **Retry same
+request** to recover the same operation before submitting another one. A
+confirmed refusal of the first attempt clears the request so you can correct it;
+a refusal during recovery cannot erase an earlier uncertain outcome.
+
+The server must configure its existing Slack and Manage integrations plus the
+private channel binding described in Automonique’s Slack rollout documentation.
+Neither the phone nor the pairing invitation contains Slack or Manage service
+credentials. This is server-delegated access; it does not sign into Slack with
+an email address or grant access to other channels.
 
 ## Existing network and identity infrastructure
 
