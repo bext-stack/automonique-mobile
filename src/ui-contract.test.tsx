@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import type { ReactNode } from 'react';
@@ -10,6 +11,7 @@ import OverviewScreen from './app/(tabs)/index';
 import SessionsScreen from './app/(tabs)/sessions';
 import SessionScreen from './app/session/[id]';
 import SettingsScreen from './app/settings';
+import TaskScreen from './app/task';
 import { ConnectionBanner } from './components/connection-banner';
 import { ReceiptCard } from './components/receipt-card';
 import { syntheticSnapshot } from '@/core/fixtures';
@@ -623,4 +625,68 @@ test('a refusal without a receipt id remains visibly reconcilable', async () => 
     />,
   );
   expect(view.getByText('pending · pending-key')).toBeTruthy();
+});
+
+test('task creation remains unavailable without the explicit device grant', async () => {
+  mockUseMobile.mockReturnValue(mobileValue(['attach', 'follow_up']));
+  const view = await render(<TaskScreen />);
+  expect(view.getByText(/This device cannot start tasks yet/)).toBeTruthy();
+  expect(view.getByLabelText('Task instructions').props.editable).toBe(false);
+  expect(
+    view.getByRole('button', { name: 'Start task' }).props.accessibilityState
+      .disabled,
+  ).toBe(true);
+});
+
+test('authorized task submission persists a receipt and opens only a freshly authorized session', async () => {
+  jest
+    .spyOn(Crypto, 'randomUUID')
+    .mockReturnValue('00000000-0000-4000-8000-000000000001');
+  const request = jest
+    .fn()
+    .mockResolvedValueOnce({
+      state: 'ready',
+      nodeId: 'daemon-1',
+      revision: '9007199254740995',
+    })
+    .mockResolvedValueOnce({
+      state: 'receipt',
+      outcome: 'completed',
+      explanation: null,
+      sessionId: 'session-synthetic-001',
+    });
+  const value = {
+    ...mobileValue(['attach', 'follow_up', 'start_task']),
+    storageScope: 'server:task-device:a1',
+    taskGateway: { request },
+  };
+  mockUseMobile.mockReturnValue(value);
+  const view = await render(<TaskScreen />);
+  await waitFor(() => expect(AsyncStorage.getItem).toHaveBeenCalled());
+  await fireEvent.changeText(
+    view.getByLabelText('Task instructions'),
+    'Create a script',
+  );
+  await waitFor(() =>
+    expect(
+      view.getByRole('button', { name: 'Start task' }).props.accessibilityState
+        .disabled,
+    ).toBe(false),
+  );
+  await fireEvent.press(view.getByRole('button', { name: 'Start task' }));
+  await waitFor(() => expect(view.getByText('Open task session')).toBeTruthy());
+  expect(request.mock.calls.map(([request]) => request.action)).toEqual([
+    'prepare',
+    'submit',
+  ]);
+  expect(value.refreshProjection).toHaveBeenCalledTimes(1);
+  const writes = jest.mocked(AsyncStorage.setItem).mock.calls;
+  expect(
+    writes.some(
+      ([key, body]) => key.includes('task-device') && body.includes('pending'),
+    ),
+  ).toBe(true);
+  expect(writes.every(([, body]) => !body.includes('Create a script'))).toBe(
+    true,
+  );
 });

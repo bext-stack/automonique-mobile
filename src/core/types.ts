@@ -32,7 +32,7 @@ export type ConnectionPhase =
   'live' | 'reconnecting' | 'stale' | 'incompatible';
 
 export type MobileAction =
-  'attach' | 'follow_up' | 'decide_approval' | 'stop_run';
+  'attach' | 'follow_up' | 'decide_approval' | 'stop_run' | 'start_task';
 
 export interface ConnectionStatus {
   readonly phase: ConnectionPhase;
@@ -172,7 +172,15 @@ export interface ReceiptReconciliationRequest {
   readonly target: VersionedTarget;
 }
 
+export interface MobileTaskGateway {
+  request(
+    request: import('@automonique/sdk').MobileTaskRequest,
+    signal?: AbortSignal,
+  ): Promise<import('@automonique/sdk').MobileTaskView>;
+}
+
 export interface MobileAutomoniqueGateway {
+  readonly tasks?: MobileTaskGateway;
   bootstrap(signal?: AbortSignal): Promise<MobileSnapshot>;
   attach(
     session: VersionedTarget,

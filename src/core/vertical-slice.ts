@@ -109,7 +109,6 @@ export async function bootstrapVerticalSlice(
 
   if (snapshot.connection.allowedActions.includes('attach')) {
     for (const session of snapshot.sessions) {
-      if (!session.attachable) continue;
       const previousSession = previous?.sessions.find(
         (candidate) =>
           JSON.stringify(candidate.target) === JSON.stringify(session.target),

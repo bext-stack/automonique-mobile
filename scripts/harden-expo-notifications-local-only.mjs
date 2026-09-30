@@ -19,15 +19,15 @@ const deriveDigests = process.argv.slice(2).includes('--derive-digests');
 const notificationsRoot = join(root, 'node_modules', 'expo-notifications');
 const packagePath = join(notificationsRoot, 'package.json');
 const moduleConfigPath = join(notificationsRoot, 'expo-module.config.json');
-const EXPECTED_VERSION = '57.0.15';
+const EXPECTED_VERSION = '57.0.21';
 
 const files = {
   gradle: {
     path: join(notificationsRoot, 'android', 'build.gradle'),
     pristine:
-      '1c9afeb0e10915012febd59eab6534814c49b8732b33ce67309d019e4517b5ae',
+      '4f844306189b4d62b84b721eabeccb2323188637736f40560e01566f49f56281',
     hardened:
-      'aa33beb15ad737082e1e144c25801eef712ef0ec896a732e61ba81d8b01225cc',
+      '986a4cec9f2878b65fad374112c8a5a1d40a62d5cf400cc985fb19eb89107117',
     transform(contents) {
       contents = replaceExactlyOnce(
         contents,

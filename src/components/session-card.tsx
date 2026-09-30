@@ -45,7 +45,11 @@ export function SessionCard({ session }: { readonly session: SessionSummary }) {
         </Text>
         <View style={styles.footer}>
           <Text style={[styles.meta, { color: palette.textMuted }]}>
-            {session.attachable ? 'Attachable' : 'Read only'}
+            {session.followUpAllowed
+              ? 'Ready for follow-up'
+              : session.attachable
+                ? 'Live session'
+                : 'Retained history'}
           </Text>
           <Text style={[styles.meta, { color: palette.textMuted }]}>
             cursor {session.lastCursor}

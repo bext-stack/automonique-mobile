@@ -3,6 +3,7 @@
 import {
   HttpsPlatformTransport,
   MobileSessionClient,
+  MobileLifecycleClient,
   MobileServerIdentity,
   PlatformClient,
   ResourceId,
@@ -282,6 +283,7 @@ export function createSdkMobileGateway(
   );
   const clientId = mobilePlatformClientId(authorization);
   const sessionScope = new Set<string>(authorization.session_scope);
+  const retainedSessions = new Set<string>();
 
   function requireAction(action: MobileAction): void {
     if (!authorization.actions.includes(action)) {
@@ -343,6 +345,11 @@ export function createSdkMobileGateway(
             ),
           )
         : sessionsResult.sessions.map(() => null);
+      retainedSessions.clear();
+      for (const session of sessionsResult.sessions) {
+        if (!session.attachable)
+          retainedSessions.add(session.session.resource.id);
+      }
       const approvals: MobileSnapshot['approvals'][number][] = [];
       const approvalTargets = new Set<string>();
       const sessions = sessionsResult.sessions.map((session, index) => {
@@ -379,12 +386,13 @@ export function createSdkMobileGateway(
               ? null
               : versionedCommandTarget(commandState.run),
           state:
-            sessionRecord.freshness.state === 'fresh'
+            session.session.freshness.state === 'fresh'
               ? ('active' as const)
               : ('lost' as const),
           attachable: session.attachable,
           followUpAllowed:
-            session.controllable && authorization.actions.includes('follow_up'),
+            commandState !== null &&
+            authorization.actions.includes('follow_up'),
           followUpFenceRevision: null,
           observedAt: observedAt(sessionRecord.freshness.observed_at),
           lastCursor: cursorToken(sessionsResult.cursor),
@@ -414,19 +422,21 @@ export function createSdkMobileGateway(
     async attach(session, cursor, signal): Promise<AttachmentHandle> {
       requireAction('attach');
       requireSessionScope(session.coordinate.id);
-      const attached = readValue(
-        await options.client.attach(
-          sdkCoordinate(session.coordinate),
-          clientId,
-          signal,
-        ),
-        'attached',
-      ).value;
-      if (
-        !sameCoordinate(attached.session, session.coordinate) ||
-        attached.client !== clientId
-      ) {
-        throw new MobileGatewayError('sdk_attachment_target_mismatch');
+      if (!retainedSessions.has(session.coordinate.id)) {
+        const attached = readValue(
+          await options.client.attach(
+            sdkCoordinate(session.coordinate),
+            clientId,
+            signal,
+          ),
+          'attached',
+        ).value;
+        if (
+          !sameCoordinate(attached.session, session.coordinate) ||
+          attached.client !== clientId
+        ) {
+          throw new MobileGatewayError('sdk_attachment_target_mismatch');
+        }
       }
       let prefetched: SdkSessionHistoryPage | null = null;
       let initialHistoryCursor: bigint;
@@ -596,14 +606,63 @@ export function createAuthorizedHttpsGateway(
     options.token,
     options.fetcher,
   );
-  return createSdkMobileGateway({
-    ...options,
-    client: new PlatformClient(transport),
-    sessionClient: new MobileSessionClient(
-      transport,
-      options.authorization,
-      MobileServerIdentity(options.expectedServerIdentity),
-      () => options.now ?? Date.now(),
-    ),
-  });
+  function create(
+    authorization: MobileAuthorization,
+  ): MobileAutomoniqueGateway {
+    return createSdkMobileGateway({
+      ...options,
+      authorization,
+      client: new PlatformClient(transport),
+      sessionClient: new MobileSessionClient(
+        transport,
+        authorization,
+        MobileServerIdentity(options.expectedServerIdentity),
+        () => options.now ?? Date.now(),
+      ),
+    });
+  }
+  let gateway = create(options.authorization);
+  if (!options.authorization.actions.includes('start_task')) return gateway;
+  let lifecycle: MobileLifecycleClient | null = null;
+  async function mobileClient(signal?: AbortSignal) {
+    lifecycle ??= await MobileLifecycleClient.discover(
+      new URL(endpoint).origin,
+      options.fetcher,
+      signal,
+      options.expectedServerIdentity,
+    );
+    return lifecycle;
+  }
+  return {
+    tasks: {
+      async request(request, signal) {
+        const client = await mobileClient(signal);
+        return client.task(await options.token(), request, signal);
+      },
+    },
+    async bootstrap(signal) {
+      const client = await mobileClient(signal);
+      const authorization = await client.authorization(
+        await options.token(),
+        signal,
+      );
+      const previous = options.authorization;
+      if (
+        authorization.credential_id !== previous.credential_id ||
+        authorization.credential_revision !== previous.credential_revision ||
+        authorization.authorization_revision !== previous.authorization_revision
+      ) {
+        throw new MobileGatewayError('mobile_task_authorization_changed');
+      }
+      const next = create(authorization);
+      const snapshot = await next.bootstrap(signal);
+      gateway = next;
+      return snapshot;
+    },
+    attach: (...args) => gateway.attach(...args),
+    followUp: (...args) => gateway.followUp(...args),
+    decideApproval: (...args) => gateway.decideApproval(...args),
+    stopRun: (...args) => gateway.stopRun(...args),
+    reconcile: (...args) => gateway.reconcile(...args),
+  };
 }
