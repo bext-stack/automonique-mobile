@@ -39,6 +39,7 @@ import {
 } from '@/core/vertical-slice';
 
 interface MobileContextValue {
+  readonly taskGateway: MobileAutomoniqueGateway['tasks'] | null;
   readonly snapshot: MobileSnapshot;
   readonly storageScope: string | null;
   readonly busyAction: string | null;
@@ -629,6 +630,7 @@ export function MobileProvider({
     <MobileContext.Provider
       value={{
         snapshot,
+        taskGateway: gateway.tasks ?? null,
         storageScope: storageScope ?? null,
         busyAction,
         projectionReady: cacheReady,

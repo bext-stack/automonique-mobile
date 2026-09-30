@@ -2875,7 +2875,7 @@ Declared license: MIT
 
 Packages:
 
-- babel-plugin-react-native-web@0.21.2 (node_modules/babel-plugin-react-native-web)
+- babel-plugin-react-native-web@0.21.3 (node_modules/babel-plugin-react-native-web)
 
 ```text
 MIT License
@@ -2907,50 +2907,50 @@ Declared license: MIT
 
 Packages:
 
-- @expo/cli@57.0.20 (node_modules/expo/node_modules/@expo/cli)
+- @expo/cli@57.0.27 (node_modules/expo/node_modules/@expo/cli)
 - @expo/config-plugins@57.0.9 (node_modules/@expo/config-plugins)
 - @expo/config@57.0.9 (node_modules/@expo/config)
 - @expo/devtools@57.0.1 (node_modules/@expo/devtools)
 - @expo/dom-webview@57.0.1 (node_modules/@expo/dom-webview)
 - @expo/expo-modules-macros-plugin@0.6.1 (node_modules/@expo/expo-modules-macros-plugin)
-- @expo/fingerprint@0.20.11 (node_modules/@expo/fingerprint)
+- @expo/fingerprint@0.20.13 (node_modules/@expo/fingerprint)
 - @expo/image-utils@0.11.5 (node_modules/@expo/image-utils)
 - @expo/inline-modules@0.1.7 (node_modules/@expo/inline-modules)
 - @expo/json-file@11.0.1 (node_modules/@expo/json-file)
 - @expo/local-build-cache-provider@57.0.8 (node_modules/@expo/local-build-cache-provider)
 - @expo/log-box@57.0.4 (node_modules/@expo/log-box)
 - @expo/metro-config@57.0.12 (node_modules/@expo/metro-config)
-- @expo/metro-file-map@57.0.2 (node_modules/@expo/metro-file-map)
-- @expo/metro-runtime@57.0.14 (node_modules/@expo/metro-runtime)
+- @expo/metro-file-map@57.0.3 (node_modules/@expo/metro-file-map)
+- @expo/metro-runtime@57.0.16 (node_modules/@expo/metro-runtime)
 - @expo/osascript@2.7.1 (node_modules/@expo/osascript)
 - @expo/package-manager@1.13.1 (node_modules/@expo/package-manager)
 - @expo/plist@0.8.1 (node_modules/@expo/plist)
-- @expo/prebuild-config@57.0.15 (node_modules/@expo/prebuild-config)
-- @expo/router-server@57.0.8 (node_modules/expo/node_modules/@expo/cli/node_modules/@expo/router-server)
-- babel-preset-expo@57.0.9 (node_modules/babel-preset-expo)
-- expo-application@57.0.2 (node_modules/expo-application)
-- expo-asset@57.0.15 (node_modules/expo-asset)
-- expo-build-properties@57.0.15 (node_modules/expo-build-properties)
-- expo-constants@57.0.16 (node_modules/expo-constants)
-- expo-crypto@57.0.2 (node_modules/expo-crypto)
-- expo-file-system@57.0.6 (node_modules/expo-file-system)
-- expo-font@57.0.2 (node_modules/expo-font)
-- expo-glass-effect@57.0.1 (node_modules/expo-glass-effect)
+- @expo/prebuild-config@57.0.16 (node_modules/@expo/prebuild-config)
+- @expo/router-server@57.0.11 (node_modules/expo/node_modules/@expo/cli/node_modules/@expo/router-server)
+- babel-preset-expo@57.0.13 (node_modules/babel-preset-expo)
+- expo-application@57.0.3 (node_modules/expo-application)
+- expo-asset@57.0.18 (node_modules/expo-asset)
+- expo-build-properties@57.0.22 (node_modules/expo-build-properties)
+- expo-constants@57.0.20 (node_modules/expo-constants)
+- expo-crypto@57.0.3 (node_modules/expo-crypto)
+- expo-file-system@57.0.7 (node_modules/expo-file-system)
+- expo-font@57.0.4 (node_modules/expo-font)
+- expo-glass-effect@57.0.4 (node_modules/expo-glass-effect)
 - expo-image-loader@57.0.1 (node_modules/expo-image-loader)
-- expo-image-manipulator@57.0.14 (node_modules/expo-image-manipulator)
-- expo-image-picker@57.0.14 (node_modules/expo-image-picker)
-- expo-keep-awake@57.0.1 (node_modules/expo-keep-awake)
-- expo-linking@57.0.8 (node_modules/expo-linking)
-- expo-modules-autolinking@57.0.12 (node_modules/expo-modules-autolinking)
-- expo-modules-core@57.0.14 (node_modules/expo-modules-core)
-- expo-modules-jsi@57.0.6 (node_modules/expo-modules-jsi)
-- expo-notifications@57.0.15 (node_modules/expo-notifications)
-- expo-secure-store@57.0.2 (node_modules/expo-secure-store)
+- expo-image-manipulator@57.0.20 (node_modules/expo-image-manipulator)
+- expo-image-picker@57.0.20 (node_modules/expo-image-picker)
+- expo-keep-awake@57.0.2 (node_modules/expo-keep-awake)
+- expo-linking@57.0.11 (node_modules/expo-linking)
+- expo-modules-autolinking@57.0.13 (node_modules/expo-modules-autolinking)
+- expo-modules-core@57.0.20 (node_modules/expo-modules-core)
+- expo-modules-jsi@57.1.1 (node_modules/expo-modules-jsi)
+- expo-notifications@57.0.21 (node_modules/expo-notifications)
+- expo-secure-store@57.0.4 (node_modules/expo-secure-store)
 - expo-server@57.0.3 (node_modules/expo-server)
-- expo-splash-screen@57.0.8 (node_modules/expo-splash-screen)
+- expo-splash-screen@57.0.9 (node_modules/expo-splash-screen)
 - expo-status-bar@57.0.1 (node_modules/expo-status-bar)
-- expo-symbols@57.0.2 (node_modules/expo-symbols)
-- expo@57.0.18 (node_modules/expo)
+- expo-symbols@57.0.3 (node_modules/expo-symbols)
+- expo@57.0.26 (node_modules/expo)
 - jest-expo@57.0.5 (node_modules/jest-expo)
 
 ```text
@@ -6410,13 +6410,13 @@ Packages:
 - @radix-ui/react-collection@1.1.15 (node_modules/@radix-ui/react-collection)
 - @radix-ui/react-compose-refs@1.1.5 (node_modules/@radix-ui/react-compose-refs)
 - @radix-ui/react-context@1.2.2 (node_modules/@radix-ui/react-context)
-- @radix-ui/react-dialog@1.1.23 (node_modules/@radix-ui/react-dialog)
+- @radix-ui/react-dialog@1.1.23 (node_modules/vaul/node_modules/@radix-ui/react-dialog)
 - @radix-ui/react-direction@1.1.4 (node_modules/@radix-ui/react-direction)
-- @radix-ui/react-dismissable-layer@1.1.19 (node_modules/@radix-ui/react-dismissable-layer)
+- @radix-ui/react-dismissable-layer@1.1.19 (node_modules/vaul/node_modules/@radix-ui/react-dismissable-layer)
 - @radix-ui/react-focus-guards@1.1.6 (node_modules/@radix-ui/react-focus-guards)
-- @radix-ui/react-focus-scope@1.1.16 (node_modules/@radix-ui/react-focus-scope)
+- @radix-ui/react-focus-scope@1.1.16 (node_modules/vaul/node_modules/@radix-ui/react-focus-scope)
 - @radix-ui/react-id@1.1.4 (node_modules/@radix-ui/react-id)
-- @radix-ui/react-portal@1.1.17 (node_modules/@radix-ui/react-portal)
+- @radix-ui/react-portal@1.1.17 (node_modules/vaul/node_modules/@radix-ui/react-portal)
 - @radix-ui/react-presence@1.1.10 (node_modules/@radix-ui/react-presence)
 - @radix-ui/react-primitive@2.1.10 (node_modules/@radix-ui/react-primitive)
 - @radix-ui/react-roving-focus@1.1.19 (node_modules/@radix-ui/react-roving-focus)
@@ -6678,8 +6678,8 @@ Declared license: MIT
 
 Packages:
 
-- ws@8.21.3 (node_modules/expo/node_modules/ws)
 - ws@8.21.3 (node_modules/jsdom/node_modules/ws)
+- ws@8.22.0 (node_modules/expo/node_modules/ws)
 
 ```text
 Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com>
@@ -6811,7 +6811,7 @@ Declared license: MIT
 
 Packages:
 
-- compression@1.8.1 (node_modules/compression)
+- compression@1.8.2 (node_modules/compression)
 
 ```text
 (The MIT License)
@@ -7670,7 +7670,7 @@ Declared license: MIT
 
 Packages:
 
-- agent-cli-detector@0.1.6 (node_modules/agent-cli-detector)
+- agent-cli-detector@0.1.7 (node_modules/agent-cli-detector)
 - sandbox-cli-detector@0.2.0 (node_modules/sandbox-cli-detector)
 
 ```text
@@ -9928,7 +9928,7 @@ Declared license: MIT
 
 Packages:
 
-- postcss@8.5.26 (node_modules/postcss)
+- postcss@8.5.28 (node_modules/postcss)
 
 ```text
 The MIT License (MIT)
@@ -11688,8 +11688,8 @@ Declared license: MIT
 
 Packages:
 
-- js-yaml@3.15.1 (node_modules/@istanbuljs/load-nyc-config/node_modules/js-yaml)
-- js-yaml@4.3.1 (node_modules/js-yaml)
+- js-yaml@3.15.2 (node_modules/@istanbuljs/load-nyc-config/node_modules/js-yaml)
+- js-yaml@4.3.2 (node_modules/js-yaml)
 
 ```text
 (The MIT License)
@@ -13103,15 +13103,15 @@ Declared license: MIT
 
 Packages:
 
-- brace-expansion@1.1.18 (node_modules/@eslint/config-array/node_modules/brace-expansion)
-- brace-expansion@1.1.18 (node_modules/@eslint/eslintrc/node_modules/brace-expansion)
-- brace-expansion@1.1.18 (node_modules/@jest/reporters/node_modules/brace-expansion)
-- brace-expansion@1.1.18 (node_modules/eslint-plugin-import/node_modules/brace-expansion)
-- brace-expansion@1.1.18 (node_modules/eslint-plugin-react/node_modules/brace-expansion)
-- brace-expansion@1.1.18 (node_modules/eslint/node_modules/brace-expansion)
-- brace-expansion@1.1.18 (node_modules/jest-config/node_modules/brace-expansion)
-- brace-expansion@1.1.18 (node_modules/jest-runtime/node_modules/brace-expansion)
-- brace-expansion@1.1.18 (node_modules/test-exclude/node_modules/brace-expansion)
+- brace-expansion@1.1.21 (node_modules/@eslint/config-array/node_modules/brace-expansion)
+- brace-expansion@1.1.21 (node_modules/@eslint/eslintrc/node_modules/brace-expansion)
+- brace-expansion@1.1.21 (node_modules/@jest/reporters/node_modules/brace-expansion)
+- brace-expansion@1.1.21 (node_modules/eslint-plugin-import/node_modules/brace-expansion)
+- brace-expansion@1.1.21 (node_modules/eslint-plugin-react/node_modules/brace-expansion)
+- brace-expansion@1.1.21 (node_modules/eslint/node_modules/brace-expansion)
+- brace-expansion@1.1.21 (node_modules/jest-config/node_modules/brace-expansion)
+- brace-expansion@1.1.21 (node_modules/jest-runtime/node_modules/brace-expansion)
+- brace-expansion@1.1.21 (node_modules/test-exclude/node_modules/brace-expansion)
 - isarray@2.0.5 (node_modules/isarray)
 
 ```text
@@ -14117,7 +14117,7 @@ Declared license: MIT AND Apache-2.0
 
 Packages:
 
-- @expo-google-fonts/material-symbols@0.4.44 (node_modules/@expo-google-fonts/material-symbols)
+- @expo-google-fonts/material-symbols@0.4.48 (node_modules/@expo-google-fonts/material-symbols)
 
 ```text
 MIT License
@@ -15397,7 +15397,7 @@ Declared license: MIT
 
 Packages:
 
-- brace-expansion@5.0.9 (node_modules/brace-expansion)
+- brace-expansion@5.0.12 (node_modules/brace-expansion)
 
 ```text
 MIT License
@@ -16245,7 +16245,7 @@ Declared license: BSD-3-Clause
 
 Packages:
 
-- @expo/xcpretty@4.4.4 (node_modules/@expo/xcpretty)
+- @expo/xcpretty@4.4.5 (node_modules/@expo/xcpretty)
 - @react-native/debugger-frontend@0.86.3 (node_modules/@react-native/debugger-frontend)
 
 ## Declared metadata only
@@ -16267,7 +16267,7 @@ Packages:
 - @emnapi/wasi-threads@1.2.1 (node_modules/@emnapi/wasi-threads)
 - @expo/devcert@1.2.1 (node_modules/@expo/devcert)
 - @expo/sdk-runtime-versions@1.0.0 (node_modules/@expo/sdk-runtime-versions)
-- @expo/ui@57.0.14 (node_modules/@expo/ui)
+- @expo/ui@57.0.21 (node_modules/@expo/ui)
 - @expo/ws-tunnel@2.0.0 (node_modules/expo/node_modules/@expo/ws-tunnel)
 - @napi-rs/wasm-runtime@1.2.3 (node_modules/@napi-rs/wasm-runtime)
 - @react-native/assets-registry@0.86.3 (node_modules/@react-native/assets-registry)
@@ -16315,7 +16315,7 @@ Packages:
 - badgin@1.2.3 (node_modules/badgin)
 - bplist-parser@0.3.1 (node_modules/bplist-parser)
 - client-only@0.0.1 (node_modules/client-only)
-- expo-router@57.0.17 (node_modules/expo-router)
+- expo-router@57.0.24 (node_modules/expo-router)
 - fsevents@2.3.3 (node_modules/fsevents)
 - hermes-compiler@250829098.0.17 (node_modules/hermes-compiler)
 - http-proxy-agent@5.0.0 (node_modules/http-proxy-agent)

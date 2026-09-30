@@ -662,3 +662,53 @@ test('history projection strips every untyped opaque payload field', async () =>
     expect.objectContaining({ kind: 'unknown', eventType: 'adapter_event' }),
   );
 });
+
+test('retained sessions read history and accept fenced follow-ups without claiming live attachment', async () => {
+  const scripted = adapter((request) =>
+    request.method === 'list_sessions'
+      ? {
+          kind: 'sessions',
+          value: {
+            cursor,
+            sessions: [
+              {
+                session: {
+                  ...sessionRecord,
+                  freshness: { ...sessionRecord.freshness, state: 'unknown' },
+                },
+                run: null,
+                attachable: false,
+                controllable: false,
+              },
+            ],
+          },
+        }
+      : undefined,
+  );
+  const mobile = gateway(scripted);
+  const snapshot = await mobile.bootstrap();
+  expect(snapshot.sessions[0]).toMatchObject({
+    attachable: false,
+    followUpAllowed: true,
+    state: 'lost',
+  });
+  const handle = await mobile.attach(snapshot.sessions[0]!.target, null);
+  const pages = [];
+  for await (const page of handle.events()) pages.push(page);
+  expect(pages).toHaveLength(2);
+  expect(scripted.requests.some((request) => request.method === 'attach')).toBe(
+    false,
+  );
+});
+
+test('task-enabled pairing admits the canonical session client', async () => {
+  const scripted = adapter();
+  const mobile = gateway(scripted, [
+    'attach',
+    'follow_up',
+    'stop_run',
+    'decide_approval',
+    'start_task',
+  ]);
+  expect((await mobile.bootstrap()).sessions[0]?.followUpAllowed).toBe(true);
+});

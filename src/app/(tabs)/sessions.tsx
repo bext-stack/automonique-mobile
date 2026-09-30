@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { Link } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -44,6 +45,19 @@ export default function SessionsScreen() {
         </Text>
       </View>
 
+      <Link href="/task" asChild>
+        <Pressable
+          accessibilityRole="button"
+          style={StyleSheet.flatten([
+            styles.filter,
+            { backgroundColor: palette.accent },
+          ])}
+        >
+          <Text style={{ color: palette.accentText, fontWeight: '800' }}>
+            Run a task
+          </Text>
+        </Pressable>
+      </Link>
       <View accessibilityRole="tablist" style={styles.filters}>
         {(['all', 'active', 'waiting', 'completed'] as const).map((value) => (
           <Pressable

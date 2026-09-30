@@ -65,6 +65,21 @@ artifact, signed device build, app-store release, or production deployment is
 claimed. Those steps require separately authorized endpoint, account, build,
 device, and release evidence.
 
+## Start and continue tasks
+
+Open **Sessions → Run a task** to ask Monique to create files, execute scripts,
+or investigate a problem. The phone must be paired with the dashboard's explicit
+**Allow this phone to start tasks** permission. Existing pairings keep their
+current permissions; create a new invitation and pair again to enable this.
+
+The app persists receipt coordinates before sending a task, checks status after
+an interrupted response, and never queues task text or automatically resubmits.
+Only the initiating device receives access to the resulting session. Open that
+session to read retained history and send follow-ups after the live host exits.
+Tasks use the server's isolated workspace for each turn; repository delivery
+continues through the existing ticket workflow. A task submission receipt does
+not by itself prove the requested work succeeded; check its session output.
+
 ## Public Android preview
 
 Download the immutable

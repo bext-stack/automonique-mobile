@@ -29,15 +29,15 @@ const modulePath = join(
 );
 const gradlePath = join(applicationRoot, 'android', 'build.gradle');
 
-const EXPECTED_VERSION = '57.0.2';
+const EXPECTED_VERSION = '57.0.3';
 const PRISTINE_MODULE_SHA256 =
   '170ba1cc296587cfa70da1e8278d5f81b03f9ee0e36f99a2abc62770204611b1';
 const HARDENED_MODULE_SHA256 =
   '847d733b6f6424640d15b57174832001175ae2a4654442903e7a8cadd9677a66';
 const PRISTINE_GRADLE_SHA256 =
-  'ee6ce5163afe510d6c7a0b5ed676769d987fd28ae7cce4337abd28e382b890ef';
+  '18cbe5b6256824ac756a3db561ecb5e08b8abdd9a360f3f3fa6e491a3ff5dda8';
 const HARDENED_GRADLE_SHA256 =
-  '02fd620da752e2e833b48ebf18f1dbd67ad04ad982f420c3d9f8980a348ceec0';
+  '4d93829bb5294b77d5d0ab62991f3ac57d45ea7d9068be265e37b0fa35fe2f28';
 const INSTALL_REFERRER_FUNCTION =
   '\n    AsyncFunction("getInstallReferrerAsync") { promise: Promise ->';
 const MODULE_DEFINITION_END = '\n  }\n\n  private val packageName';
