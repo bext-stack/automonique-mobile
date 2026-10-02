@@ -3,6 +3,7 @@
 import {
   HttpsPlatformTransport,
   MobileSessionClient,
+  MobileSessionError,
   MobileLifecycleClient,
   MobileServerIdentity,
   PlatformClient,
@@ -20,6 +21,11 @@ import {
   type SessionHistoryPage as SdkSessionHistoryPage,
 } from '@automonique/sdk';
 
+import {
+  BOOTSTRAP_READ_CONCURRENCY,
+  MAX_MOBILE_SESSIONS,
+  mapBounded,
+} from './bounded';
 import {
   admitMobileAuthorization,
   type MobileAuthorization,
@@ -260,6 +266,12 @@ function requireMutationTarget(
   }
 }
 
+const COMMAND_ACTIONS: readonly MobileAction[] = [
+  'follow_up',
+  'stop_run',
+  'decide_approval',
+];
+
 function coordinateKey(value: ResourceCoordinate): string {
   return `${value.authority}\u0000${value.kind}\u0000${value.id}`;
 }
@@ -316,12 +328,12 @@ export function createSdkMobileGateway(
         throw new MobileGatewayError('sdk_capabilities_incompatible');
       }
 
-      const sessionsResult = readValue(
+      const listed = readValue(
         await options.client.listSessions('automonique', null, signal),
         'sessions',
       ).value;
       const sessionIds = new Set<string>();
-      for (const session of sessionsResult.sessions) {
+      for (const session of listed.sessions) {
         if (
           session.session.resource.authority !== 'automonique' ||
           session.session.resource.kind !== 'session' ||
@@ -333,17 +345,55 @@ export function createSdkMobileGateway(
         }
         sessionIds.add(session.session.resource.id);
       }
+      // Most recent first, and an administrator credential keeps only the
+      // most recent conversations: its scope grows with the server, and a
+      // phone that refused to load past a fixed count would lock itself out.
+      const sessionsResult = {
+        ...listed,
+        sessions: [...listed.sessions]
+          .sort((left, right) =>
+            left.session.freshness.observed_at ===
+            right.session.freshness.observed_at
+              ? 0
+              : left.session.freshness.observed_at <
+                  right.session.freshness.observed_at
+                ? 1
+                : -1,
+          )
+          .slice(0, allSessions ? MAX_MOBILE_SESSIONS : undefined),
+      };
+      // `all_sessions` widens which conversations are visible; it is not a
+      // mutation, so on its own it leaves the phone read-only.
       const mutationsAllowed = authorization.actions.some(
-        (action) => action !== 'attach',
+        (action) => action !== 'attach' && action !== 'all_sessions',
       );
-      const commandStates = mutationsAllowed
-        ? await Promise.all(
-            sessionsResult.sessions.map((session) =>
-              options.sessionClient.commandState(
-                session.session.resource,
-                signal,
-              ),
-            ),
+      const commandCapable = authorization.actions.some((action) =>
+        COMMAND_ACTIONS.includes(action),
+      );
+      const commandStates = commandCapable
+        ? await mapBounded(
+            sessionsResult.sessions,
+            BOOTSTRAP_READ_CONCURRENCY,
+            async (session) => {
+              try {
+                return await options.sessionClient.commandState(
+                  session.session.resource,
+                  signal,
+                );
+              } catch (error) {
+                // A definitive refusal concerns this one conversation —
+                // typically a closed one no run owns any more. It stays
+                // readable and takes no commands; it must not cost the phone
+                // every other conversation. Transport failures still throw.
+                if (
+                  error instanceof MobileSessionError &&
+                  error.category === 'remote_refusal'
+                ) {
+                  return null;
+                }
+                throw error;
+              }
+            },
           )
         : sessionsResult.sessions.map(() => null);
       retainedSessions.clear();

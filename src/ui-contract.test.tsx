@@ -589,7 +589,7 @@ test('reviews a one-time invite before exchanging it', async () => {
 test('shared connection status distinguishes an SDK transport', async () => {
   mockUseMobile.mockReturnValue(mobileValue(['attach'], { synthetic: false }));
   const view = await render(<ConnectionBanner />);
-  expect(view.getByText('Live · SDK')).toBeTruthy();
+  expect(view.getByText('Live')).toBeTruthy();
 });
 
 test('initial hydration does not expose a competing reconnect operation', async () => {

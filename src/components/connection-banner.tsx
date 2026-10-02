@@ -39,13 +39,18 @@ export function ConnectionBanner() {
           accessibilityLiveRegion="polite"
           style={[styles.status, { color: palette.text }]}
         >
-          {stale
-            ? 'Stale · read only'
-            : snapshot.connection.synthetic
-              ? 'Live · synthetic'
-              : 'Live · SDK'}
+          {snapshot.connection.phase === 'reconnecting'
+            ? 'Refreshing'
+            : stale
+              ? 'Not up to date · read only'
+              : snapshot.connection.synthetic
+                ? 'Live · synthetic'
+                : 'Live'}
         </Text>
-        <Text style={[styles.label, { color: palette.textMuted }]}>
+        <Text
+          numberOfLines={stale ? undefined : 1}
+          style={[styles.label, { color: palette.textMuted }]}
+        >
           {snapshot.connection.label}
         </Text>
       </View>

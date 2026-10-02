@@ -105,7 +105,7 @@ export default function ExactWorkspaceSessionLink() {
     );
   }
   return (
-    <Screen>
+    <Screen bottomInset>
       <Text
         accessibilityRole="header"
         style={{ color: palette.text, fontSize: 24, fontWeight: '800' }}

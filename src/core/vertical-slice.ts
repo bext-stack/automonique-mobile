@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import {
+  BOOTSTRAP_READ_CONCURRENCY,
+  MAX_MOBILE_SESSIONS,
+  mapBounded,
+} from './bounded';
+import {
   acknowledgedTimelinePrefix,
   reduceSessionPage,
   type TimelineProjection,
@@ -12,7 +17,6 @@ import type {
   SessionSummary,
 } from './types';
 
-const MAX_MOBILE_SESSIONS = 100;
 const MAX_PAGES_PER_ATTACHMENT = 8;
 
 function sameSessionCoordinate(
@@ -25,6 +29,33 @@ function sameSessionCoordinate(
     right.target.coordinate.kind === 'session' &&
     left.target.coordinate.id === right.target.coordinate.id
   );
+}
+
+const MAX_DERIVED_TITLE_LENGTH = 80;
+
+/**
+ * The server summarises a conversation by its lifecycle word alone, which
+ * makes every row of a long list read "open". When that is all it says, name
+ * the conversation after what the operator first asked in it.
+ */
+export function sessionDisplayTitle(
+  title: string,
+  events: readonly SessionEvent[],
+): string {
+  if (!/^(open|closed)$/i.test(title.trim())) return title;
+  const first = events.find(
+    (event) => event.kind === 'message' && event.role === 'user',
+  );
+  const text =
+    first?.kind === 'message' ? first.text.replace(/\s+/g, ' ').trim() : '';
+  if (text.length === 0) {
+    return title.trim().toLowerCase() === 'closed'
+      ? 'Closed conversation'
+      : 'Conversation';
+  }
+  return text.length > MAX_DERIVED_TITLE_LENGTH
+    ? `${text.slice(0, MAX_DERIVED_TITLE_LENGTH - 1).trimEnd()}…`
+    : text;
 }
 
 /**
@@ -108,52 +139,62 @@ export async function bootstrapVerticalSlice(
   let resyncRequired = false;
 
   if (snapshot.connection.allowedActions.includes('attach')) {
-    for (const session of snapshot.sessions) {
-      const previousSession = previous?.sessions.find(
-        (candidate) =>
-          JSON.stringify(candidate.target) === JSON.stringify(session.target),
-      );
-      const previousEvents =
-        previousSession === undefined
-          ? []
-          : (previous?.timelines[session.target.coordinate.id] ?? []);
-      const resumeCursor = previousSession?.lastCursor ?? null;
-      const attachment = await gateway.attach(
-        session.target,
-        resumeCursor,
-        signal,
-      );
-      const acknowledgedEvents = acknowledgedTimelinePrefix(
-        previousEvents,
-        attachment.cursor,
-        attachment.sequence,
-      );
-      let projection: TimelineProjection = {
-        cursor: attachment.cursor,
-        sequence: attachment.sequence,
-        events: acknowledgedEvents ?? previousEvents,
-        resyncRequired: acknowledgedEvents === null,
-      };
-      let pages = 0;
-      for await (const page of attachment.events(signal)) {
-        pages += 1;
-        if (
-          pages > MAX_PAGES_PER_ATTACHMENT ||
-          page.sessionId !== session.target.coordinate.id ||
-          page.events.length > snapshot.connection.limits.maxPageEvents
-        ) {
-          projection = { ...projection, resyncRequired: true };
-          break;
+    // Conversations are independent, so their histories load side by side —
+    // bounded, because the server refuses a burst rather than queueing it.
+    const projections = await mapBounded(
+      snapshot.sessions,
+      BOOTSTRAP_READ_CONCURRENCY,
+      async (session) => {
+        const previousSession = previous?.sessions.find(
+          (candidate) =>
+            JSON.stringify(candidate.target) === JSON.stringify(session.target),
+        );
+        const previousEvents =
+          previousSession === undefined
+            ? []
+            : (previous?.timelines[session.target.coordinate.id] ?? []);
+        const resumeCursor = previousSession?.lastCursor ?? null;
+        const attachment = await gateway.attach(
+          session.target,
+          resumeCursor,
+          signal,
+        );
+        const acknowledgedEvents = acknowledgedTimelinePrefix(
+          previousEvents,
+          attachment.cursor,
+          attachment.sequence,
+        );
+        let projection: TimelineProjection = {
+          cursor: attachment.cursor,
+          sequence: attachment.sequence,
+          events: acknowledgedEvents ?? previousEvents,
+          resyncRequired: acknowledgedEvents === null,
+        };
+        let pages = 0;
+        for await (const page of attachment.events(signal)) {
+          pages += 1;
+          if (
+            pages > MAX_PAGES_PER_ATTACHMENT ||
+            page.sessionId !== session.target.coordinate.id ||
+            page.events.length > snapshot.connection.limits.maxPageEvents
+          ) {
+            projection = { ...projection, resyncRequired: true };
+            break;
+          }
+          projection = reduceSessionPage(projection, page);
+          if (projection.resyncRequired) break;
         }
-        projection = reduceSessionPage(projection, page);
-        if (projection.resyncRequired) break;
-      }
+        return projection;
+      },
+    );
+    snapshot.sessions.forEach((session, index) => {
+      const projection = projections[index] as TimelineProjection;
       timelines[session.target.coordinate.id] = projection.events;
       if (projection.cursor !== null) {
         cursors.set(session.target.coordinate.id, projection.cursor);
       }
       resyncRequired ||= projection.resyncRequired;
-    }
+    });
   }
 
   const projected: MobileSnapshot = {
@@ -168,6 +209,10 @@ export async function bootstrapVerticalSlice(
       : snapshot.connection,
     sessions: snapshot.sessions.map((session) => ({
       ...session,
+      title: sessionDisplayTitle(
+        session.title,
+        timelines[session.target.coordinate.id] ?? [],
+      ),
       lastCursor:
         cursors.get(session.target.coordinate.id) ?? session.lastCursor,
     })),

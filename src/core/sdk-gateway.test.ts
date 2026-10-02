@@ -571,6 +571,170 @@ test('typed refusals and unauthorized actions fail closed', async () => {
   expect(unauthorized.requests).toHaveLength(0);
 });
 
+function listedSession(id: string, observedAt: bigint) {
+  const resource: ResourceCoordinate = {
+    authority: 'automonique',
+    kind: 'session',
+    id: ResourceId(id),
+  };
+  return {
+    session: {
+      ...sessionRecord,
+      resource,
+      freshness: {
+        ...sessionRecord.freshness,
+        observed_at: PlatformEpochMillis(observedAt),
+      },
+    },
+    run: null,
+    attachable: false,
+    controllable: false,
+  };
+}
+
+function administratorAdapter(
+  count: number,
+  refusedIds: readonly string[] = [],
+) {
+  const listed = Array.from({ length: count }, (_, index) =>
+    listedSession(`session-${index + 1}`, BigInt(NOW + index)),
+  );
+  return adapter((request) => {
+    if (request.method === 'list_sessions') {
+      return { kind: 'sessions', value: { cursor, sessions: listed } };
+    }
+    if (request.method === 'session_command_state') {
+      const id = request.request.session.id;
+      if (refusedIds.includes(id)) {
+        return {
+          kind: 'refused',
+          outcome: 'rejected',
+          explanation: 'target_not_owned',
+        };
+      }
+      const found = listed.find((entry) => entry.session.resource.id === id);
+      if (found === undefined) return undefined;
+      return {
+        kind: 'session_command_state',
+        value: { session: found.session, run: null, pending_approvals: [] },
+      };
+    }
+    return undefined;
+  });
+}
+
+const ADMINISTRATOR = [
+  'attach',
+  'follow_up',
+  'decide_approval',
+  'stop_run',
+  'all_sessions',
+] as const;
+
+test('one refused conversation stays readable instead of failing the reconnect', async () => {
+  const scripted = administratorAdapter(5, ['session-2']);
+  const snapshot = await gateway(scripted, ADMINISTRATOR).bootstrap();
+
+  expect(snapshot.connection.phase).toBe('live');
+  expect(snapshot.sessions).toHaveLength(5);
+  const refused = snapshot.sessions.find(
+    (session) => session.target.coordinate.id === 'session-2',
+  );
+  expect(refused).toMatchObject({ followUpAllowed: false, run: null });
+  expect(
+    snapshot.sessions
+      .filter((session) => session.target.coordinate.id !== 'session-2')
+      .every((session) => session.followUpAllowed),
+  ).toBe(true);
+});
+
+test('a transport failure on command state still fails the reconnect closed', async () => {
+  const scripted = adapter((request) => {
+    if (request.method === 'session_command_state') {
+      throw new Error('network down');
+    }
+    return undefined;
+  });
+  await expect(gateway(scripted).bootstrap()).rejects.toThrow('network down');
+});
+
+test('an administrator reconnect never bursts command-state reads', async () => {
+  let inFlight = 0;
+  let peak = 0;
+  const listed = Array.from({ length: 40 }, (_, index) =>
+    listedSession(`session-${index + 1}`, BigInt(NOW + index)),
+  );
+  const requests: PlatformRequest[] = [];
+  const base = adapter();
+  const transport: PlatformAdapter = {
+    async request(request, signal) {
+      requests.push(request);
+      if (request.method === 'list_sessions') {
+        return { kind: 'sessions', value: { cursor, sessions: listed } };
+      }
+      if (request.method !== 'session_command_state') {
+        return base.transport.request(request, signal);
+      }
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      const found = listed.find(
+        (entry) => entry.session.resource.id === request.request.session.id,
+      );
+      return {
+        kind: 'session_command_state',
+        value: {
+          session: (found as (typeof listed)[number]).session,
+          run: null,
+          pending_approvals: [],
+        },
+      };
+    },
+  };
+  const snapshot = await gateway(
+    { client: new PlatformClient(transport), requests, transport },
+    ADMINISTRATOR,
+  ).bootstrap();
+
+  expect(snapshot.sessions).toHaveLength(40);
+  expect(peak).toBeGreaterThan(1);
+  expect(peak).toBeLessThanOrEqual(4);
+});
+
+test('an administrator sees the most recent conversations first, capped', async () => {
+  const scripted = administratorAdapter(130);
+  const snapshot = await gateway(scripted, ADMINISTRATOR).bootstrap();
+
+  expect(snapshot.sessions).toHaveLength(100);
+  expect(snapshot.sessions[0]?.target.coordinate.id).toBe('session-130');
+  expect(snapshot.sessions[99]?.target.coordinate.id).toBe('session-31');
+  expect(
+    scripted.requests.filter(
+      (request) => request.method === 'session_command_state',
+    ),
+  ).toHaveLength(100);
+});
+
+test('all-sessions visibility without a command action reads no command state', async () => {
+  const scripted = administratorAdapter(3);
+  const snapshot = await gateway(scripted, [
+    'attach',
+    'all_sessions',
+  ] as const).bootstrap();
+
+  expect(snapshot.connection.mutationsAllowed).toBe(false);
+  expect(snapshot.sessions).toHaveLength(3);
+  expect(snapshot.sessions.every((session) => !session.followUpAllowed)).toBe(
+    true,
+  );
+  expect(
+    scripted.requests.some(
+      (request) => request.method === 'session_command_state',
+    ),
+  ).toBe(false);
+});
+
 test('capability mismatches fail closed before session discovery', async () => {
   const scripted = adapter((request) =>
     request.method === 'capabilities'

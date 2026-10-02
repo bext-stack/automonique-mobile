@@ -205,7 +205,7 @@ export default function SessionScreen() {
 
   if (!session) {
     return (
-      <Screen>
+      <Screen bottomInset>
         <Text style={{ color: palette.text }}>
           {scopeRequested
             ? 'The exact scoped session is no longer current. Return to the workspace and refresh before continuing.'
@@ -304,7 +304,7 @@ export default function SessionScreen() {
   }
 
   return (
-    <Screen>
+    <Screen bottomInset>
       <View style={styles.header}>
         <Text
           accessibilityRole="header"
