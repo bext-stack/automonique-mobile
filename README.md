@@ -27,6 +27,14 @@ receipt reconciliation. They never receive generic Platform execution authority.
 Deterministic synthetic gateways remain test fixtures and are excluded from
 the production source graph and emitted bundles.
 
+Phone pairing supports selected conversations or an explicit administrator
+scope covering all current and future conversations on that Monique instance.
+The dashboard displays a QR code and offers a PNG download; both expire after
+five minutes and work once. Administrator scope requires a fresh invite with
+`all_sessions`, keeps task creation and ticket management separate, and does
+not upgrade existing credentials. This app version understands that grant and
+shows it in Settings; older builds must be updated before pairing as admin.
+
 The vendored SDK also includes the canonical Platform v2 client. The
 credential lifecycle constructs its exact `/api/platform/v2` HTTPS transport,
 renegotiates it per credential generation, and exposes bounded project reads,

@@ -160,3 +160,17 @@ test('cache bounding retains the acknowledged anchor before local previews', () 
   expect(retained[0]?.cursor).toBe('1');
   expect(retained.at(-1)?.cursor).toBe(`local:${MAX_CACHED_EVENTS}`);
 });
+
+// Administrator scope remains visible offline without enabling offline writes.
+test('administrator access survives caching with offline mutations disabled', () => {
+  const snapshot = {
+    ...syntheticSnapshot,
+    connection: {
+      ...syntheticSnapshot.connection,
+      allowedActions: ['attach', 'all_sessions'] as const,
+    },
+  };
+  const decoded = decodeCachedSnapshot(encodeCachedSnapshot(snapshot));
+  expect(decoded.connection.allowedActions).toContain('all_sessions');
+  expect(decoded.connection.mutationsAllowed).toBe(false);
+});

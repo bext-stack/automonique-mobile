@@ -710,7 +710,9 @@ export default function SettingsScreen() {
             ))}
           </View>
           <Text style={[styles.label, { color: palette.text }]}>
-            Sessions ({state.profile.sessionScope.length})
+            {state.profile.actions.includes('all_sessions')
+              ? 'Administrator — all current and future conversations'
+              : `Sessions (${state.profile.sessionScope.length})`}
           </Text>
           {state.profile.sessionScope.map((sessionId) => (
             <Text
