@@ -26,6 +26,7 @@ const ACTIONS: readonly MobileAction[] = [
   'stop_run',
   'start_task',
   'manage_work',
+  'all_sessions',
 ];
 
 function record(value: unknown): Record<string, unknown> {

@@ -37,7 +37,8 @@ export type MobileAction =
   | 'decide_approval'
   | 'stop_run'
   | 'start_task'
-  | 'manage_work';
+  | 'manage_work'
+  | 'all_sessions';
 
 export interface ConnectionStatus {
   readonly phase: ConnectionPhase;

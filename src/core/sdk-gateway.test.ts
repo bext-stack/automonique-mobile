@@ -23,6 +23,7 @@ import {
   SessionHistoryCursor,
   SessionHistoryLimit,
   SessionHistoryText,
+  SessionHistoryMessageText,
   type PlatformAdapter,
   type PlatformClientResponse,
   type PlatformRequest,
@@ -186,7 +187,7 @@ function adapter(
                   cursor: SessionHistoryCursor(1n),
                   evidence: 'authoritative',
                   role: 'user',
-                  text: SessionHistoryText('Investigate'),
+                  text: SessionHistoryMessageText('Investigate'),
                   truncated: false,
                 },
                 {
@@ -285,7 +286,13 @@ function gateway(
   scripted: ReturnType<typeof adapter>,
   allowedActions?: readonly MobileAction[],
 ) {
-  const admitted = authorization(allowedActions);
+  const base = authorization(allowedActions);
+  const admitted = {
+    ...base,
+    session_scope: base.actions.includes('all_sessions')
+      ? []
+      : base.session_scope,
+  };
   return createSdkMobileGateway({
     authorization: admitted,
     client: scripted.client,
@@ -349,6 +356,33 @@ test('attach-only bootstrap stays read-only without requesting command state', a
     'capabilities',
     'list_sessions',
   ]);
+});
+
+test('administrator pairing reads and continues sessions outside the original allowlist', async () => {
+  const scripted = adapter((request) =>
+    request.method === 'session_command_state'
+      ? {
+          kind: 'session_command_state',
+          value: { session: sessionRecord, run: null, pending_approvals: [] },
+        }
+      : undefined,
+  );
+  const mobile = gateway(scripted, ['attach', 'follow_up', 'all_sessions']);
+  const snapshot = await mobile.bootstrap();
+  expect(snapshot.sessions).toHaveLength(1);
+  expect(snapshot.connection.allowedActions).toContain('all_sessions');
+  expect(snapshot.connection.allowedActions).not.toContain('manage_work');
+  expect(snapshot.connection.allowedActions).not.toContain('start_task');
+  const target = snapshot.sessions[0]!.target;
+  await mobile.attach(target, null);
+  await mobile.followUp({
+    session: target,
+    text: 'Continue',
+    idempotencyKey: 'admin-follow',
+  });
+  expect(
+    scripted.requests.some((request) => request.method === 'session_follow_up'),
+  ).toBe(true);
 });
 
 test('session scope rejects leaked reads and local mutations before transport', async () => {

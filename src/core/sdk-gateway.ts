@@ -283,6 +283,7 @@ export function createSdkMobileGateway(
   );
   const clientId = mobilePlatformClientId(authorization);
   const sessionScope = new Set<string>(authorization.session_scope);
+  const allSessions = authorization.actions.includes('all_sessions');
   const retainedSessions = new Set<string>();
 
   function requireAction(action: MobileAction): void {
@@ -292,7 +293,7 @@ export function createSdkMobileGateway(
   }
 
   function requireSessionScope(sessionId: string): void {
-    if (!sessionScope.has(sessionId)) {
+    if (!allSessions && !sessionScope.has(sessionId)) {
       throw new MobileGatewayError('mobile_session_unauthorized');
     }
   }
@@ -324,7 +325,7 @@ export function createSdkMobileGateway(
         if (
           session.session.resource.authority !== 'automonique' ||
           session.session.resource.kind !== 'session' ||
-          !sessionScope.has(session.session.resource.id) ||
+          (!allSessions && !sessionScope.has(session.session.resource.id)) ||
           sessionIds.has(session.session.resource.id) ||
           (session.run !== null && session.run.kind !== 'run')
         ) {

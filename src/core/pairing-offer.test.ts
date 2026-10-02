@@ -2,6 +2,7 @@
 
 import {
   decodePairingOfferText,
+  describePairingError,
   MAX_PAIRING_OFFER_BYTES,
 } from './pairing-offer';
 
@@ -9,7 +10,7 @@ const IDENTITY = `sha256:${'a'.repeat(64)}`;
 const OFFER = `{"exchange_endpoint":"https://ops.example.test/api/mobile/pairings/exchange","expires_at_ms":1777000300000,"origin":"https://ops.example.test","pairing_id":"pi_${'b'.repeat(43)}","pairing_token":"mp_${'c'.repeat(43)}","schema":"automonique.mobile-auth/v1","server_identity":"${IDENTITY}"}`;
 
 test('decodes the exact bounded canonical operator offer', () => {
-  expect(decodePairingOfferText(OFFER)).toMatchObject({
+  expect(decodePairingOfferText(OFFER, 1_777_000_000_000)).toMatchObject({
     origin: 'https://ops.example.test',
     pairing_id: `pi_${'b'.repeat(43)}`,
     pairing_token: `mp_${'c'.repeat(43)}`,
@@ -28,4 +29,22 @@ test.each([
   expect(() => decodePairingOfferText(value)).toThrow(
     'mobile_pairing_offer_invalid',
   );
+});
+
+test('rejects an invite at its expiry boundary', () => {
+  expect(() => decodePairingOfferText(OFFER, 1_777_000_300_000)).toThrow(
+    'mobile_pairing_offer_expired',
+  );
+  expect(() => decodePairingOfferText(OFFER, 1_777_000_300_001)).toThrow(
+    'mobile_pairing_offer_expired',
+  );
+});
+
+test('unexpected failures never expose server details or invite secrets', () => {
+  expect(
+    describePairingError(new Error('private response body')),
+  ).not.toContain('private response body');
+  expect(
+    describePairingError(new Error('mobile_protocol_unsupported')),
+  ).toContain('Update the app');
 });

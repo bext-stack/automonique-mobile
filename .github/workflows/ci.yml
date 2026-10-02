@@ -21,6 +21,7 @@ jobs:
       - run: npm ci
       - run: npm run sdk:verify
       - run: npm run notices:check
+      - run: npm run security:verify
       - run: npm run native:verify
       - run: npm run production:verify
       - run: npm run audit:high
