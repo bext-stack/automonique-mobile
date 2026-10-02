@@ -1798,7 +1798,7 @@ export default function WorkspaceDetailScreen() {
 
   if (server === null || workspace === null || !exactRevision) {
     return (
-      <Screen>
+      <Screen bottomInset>
         <Text
           accessibilityRole="header"
           style={[styles.title, { color: palette.text }]}
@@ -1860,7 +1860,7 @@ export default function WorkspaceDetailScreen() {
   });
 
   return (
-    <Screen>
+    <Screen bottomInset>
       <View style={styles.heading}>
         <Text
           accessibilityRole="header"

@@ -46,6 +46,21 @@ function shortIdentity(identity: string): string {
   return `${identity.slice(0, 18)}…${identity.slice(-10)}`;
 }
 
+const ACTION_LABELS: Readonly<Record<string, string>> = {
+  attach: 'Read conversations',
+  follow_up: 'Send follow-ups',
+  decide_approval: 'Decide approvals',
+  stop_run: 'Stop runs',
+  start_task: 'Start tasks',
+  manage_work: 'Slack and tickets',
+};
+
+function describeFollowUpLimit(bytes: number): string {
+  return bytes >= 1024 && bytes % 1024 === 0
+    ? `${bytes / 1024} KB`
+    : `${bytes} bytes`;
+}
+
 export default function SettingsScreen() {
   const { snapshot } = useMobile();
   const {
@@ -62,9 +77,7 @@ export default function SettingsScreen() {
   const palette = usePalette();
   const checkController = useRef<AbortController | null>(null);
   const [endpoint, setEndpoint] = useState('https://');
-  const [message, setMessage] = useState(
-    'Connect this app to the Automonique server you already operate.',
-  );
+  const [message, setMessage] = useState<string | null>(null);
   const pairingInFlight = useRef(false);
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
   const [pairingOffer, setPairingOffer] = useState('');
@@ -253,8 +266,26 @@ export default function SettingsScreen() {
     }
   }
 
+  // Shown beside whatever caused it: in the pairing step while pairing,
+  // otherwise at the top of the screen.
+  const messageNotice = message !== null && (
+    <View
+      style={[
+        styles.result,
+        { borderColor: palette.border, backgroundColor: palette.surfaceMuted },
+      ]}
+    >
+      <Text
+        accessibilityLiveRegion="polite"
+        style={[styles.copy, { color: palette.text }]}
+      >
+        {message}
+      </Text>
+    </View>
+  );
+
   return (
-    <Screen showConnectionBanner={!needsSetup}>
+    <Screen bottomInset showConnectionBanner={!needsSetup}>
       <PairingScanner
         key={scannerGeneration}
         onCancel={() => setScannerVisible(false)}
@@ -278,6 +309,8 @@ export default function SettingsScreen() {
             : 'Each server keeps an independent credential. Exactly one selected server can receive commands.'}
         </Text>
       </View>
+
+      {!showPairing && messageNotice}
 
       {servers.length > 0 && (
         <View
@@ -564,6 +597,7 @@ export default function SettingsScreen() {
                 Review pasted invite
               </Text>
             </Pressable>
+            {messageNotice}
 
             {pendingOffer !== null && (
               <View
@@ -632,18 +666,28 @@ export default function SettingsScreen() {
       >
         <Text style={[styles.cardTitle, { color: palette.text }]}>Access</Text>
         <Text style={[styles.copy, { color: palette.textMuted }]}>
-          {state.phase === 'ready'
-            ? 'Connected and ready'
-            : `Connection state: ${state.phase.replaceAll('_', ' ')}`}
+          {state.phase !== 'ready'
+            ? `Connection state: ${state.phase.replaceAll('_', ' ')}`
+            : snapshot.connection.phase === 'live'
+              ? 'Connected and ready'
+              : snapshot.connection.phase === 'reconnecting'
+                ? 'Paired · refreshing the server view'
+                : 'Paired, but the server view is not up to date. Commands stay paused until a refresh succeeds.'}
         </Text>
         {state.profile !== null && (
           <>
             <Text selectable style={[styles.metadata, { color: palette.text }]}>
-              {state.profile.actor} · {state.profile.credentialId}
+              Signed in as {state.profile.actor}
             </Text>
             <Text style={[styles.status, { color: palette.textMuted }]}>
               {state.profile.origin} · identity{' '}
               {shortIdentity(state.profile.serverIdentity)}
+            </Text>
+            <Text
+              selectable
+              style={[styles.digest, { color: palette.textMuted }]}
+            >
+              Device {state.profile.credentialId}
             </Text>
             <Text style={[styles.status, { color: palette.textMuted }]}>
               Access expires{' '}
@@ -695,20 +739,25 @@ export default function SettingsScreen() {
             server. Changing the scope requires a new server authorization.
           </Text>
           <View style={styles.chips}>
-            {state.profile.actions.map((action) => (
-              <View
-                key={action}
-                style={[styles.chip, { backgroundColor: palette.surfaceMuted }]}
-              >
-                <Text style={[styles.chipText, { color: palette.text }]}>
-                  {action.replaceAll('_', ' ')}
-                </Text>
-              </View>
-            ))}
+            {state.profile.actions
+              .filter((action) => action !== 'all_sessions')
+              .map((action) => (
+                <View
+                  key={action}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: palette.surfaceMuted },
+                  ]}
+                >
+                  <Text style={[styles.chipText, { color: palette.text }]}>
+                    {ACTION_LABELS[action] ?? action.replaceAll('_', ' ')}
+                  </Text>
+                </View>
+              ))}
           </View>
           <Text style={[styles.label, { color: palette.text }]}>
             {state.profile.actions.includes('all_sessions')
-              ? 'Administrator — all current and future conversations'
+              ? 'Administrator: all current and future conversations'
               : `Sessions (${state.profile.sessionScope.length})`}
           </Text>
           {state.profile.sessionScope.map((sessionId) => (
@@ -721,18 +770,11 @@ export default function SettingsScreen() {
             </Text>
           ))}
           <Text style={[styles.status, { color: palette.textMuted }]}>
-            Up to {state.profile.maxPageEvents} events per page ·{' '}
-            {state.profile.maxFollowUpBytes} follow-up bytes
+            Up to {state.profile.maxPageEvents} events per page · follow-ups up
+            to {describeFollowUpLimit(Number(state.profile.maxFollowUpBytes))}
           </Text>
         </View>
       )}
-
-      <Text
-        accessibilityLiveRegion="polite"
-        style={[styles.message, { color: palette.textMuted }]}
-      >
-        {message}
-      </Text>
 
       <View
         accessibilityLabel="Automonique SDK protocol metadata"
@@ -861,12 +903,11 @@ const styles = StyleSheet.create({
   hintLabel: { fontSize: 12, fontWeight: '700' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
   chip: { borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6 },
-  chipText: { fontSize: 11, fontWeight: '800', textTransform: 'capitalize' },
+  chipText: { fontSize: 11, fontWeight: '800' },
   scopeId: { fontSize: 11, lineHeight: 16, fontFamily: 'monospace' },
   status: { fontSize: 12, lineHeight: 18 },
   metadata: { fontSize: 13, lineHeight: 19, fontWeight: '700' },
   digest: { fontSize: 10, lineHeight: 15, fontFamily: 'monospace' },
-  message: { fontSize: 13, lineHeight: 19, paddingHorizontal: 2 },
   diagnostics: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 7 },
   notice: { borderWidth: 1, borderRadius: 16, padding: 15, gap: 7 },
   noticeTitle: { fontSize: 15, fontWeight: '800' },

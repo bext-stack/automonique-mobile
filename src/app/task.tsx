@@ -125,7 +125,7 @@ function TaskComposer() {
       snapshot.connection.limits.maxFollowUpBytes;
   const canSubmit = allowed && loaded && !busy && !pending && validText;
   return (
-    <Screen>
+    <Screen bottomInset>
       <Text
         accessibilityRole="header"
         style={[styles.title, { color: palette.text }]}

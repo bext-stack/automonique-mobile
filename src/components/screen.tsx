@@ -15,6 +15,11 @@ import { usePalette } from '@/theme/palette';
 interface ScreenProps extends PropsWithChildren {
   readonly scroll?: boolean;
   readonly showConnectionBanner?: boolean;
+  /**
+   * Keep content clear of the system navigation bar. Screens pushed on the
+   * stack need it; tab screens do not, because the tab bar already sits there.
+   */
+  readonly bottomInset?: boolean;
   readonly contentContainerStyle?: ScrollViewProps['contentContainerStyle'];
 }
 
@@ -22,6 +27,7 @@ export function Screen({
   children,
   scroll = true,
   showConnectionBanner = true,
+  bottomInset = false,
   contentContainerStyle,
 }: ScreenProps) {
   const palette = usePalette();
@@ -35,7 +41,7 @@ export function Screen({
   return (
     <SafeAreaView
       style={[styles.safeArea, { backgroundColor: palette.background }]}
-      edges={['top']}
+      edges={bottomInset ? ['top', 'bottom'] : ['top']}
     >
       {scroll ? (
         <ScrollView

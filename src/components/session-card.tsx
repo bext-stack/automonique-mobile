@@ -7,8 +7,24 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { SessionSummary } from '@/core/types';
 import { usePalette } from '@/theme/palette';
 
+function stateLabel(session: SessionSummary): string {
+  if (session.attachable) return session.state;
+  return session.state === 'completed' ? 'ended' : 'retained';
+}
+
+function observedLabel(observedAt: string): string | null {
+  const time = Date.parse(observedAt);
+  return Number.isNaN(time)
+    ? null
+    : new Date(time).toLocaleString(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      });
+}
+
 export function SessionCard({ session }: { readonly session: SessionSummary }) {
   const palette = usePalette();
+  const observed = observedLabel(session.observedAt);
   const [pressed, setPressed] = useState(false);
   return (
     <Link
@@ -20,7 +36,7 @@ export function SessionCard({ session }: { readonly session: SessionSummary }) {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Open session ${session.title}, ${session.state}`}
+        accessibilityLabel={`Open session ${session.title}, ${stateLabel(session)}`}
         onPressIn={() => setPressed(true)}
         onPressOut={() => setPressed(false)}
         style={StyleSheet.flatten([
@@ -30,18 +46,22 @@ export function SessionCard({ session }: { readonly session: SessionSummary }) {
         ])}
       >
         <View style={styles.header}>
-          <Text style={[styles.title, { color: palette.text }]}>
+          <Text
+            numberOfLines={2}
+            style={[styles.title, { color: palette.text }]}
+          >
             {session.title}
           </Text>
           <Text style={[styles.state, { color: palette.accent }]}>
-            {session.state}
+            {stateLabel(session)}
           </Text>
         </View>
         <Text
           style={[styles.identity, { color: palette.textMuted }]}
           numberOfLines={1}
         >
-          {session.target.coordinate.id} · rev {session.target.revision}
+          {observed === null ? '' : `${observed} · `}
+          {session.target.coordinate.id}
         </Text>
         <View style={styles.footer}>
           <Text style={[styles.meta, { color: palette.textMuted }]}>
@@ -50,9 +70,6 @@ export function SessionCard({ session }: { readonly session: SessionSummary }) {
               : session.attachable
                 ? 'Live session'
                 : 'Retained history'}
-          </Text>
-          <Text style={[styles.meta, { color: palette.textMuted }]}>
-            cursor {session.lastCursor}
           </Text>
         </View>
       </Pressable>
@@ -71,11 +88,11 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.72 },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 12,
   },
-  title: { fontSize: 18, fontWeight: '700', flex: 1 },
+  title: { fontSize: 17, lineHeight: 23, fontWeight: '700', flex: 1 },
   state: { fontSize: 12, fontWeight: '800', textTransform: 'uppercase' },
   identity: { fontSize: 12 },
   footer: {

@@ -18,6 +18,7 @@ import {
   recoverPendingReceipts,
   type RecoveredReceipt,
 } from '@/core/reconciliation';
+import { describeReconnectError } from '@/core/reconnect-error';
 import {
   decodeCachedSnapshot,
   encodeCachedSnapshot,
@@ -73,7 +74,7 @@ function initialReadOnlySnapshot(): MobileSnapshot {
     schema: 'automonique.mobile-snapshot/v1',
     connection: {
       phase: 'stale',
-      label: 'Initializing projection — read only',
+      label: 'Loading the server view…',
       mutationsAllowed: false,
       synthetic: false,
       allowedActions: [],
@@ -259,7 +260,7 @@ export function MobileProvider({
       connection: {
         ...current.connection,
         phase: 'reconnecting',
-        label: 'Reconnecting and validating projection',
+        label: 'Refreshing the server view…',
         mutationsAllowed: false,
       },
     }));
@@ -308,10 +309,7 @@ export function MobileProvider({
         connection: {
           ...current.connection,
           phase: 'stale',
-          label:
-            error instanceof Error
-              ? `Reconnect failed · ${error.message}`
-              : 'Reconnect failed · read only',
+          label: describeReconnectError(error),
           mutationsAllowed: false,
         },
       }));
@@ -373,10 +371,7 @@ export function MobileProvider({
           connection: {
             ...current.connection,
             phase: 'stale',
-            label:
-              error instanceof Error
-                ? `Read only · ${error.message}`
-                : 'Read only · bootstrap failed',
+            label: describeReconnectError(error),
             mutationsAllowed: false,
           },
         }));
