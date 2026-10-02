@@ -16,7 +16,9 @@ import { PairingScanner } from '@/components/pairing-scanner';
 import { Screen } from '@/components/screen';
 import { MAX_ENDPOINT_BYTES, normalizeEndpoint } from '@/core/network-policy';
 import {
+  assertPairingOfferCurrent,
   decodePairingOfferText,
+  describePairingError,
   MAX_PAIRING_OFFER_BYTES,
 } from '@/core/pairing-offer';
 import {
@@ -44,14 +46,6 @@ function shortIdentity(identity: string): string {
   return `${identity.slice(0, 18)}…${identity.slice(-10)}`;
 }
 
-function normalizeEndpointForDisplay(value: string): string {
-  try {
-    return normalizeEndpoint(value, false);
-  } catch {
-    return 'https://your-automonique-server';
-  }
-}
-
 export default function SettingsScreen() {
   const { snapshot } = useMobile();
   const {
@@ -71,6 +65,7 @@ export default function SettingsScreen() {
   const [message, setMessage] = useState(
     'Connect this app to the Automonique server you already operate.',
   );
+  const pairingInFlight = useRef(false);
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
   const [pairingOffer, setPairingOffer] = useState('');
   const [pendingOffer, setPendingOffer] = useState<MobilePairingOffer | null>(
@@ -108,6 +103,19 @@ export default function SettingsScreen() {
     return () => checkController.current?.abort();
   }, []);
 
+  useEffect(() => {
+    if (pendingOffer === null || lifecycleBusy) return;
+    const timer = setInterval(() => {
+      try {
+        assertPairingOfferCurrent(pendingOffer);
+      } catch (error) {
+        setPendingOffer(null);
+        setMessage(describePairingError(error));
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [pendingOffer, lifecycleBusy]);
+
   async function checkServer() {
     checkController.current?.abort();
     const controller = new AbortController();
@@ -141,40 +149,35 @@ export default function SettingsScreen() {
   }
 
   function reviewPairingOffer(rawOffer: string) {
+    if (pairingInFlight.current) return;
+    checkController.current?.abort();
     setPairingOffer('');
+    setServerCheck({ phase: 'idle' });
     try {
       const offer = decodePairingOfferText(rawOffer);
       setPendingOffer(offer);
       setEndpoint(offer.origin);
-      setServerCheck({
-        phase: 'compatible',
-        server: {
-          origin: offer.origin,
-          platformEndpoint: `${offer.origin}/api/platform`,
-          protocolVersion: 'pending',
-          serverIdentity: offer.server_identity,
-        },
-      });
       setMessage('Invite decoded. Confirm the server below before connecting.');
-    } catch {
+    } catch (error) {
       setPendingOffer(null);
-      setMessage('That is not a valid, current Automonique pairing invite.');
+      setMessage(describePairingError(error));
     }
   }
 
   async function connectPendingOffer() {
-    if (pendingOffer === null) return;
+    if (pendingOffer === null || pairingInFlight.current) return;
+    pairingInFlight.current = true;
     const offer = pendingOffer;
     setLifecycleBusy(true);
     try {
+      assertPairingOfferCurrent(offer);
       await pair(offer);
       setAddingServer(false);
       setMessage(`Added ${offer.origin}. The one-time invite was cleared.`);
     } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : 'mobile_pairing_failed',
-      );
+      setMessage(describePairingError(error));
     } finally {
+      pairingInFlight.current = false;
       setPendingOffer(null);
       setLifecycleBusy(false);
     }
@@ -428,6 +431,7 @@ export default function SettingsScreen() {
               keyboardType="url"
               maxLength={MAX_ENDPOINT_BYTES}
               onChangeText={(value) => {
+                checkController.current?.abort();
                 setEndpoint(value);
                 setServerCheck({ phase: 'idle' });
               }}
@@ -467,9 +471,7 @@ export default function SettingsScreen() {
                 </Text>
                 <Text style={[styles.metadata, { color: palette.text }]}>
                   {serverCheck.server.origin} ·{' '}
-                  {serverCheck.server.protocolVersion === 'pending'
-                    ? 'mobile protocol checked during pairing'
-                    : `mobile protocol v${serverCheck.server.protocolVersion}`}
+                  {`mobile protocol v${serverCheck.server.protocolVersion}`}
                 </Text>
                 <Text
                   selectable
@@ -503,16 +505,8 @@ export default function SettingsScreen() {
             <StepHeading
               number="2"
               title="Create a mobile invite"
-              copy="From an authenticated operator session or your existing deployment tooling, choose the sessions and allowed actions for this phone, then create a one-time mobile pairing invite. It expires within five minutes."
+              copy="On the Monique website, open Health, then Pair a phone (Associer un téléphone). Choose selected conversations or administrator access to all current and future conversations. Create a QR code; it is valid for five minutes."
             />
-            <View style={styles.endpointHint}>
-              <Text style={[styles.hintLabel, { color: palette.textMuted }]}>
-                Operator API for your existing tooling
-              </Text>
-              <Text selectable style={[styles.digest, { color: palette.text }]}>
-                {`${normalizeEndpointForDisplay(endpoint)}/api/mobile/pairings`}
-              </Text>
-            </View>
           </View>
 
           <View
@@ -524,20 +518,22 @@ export default function SettingsScreen() {
             <StepHeading
               number="3"
               title="Pair this phone"
-              copy="Scan the invite QR code or paste its canonical JSON. The app shows the pinned server identity before it exchanges the one-time secret."
+              copy="Scan the QR code from another screen, import its downloaded image, or paste the copied invite. Confirm the server address to connect securely."
             />
 
             {Platform.OS !== 'web' && (
               <Pressable
                 accessibilityRole="button"
+                disabled={lifecycleBusy}
                 onPress={() => {
+                  setPendingOffer(null);
                   setScannerGeneration((generation) => generation + 1);
                   setScannerVisible(true);
                 }}
                 style={[styles.button, { backgroundColor: palette.accent }]}
               >
                 <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-                  Scan pairing QR code
+                  Scan or import QR code
                 </Text>
               </Pressable>
             )}
@@ -548,8 +544,9 @@ export default function SettingsScreen() {
               autoCorrect={false}
               maxLength={MAX_PAIRING_OFFER_BYTES}
               multiline
+              editable={!lifecycleBusy}
               onChangeText={setPairingOffer}
-              placeholder="Paste one-time invite JSON"
+              placeholder="Paste the invite copied from Monique"
               placeholderTextColor={palette.textMuted}
               style={[
                 styles.pairingInput,
@@ -559,7 +556,7 @@ export default function SettingsScreen() {
             />
             <Pressable
               accessibilityRole="button"
-              disabled={pairingOffer.trim().length === 0}
+              disabled={lifecycleBusy || pairingOffer.trim().length === 0}
               onPress={() => reviewPairingOffer(pairingOffer)}
               style={[styles.secondaryButton, { borderColor: palette.border }]}
             >

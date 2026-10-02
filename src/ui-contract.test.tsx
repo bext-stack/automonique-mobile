@@ -576,6 +576,7 @@ test('reviews a one-time invite before exchanging it', async () => {
   expect(view.getByLabelText('Pairing invite confirmation')).toBeTruthy();
   expect(view.getByText('Connect to https://ops.example.test?')).toBeTruthy();
   expect(mockPair).not.toHaveBeenCalled();
+  expect(view.queryByText('Compatible Automonique server')).toBeNull();
 
   await fireEvent.press(view.getByText('Connect this server'));
   await waitFor(() => expect(mockPair).toHaveBeenCalledTimes(1));
@@ -689,4 +690,26 @@ test('authorized task submission persists a receipt and opens only a freshly aut
   expect(writes.every(([, body]) => !body.includes('Create a script'))).toBe(
     true,
   );
+});
+
+test('an invite that expires during review cannot be exchanged', async () => {
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+  try {
+    mockUseMobile.mockReturnValue(mobileValue(['attach']));
+    const offer = `{"exchange_endpoint":"https://ops.example.test/api/mobile/pairings/exchange","expires_at_ms":1800000001000,"origin":"https://ops.example.test","pairing_id":"pi_${'b'.repeat(43)}","pairing_token":"mp_${'c'.repeat(43)}","schema":"automonique.mobile-auth/v1","server_identity":"sha256:${'a'.repeat(64)}"}`;
+    const view = await render(<SettingsScreen />);
+    await fireEvent.changeText(
+      view.getByLabelText('One-time pairing offer'),
+      offer,
+    );
+    await fireEvent.press(view.getByText('Review pasted invite'));
+    expect(view.getByLabelText('Pairing invite confirmation')).toBeTruthy();
+    clock.mockReturnValue(1_800_000_001_000);
+    await fireEvent.press(view.getByText('Connect this server'));
+    expect(mockPair).not.toHaveBeenCalled();
+    expect(view.queryByLabelText('Pairing invite confirmation')).toBeNull();
+    expect(view.getByText(/This invite has expired/)).toBeTruthy();
+  } finally {
+    clock.mockRestore();
+  }
 });

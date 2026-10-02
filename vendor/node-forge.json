@@ -1,0 +1,16 @@
+{
+  "name": "node-forge",
+  "version": "1.4.1-automonique.1",
+  "description": "Downstream security backport; not an upstream node-forge release.",
+  "advisory": "https://github.com/advisories/GHSA-86w9-cpqp-85rv",
+  "upstreamUrl": "https://registry.npmjs.org/node-forge/-/node-forge-1.4.0.tgz",
+  "upstreamIntegrity": "sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ==",
+  "upstreamFix": "https://github.com/digitalbazaar/forge/pull/1152",
+  "upstreamFixCommit": "ceba34402e329f0365134f23fe19898756527d65",
+  "originalRsaSha256": "fd4740238145ec26470eb3f06a627c72039538ce1307dbdce40521f94dfd0a50",
+  "patchedRsaSha256": "f06267de42701cb14089772f82bab7cb3d00e85fabc1d830c48b6d45a45438d1",
+  "archive": "node-forge-1.4.1-automonique.1.tgz",
+  "archiveSha256": "c7bc0489c0e14d6c945dddeb335a3dfc88d152ff7b9fe0691cfa683e0da509e1",
+  "integrity": "sha512-8lq0GNbLjhrWIBiutquzq9IB9CieuCOtw+dL4Rf5wFEHhlSBLfrVZduMRTJ64+3X2E7T22t6xR6WTxt2Rzsa/Q==",
+  "license": "BSD-3-Clause (upstream dual-license option)"
+}

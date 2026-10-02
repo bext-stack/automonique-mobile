@@ -35,6 +35,13 @@ five minutes and work once. Administrator scope requires a fresh invite with
 not upgrade existing credentials. This app version understands that grant and
 shows it in Settings; older builds must be updated before pairing as admin.
 
+Pair from **Settings → Scan or import QR code**: photograph the code on another
+screen or select the PNG downloaded from Monique. Image import uses the system
+picker and does not require camera permission. Review the server address before
+connecting; expired invites are cleared and must be renewed on the website.
+Scanning an invite does not mark its server verified; pairing checks the pinned
+identity and protocol before exchanging the one-time secret.
+
 The vendored SDK also includes the canonical Platform v2 client. The
 credential lifecycle constructs its exact `/api/platform/v2` HTTPS transport,
 renegotiates it per credential generation, and exposes bounded project reads,

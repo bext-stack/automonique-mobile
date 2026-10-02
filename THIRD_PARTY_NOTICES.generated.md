@@ -14991,7 +14991,7 @@ Declared license: (BSD-3-Clause OR GPL-2.0)
 
 Packages:
 
-- node-forge@1.4.0 (node_modules/node-forge)
+- node-forge@1.4.1-automonique.1 (node_modules/node-forge)
 
 ```text
 You may use the Forge project under the terms of either the BSD License or the
