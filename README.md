@@ -110,13 +110,17 @@ its channel binding. Existing phone credentials gain no new permissions.
 ## Public Android preview
 
 Download the immutable
-[Automonique Mobile 0.1.0-preview.6 APK](https://www.automonique.fr/downloads/android/0.1.0-preview.6/63a8ae79952032b09f3a318eb5db2e4cb5f97c4703849924cb69d70b7405e775/automonique-mobile-0.1.0-preview.6.apk).
+[Automonique Mobile 0.1.0-preview.7 APK](https://www.automonique.fr/downloads/android/0.1.0-preview.7/96e2d9e192987fc44ae57829a00748cbbcb6bdbef4c36dc4d2c936e7bd0fee35/automonique-mobile-0.1.0-preview.7.apk).
 
-SHA-256: `63a8ae79952032b09f3a318eb5db2e4cb5f97c4703849924cb69d70b7405e775`
+SHA-256: `96e2d9e192987fc44ae57829a00748cbbcb6bdbef4c36dc4d2c936e7bd0fee35`
 
-The adjacent [publication record](https://www.automonique.fr/downloads/android/0.1.0-preview.6/63a8ae79952032b09f3a318eb5db2e4cb5f97c4703849924cb69d70b7405e775/publication.json) connects these
+Preview 7 fixes administrator pairing: a phone granted all conversations now
+goes live instead of staying read-only, lists conversations most recent first,
+and explains a failed refresh in plain words.
+
+The adjacent [publication record](https://www.automonique.fr/downloads/android/0.1.0-preview.7/96e2d9e192987fc44ae57829a00748cbbcb6bdbef4c36dc4d2c936e7bd0fee35/publication.json) connects these
 exact bytes to protected `main`, retained GitHub Actions run
-[`37052371352`](https://github.com/bext-stack/automonique-mobile/actions/runs/37052371352),
+[`37063356421`](https://github.com/bext-stack/automonique-mobile/actions/runs/37063356421),
 the GitHub artifact attestation, packaged manifest, ABIs, debug-only signer,
 toolchains, and dependency notices.
 
@@ -131,7 +135,7 @@ The earlier
 [0.1.0-preview.2 path](https://www.automonique.fr/downloads/android/0.1.0-preview.2/4c7b7fac529c8060ecc84691b00156c1fc42989c86adab467cdf9f43e959b353/automonique-mobile-0.1.0-preview.2.apk)
 stays published and unchanged; a preview path is never overwritten or
 redirected. The synthetic TalkBack traversal recorded for preview.1 was not
-repeated for preview.2 through preview.6 and does not cover those versions.
+repeated for preview.2 through preview.7 and does not cover those versions.
 
 ## Requirements
 
