@@ -7,7 +7,7 @@ import {
   type AttachmentHandle,
   type MobileAutomoniqueGateway,
 } from './types';
-import { bootstrapVerticalSlice } from './vertical-slice';
+import { bootstrapVerticalSlice, sessionDisplayTitle } from './vertical-slice';
 
 test('synthetic bootstrap traverses attach and the cursor reducer', async () => {
   const base = createMockGateway();
@@ -303,5 +303,42 @@ test.each([
 
   await expect(bootstrapVerticalSlice(gateway)).resolves.toMatchObject({
     connection: { phase: 'stale', mutationsAllowed: false },
+  });
+});
+
+describe('sessionDisplayTitle', () => {
+  const message = (text: string, role: 'user' | 'assistant' = 'user') =>
+    ({
+      id: `e-${text.length}`,
+      cursor: 'c',
+      sequence: decimalRevision('1'),
+      createdAt: '2026-10-02T00:00:00.000Z',
+      provenance: 'authoritative',
+      kind: 'message',
+      role,
+      text,
+    }) as const;
+
+  test('keeps a title the server actually gave', () => {
+    expect(sessionDisplayTitle('Production incident', [message('hi')])).toBe(
+      'Production incident',
+    );
+  });
+
+  test('names a lifecycle-only summary after the first operator message', () => {
+    expect(
+      sessionDisplayTitle('open', [
+        message('I am the assistant', 'assistant'),
+        message('  Restart the\n  staging pool  '),
+      ]),
+    ).toBe('Restart the staging pool');
+  });
+
+  test('truncates a long first message and falls back without one', () => {
+    const title = sessionDisplayTitle('open', [message('x'.repeat(200))]);
+    expect(title).toHaveLength(80);
+    expect(title.endsWith('…')).toBe(true);
+    expect(sessionDisplayTitle('closed', [])).toBe('Closed conversation');
+    expect(sessionDisplayTitle('open', [])).toBe('Conversation');
   });
 });
