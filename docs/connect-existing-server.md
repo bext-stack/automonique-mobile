@@ -35,6 +35,39 @@ discovery only. It sends no operator or mobile credential.
 
 ## Create the one-time invite
 
+In the authenticated Monique dashboard, open **Health → Pair a phone**
+(**Associer un téléphone** in French). Choose the conversations and actions
+this phone needs, then create the invite. The dashboard displays its QR code
+and offers **Download QR code** and **Copy invite**.
+
+In the app, choose **Scan or import QR code** to photograph a code on another
+screen or import the downloaded image. Importing an image does not require
+camera permission. You can also paste the copied invite. Review the server
+address, then choose **Connect this server**. Reading the QR code alone does
+not verify the server; pairing checks its identity and protocol before the
+one-time exchange.
+
+Invites expire after five minutes and can be used only once. If the invite
+expires while you are reviewing it, the app clears it and asks for a fresh code.
+Use **Create another invite** in the dashboard. Keep downloaded QR images private and
+delete them when finished; they contain the same one-time secret as the copied
+invite.
+
+### Administrator access to all conversations
+
+Choose administrator access when this phone should see **all current and
+future conversations** on the server. Settings identifies this scope explicitly.
+Selected-conversation access remains the default. Existing phones keep their
+original permissions; create a new invitation and pair again to change access.
+
+Administrator conversation access does not automatically allow starting tasks
+or managing Slack and tickets. Select those permissions separately when needed.
+API-created administrator invitations use `all_sessions` together with
+`attach`, an empty `session_scope`, and the specific action grants you intend.
+Update older app builds before pairing with this new scope.
+
+### Create an invite through the API
+
 Use an authenticated operator session or deployment tool to send this media
 type to the discovery document's `pairing_create_endpoint`:
 
@@ -62,9 +95,9 @@ scope just for convenience.
 
 The `201` response is the pairing invite. Treat it as a short-lived secret:
 
-- render the exact JSON as a QR code and scan it in the app, or copy and paste
-  the exact JSON;
-- do not log, email, upload, or save the invite;
+- render the exact JSON as a QR code and scan or import it in the app, or copy
+  and paste the exact JSON;
+- do not log, email, or upload the invite; delete temporary QR downloads after use;
 - use it within five minutes and only once.
 
 The app decodes the invite locally, shows the exact origin and pinned server
