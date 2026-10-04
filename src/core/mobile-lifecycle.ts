@@ -2,6 +2,7 @@
 
 import {
   MobileLifecycleClient,
+  MOBILE_CLOCK_SKEW_MILLIS,
   MobileLifecycleError,
   type IssuedMobileCredentials,
   type MobileDiscovery,
@@ -576,7 +577,10 @@ export class MobileLifecycleCoordinator {
     if (offer.expires_at_ms <= BigInt(this.now())) {
       throw new Error('mobile_pairing_expired');
     }
-    if (offer.expires_at_ms > BigInt(this.now() + PAIRING_LIFETIME_MS)) {
+    if (
+      offer.expires_at_ms >
+      BigInt(this.now() + PAIRING_LIFETIME_MS + MOBILE_CLOCK_SKEW_MILLIS)
+    ) {
       throw new Error('mobile_pairing_lifetime_invalid');
     }
     const operation = this.replaceGeneration();

@@ -5,6 +5,7 @@ import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import {
   MOBILE_AUTH_SCHEMA_V1,
+  MOBILE_CLOCK_SKEW_MILLIS,
   MobileAccessToken,
   MobileActor,
   MobileCredentialId,
@@ -499,7 +500,7 @@ export async function saveIssuedConnection(
   }
   if (
     discovery.server_identity !== authorization.server_identity ||
-    authorization.issued_at_ms > BigInt(now) ||
+    authorization.issued_at_ms > BigInt(now + MOBILE_CLOCK_SKEW_MILLIS) ||
     authorization.expires_at_ms <= BigInt(now) ||
     (previous !== undefined &&
       (discovery.origin !== previous.profile.origin ||
@@ -767,7 +768,7 @@ export async function loadStoredConnection(
     );
     if (
       !sameProfile(privateProfile, expectedProfile) ||
-      authorization.issued_at_ms > BigInt(now)
+      authorization.issued_at_ms > BigInt(now + MOBILE_CLOCK_SKEW_MILLIS)
     ) {
       throw new Error('persisted_connection_mismatch');
     }
@@ -1142,7 +1143,7 @@ async function admitPersistedSlot(
   );
   if (
     !sameProfile(privateProfile, expectedProfile) ||
-    authorization.issued_at_ms > BigInt(now) ||
+    authorization.issued_at_ms > BigInt(now + MOBILE_CLOCK_SKEW_MILLIS) ||
     privateProfile.serverIdentity !== expected.serverIdentity ||
     privateProfile.credentialId !== expected.credentialId ||
     privateProfile.credentialRevision !== expected.credentialRevision
@@ -1394,7 +1395,7 @@ async function prepareIssuedConnection(
   }
   if (
     discovery.server_identity !== authorization.server_identity ||
-    authorization.issued_at_ms > BigInt(now) ||
+    authorization.issued_at_ms > BigInt(now + MOBILE_CLOCK_SKEW_MILLIS) ||
     authorization.expires_at_ms <= BigInt(now) ||
     (previous !== undefined &&
       (discovery.origin !== previous.profile.origin ||

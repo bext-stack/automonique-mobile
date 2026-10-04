@@ -5,6 +5,7 @@ import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import {
   MOBILE_AUTH_SCHEMA_V1,
+  MOBILE_CLOCK_SKEW_MILLIS,
   MobileAccessToken,
   MobileActor,
   MobileCredentialId,
@@ -140,6 +141,64 @@ beforeEach(async () => {
   secureStore.deleteItemAsync.mockImplementation(async (key) => {
     secureValues.delete(key);
   });
+});
+
+test.each([1_400, MOBILE_CLOCK_SKEW_MILLIS])(
+  'persists and reloads credentials when the device clock is %i ms behind',
+  async (skew) => {
+    const credentials = issued(1);
+    const shifted = {
+      ...credentials,
+      authorization: {
+        ...credentials.authorization,
+        issued_at_ms: MobileEpochMillis(BigInt(NOW + skew)),
+      },
+    };
+    const slot = await addCredentialRegistryConnection(
+      discovery(1),
+      shifted,
+      NOW,
+    );
+    await expect(
+      loadSelectedCredentialRegistryConnection(NOW),
+    ).resolves.toMatchObject({
+      kind: 'active',
+      connection: { authorization: { issued_at_ms: BigInt(NOW + skew) } },
+    });
+    await saveCredentialRegistryWorkspaceAuthorization(
+      slot.slotId,
+      undefined,
+      NOW,
+    );
+    await expect(loadCredentialRegistry(NOW)).resolves.toMatchObject({
+      kind: 'ready',
+      registry: { malformedSlotIds: [], slots: [{ slotId: slot.slotId }] },
+    });
+  },
+);
+
+test('refuses issuance beyond clock tolerance and keeps expiry exact', async () => {
+  for (const change of [
+    {
+      issued_at_ms: MobileEpochMillis(
+        BigInt(NOW + MOBILE_CLOCK_SKEW_MILLIS + 1),
+      ),
+    },
+    { expires_at_ms: MobileEpochMillis(BigInt(NOW)) },
+  ]) {
+    const credentials = issued(1);
+    await expect(
+      addCredentialRegistryConnection(
+        discovery(1),
+        {
+          ...credentials,
+          authorization: { ...credentials.authorization, ...change },
+        },
+        NOW,
+      ),
+    ).rejects.toThrow('issued_connection_mismatch');
+  }
+  expect(secureStore.setItemAsync).not.toHaveBeenCalled();
 });
 
 test('adds, explicitly selects, and revokes one slot while every other slot survives', async () => {

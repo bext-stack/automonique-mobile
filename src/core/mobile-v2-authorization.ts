@@ -2,6 +2,7 @@
 
 import {
   MAX_MOBILE_V2_PROJECT_ROOTS as SDK_MAX_MOBILE_V2_PROJECT_ROOTS,
+  MOBILE_CLOCK_SKEW_MILLIS,
   MOBILE_PLATFORM_V2_ACTIONS,
   MOBILE_PLATFORM_V2_AUTHORIZATION_MEDIA_TYPE,
   MOBILE_PLATFORM_V2_AUTHORIZATION_SCHEMA,
@@ -161,7 +162,8 @@ function admitDelegatedMobileV2AuthorizationInternal(
     authorization.credential_revision !== expected.credentialRevision ||
     authorization.authorization_revision !== expected.authorizationRevision ||
     authorization.expires_at_ms !== expected.expiresAtMs ||
-    authorization.issued_at_ms > BigInt(expected.now) ||
+    authorization.issued_at_ms >
+      BigInt(expected.now + MOBILE_CLOCK_SKEW_MILLIS) ||
     (!allowExpired && authorization.expires_at_ms <= BigInt(expected.now)) ||
     authorization.issued_at_ms >= authorization.expires_at_ms ||
     new Set(authorization.project_roots).size !==
