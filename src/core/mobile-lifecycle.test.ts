@@ -767,29 +767,106 @@ test('replacement intent blocks new token readers until queued hydration settles
   expect(lifecycle.snapshot()).toMatchObject({ phase: 'ready' });
 });
 
-test('ready state expires on a timer and foreground validation gates navigation', async () => {
+test('expiry renews once, fences old gateways, and restores ready access', async () => {
   jest.useFakeTimers();
   try {
     let clock = NOW;
     const active = connection(issued(1n, 'c', NOW + 1_000));
+    const rotatedIssued = issued(2n, 'd', NOW + 900_000);
+    const rotated = connection(rotatedIssued);
     loadStored.mockResolvedValue({ kind: 'active', connection: active });
-    const lifecycle = new MobileLifecycleCoordinator({ now: () => clock });
+    saveIssued.mockResolvedValue(rotated);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const refresh = jest.fn(async () => {
+      await gate;
+      return rotatedIssued;
+    });
+    const lifecycle = new MobileLifecycleCoordinator({
+      now: () => clock,
+      discover: jest.fn(async () => ({
+        discovery: DISCOVERY,
+        refresh,
+        revoke: jest.fn(),
+      })),
+    });
     await lifecycle.hydrate();
-    expect(lifecycle.snapshot()).toMatchObject({ phase: 'ready' });
-
+    const oldGateway = lifecycle.createGateway();
     clock = NOW + 1_000;
     jest.advanceTimersByTime(1_000);
     expect(lifecycle.snapshot()).toMatchObject({ phase: 'refresh_required' });
-
-    clock = NOW;
-    await lifecycle.hydrate();
-    clock = NOW + 1_000;
-    expect(lifecycle.validateCurrentAuthorization()).toMatchObject({
-      phase: 'refresh_required',
+    const foreground = lifecycle.renewExpiredAuthorization();
+    release();
+    await foreground;
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(saveIssued).toHaveBeenCalledTimes(1);
+    expect(lifecycle.snapshot()).toMatchObject({
+      phase: 'ready',
+      profile: { credentialRevision: '2' },
     });
+    await expect(oldGateway.bootstrap()).rejects.toThrow(
+      'gateway_generation_replaced',
+    );
   } finally {
     jest.useRealTimers();
   }
+});
+
+test('foreground renewal recovers expired access after a suspended timer', async () => {
+  let clock = NOW;
+  const active = connection(issued(1n, 'c', NOW + 900_000));
+  const rotatedIssued = issued(2n, 'd', NOW + 1_800_000);
+  loadStored.mockResolvedValue({ kind: 'active', connection: active });
+  saveIssued.mockResolvedValue(connection(rotatedIssued));
+  const refresh = jest.fn(async () => rotatedIssued);
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => clock,
+    discover: jest.fn(async () => ({
+      discovery: DISCOVERY,
+      refresh,
+      revoke: jest.fn(),
+    })),
+  });
+  await lifecycle.hydrate();
+  await lifecycle.renewExpiredAuthorization();
+  expect(refresh).not.toHaveBeenCalled();
+  clock = NOW + 900_001;
+  await lifecycle.renewExpiredAuthorization();
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(lifecycle.snapshot()).toMatchObject({ phase: 'ready' });
+});
+
+test('offline automatic renewal stays read only and a later foreground retries', async () => {
+  const expired = connection(issued(1n, 'c', NOW));
+  const rotatedIssued = issued(2n, 'd', NOW + 900_000);
+  loadStored.mockResolvedValue({
+    kind: 'refresh_required',
+    connection: expired,
+  });
+  saveIssued.mockResolvedValue(connection(rotatedIssued));
+  const refresh = jest
+    .fn()
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValue(rotatedIssued);
+  const lifecycle = new MobileLifecycleCoordinator({
+    now: () => NOW,
+    discover: jest.fn(async () => ({
+      discovery: DISCOVERY,
+      refresh,
+      revoke: jest.fn(),
+    })),
+  });
+  await lifecycle.hydrate();
+  await expect(lifecycle.renewExpiredAuthorization()).rejects.toThrow(
+    'offline',
+  );
+  expect(lifecycle.snapshot()).toMatchObject({ phase: 'refresh_required' });
+  expect(removeLocal).not.toHaveBeenCalled();
+  await lifecycle.renewExpiredAuthorization();
+  expect(lifecycle.snapshot()).toMatchObject({ phase: 'ready' });
+  expect(refresh).toHaveBeenCalledTimes(2);
 });
 
 test('pairing refuses an offer beyond five minutes plus bounded clock skew', async () => {

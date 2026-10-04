@@ -319,7 +319,10 @@ export class MobileFleetLifecycleCoordinator {
         await Promise.allSettled(
           pending
             .slice(offset, offset + MAX_PARALLEL_SERVER_HYDRATIONS)
-            .map((coordinator) => coordinator.hydrate()),
+            .map(async (coordinator) => {
+              await coordinator.hydrate();
+              await coordinator.renewExpiredAuthorization();
+            }),
         );
       }
       this.hydrating = false;
@@ -485,7 +488,9 @@ export class MobileFleetLifecycleCoordinator {
 
   validateCurrentAuthorizations(): void {
     for (const coordinator of this.coordinators.values()) {
-      coordinator.validateCurrentAuthorization();
+      // Background timers may have been suspended. Retry renewal on return
+      // to the foreground; offline failures retain the read-only state.
+      void coordinator.renewExpiredAuthorization().catch(() => undefined);
     }
   }
 

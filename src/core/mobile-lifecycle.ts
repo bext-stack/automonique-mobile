@@ -410,6 +410,9 @@ export class MobileLifecycleCoordinator {
             phase: 'refresh_required',
             profile: connection.profile,
           });
+          // Fence expired gateways before rotating. Only credentials are
+          // renewed; an interrupted command is never retried here.
+          void this.renewExpiredAuthorization().catch(() => undefined);
         }
       },
       Math.min(remaining, 2_147_483_647),
@@ -422,6 +425,22 @@ export class MobileLifecycleCoordinator {
   validateCurrentAuthorization(): MobileLifecycleState {
     if (this.connection !== null && this.state.phase === 'ready') {
       this.publishCredentialState(this.connection);
+    }
+    return this.state;
+  }
+
+  /** Renew expired access without changing the server-issued scope. */
+  async renewExpiredAuthorization(): Promise<MobileLifecycleState> {
+    this.validateCurrentAuthorization();
+    if (
+      this.replacementPending === 0 &&
+      this.connection !== null &&
+      this.connection.authorization.expires_at_ms <= BigInt(this.now()) &&
+      (this.state.phase === 'ready' ||
+        this.state.phase === 'refresh_required' ||
+        this.state.phase === 'refreshing')
+    ) {
+      await this.refresh();
     }
     return this.state;
   }

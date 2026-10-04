@@ -27,6 +27,18 @@ test('synthetic bootstrap traverses attach and the cursor reducer', async () => 
   expect(snapshot.connection.phase).toBe('live');
 });
 
+test('a history omitted from the byte-bounded cache fetches a fresh snapshot', async () => {
+  const gateway = createMockGateway();
+  const attach = jest.spyOn(gateway, 'attach');
+  const snapshot = await bootstrapVerticalSlice(gateway, {
+    ...syntheticSnapshot,
+    timelines: {},
+  });
+  expect(attach.mock.calls.every((call) => call[1] === null)).toBe(true);
+  expect(snapshot.timelines).toEqual(syntheticSnapshot.timelines);
+  expect(snapshot.connection.phase).toBe('live');
+});
+
 test('an exact cached projection resumes strictly after its cursor', async () => {
   const gateway = createMockGateway();
   const attach = jest.spyOn(gateway, 'attach');

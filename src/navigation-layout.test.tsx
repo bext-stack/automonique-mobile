@@ -82,13 +82,16 @@ test('uses protected screens instead of a render-time redirect when unpaired', a
   ).toBeTruthy();
 });
 
-test('admits operational screens only for a ready credential', async () => {
-  mockPhase = 'ready';
-  const view = await render(<Navigation />);
+test.each(['ready', 'refreshing', 'refresh_required'] as const)(
+  'keeps operational views mounted for %s credentials',
+  async (phase) => {
+    mockPhase = phase;
+    const view = await render(<Navigation />);
 
-  expect(
-    view.getByTestId('operational-routes').props.accessibilityState,
-  ).toEqual({
-    disabled: false,
-  });
-});
+    expect(
+      view.getByTestId('operational-routes').props.accessibilityState,
+    ).toEqual({
+      disabled: false,
+    });
+  },
+);

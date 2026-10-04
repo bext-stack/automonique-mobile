@@ -72,6 +72,7 @@ class FakeLifecycle {
     reconcile: jest.fn(),
   };
   readonly refresh = jest.fn(async () => ({}));
+  readonly renewExpiredAuthorization = jest.fn(async () => this.state);
   readonly revoke = jest.fn(async () => undefined);
   readonly invalidateGateways = jest.fn(() => this.state);
   private readonly listeners = new Set<(state: MobileLifecycleState) => void>();
@@ -222,6 +223,41 @@ test('hydrates ready servers with a two-server bound and exposes read-only proje
   expect(
     fakes.every(({ gateway }) => gateway.attach.mock.calls.length === 0),
   ).toBe(true);
+});
+
+test('startup waits for credential renewal and foreground retries each server independently', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const fakes = [
+    new FakeLifecycle(1, async () => undefined),
+    new FakeLifecycle(2, async () => undefined),
+  ];
+  fakes[0]!.renewExpiredAuthorization.mockImplementationOnce(async () => {
+    await gate;
+    return fakes[0]!.snapshot();
+  });
+  fakes[1]!.renewExpiredAuthorization.mockRejectedValueOnce(
+    new Error('offline'),
+  );
+  loadRegistry.mockResolvedValue(registry(['slot-1', 'slot-2']));
+  const fleet = fleetWith(fakes);
+  let hydrated = false;
+  const startup = fleet.hydrate().then(() => {
+    hydrated = true;
+  });
+  // Let both bounded hydrations reach their renewal boundary.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(hydrated).toBe(false);
+  expect(fakes[0]!.renewExpiredAuthorization).toHaveBeenCalledTimes(1);
+  expect(fakes[1]!.renewExpiredAuthorization).toHaveBeenCalledTimes(1);
+  release();
+  await startup;
+  expect(fleet.snapshot().selectedMutationSlotId).toBe('slot-1');
+  fleet.validateCurrentAuthorizations();
+  expect(fakes[0]!.renewExpiredAuthorization).toHaveBeenCalledTimes(2);
+  expect(fakes[1]!.renewExpiredAuthorization).toHaveBeenCalledTimes(2);
 });
 
 test('selection creates an authority gap and aborts the old exact generation', async () => {

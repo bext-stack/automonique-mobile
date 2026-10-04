@@ -451,6 +451,17 @@ test('settings renders protocol identity imported from the vendored SDK', async 
   expect(AsyncStorage.getItem).toHaveBeenCalled();
 });
 
+test('paired connection settings expose a route to conversations and actions', async () => {
+  mockUseMobile.mockReturnValue(mobileValue(['attach', 'all_sessions']));
+  const lifecycle = mockUseMobileLifecycle();
+  mockUseMobileLifecycle.mockReturnValue({
+    ...lifecycle,
+    state: { phase: 'ready', profile: null },
+  });
+  const view = await render(<SettingsScreen />);
+  expect(view.getByLabelText('Open conversations and actions')).toBeTruthy();
+});
+
 test('settings inventories independent servers and explicitly changes mutation selection', async () => {
   const selectServer = jest.fn(async () => undefined);
   const revokeServer = jest.fn(async () => undefined);
