@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { httpFetch } from './http-fetch';
+
 import {
   HttpsPlatformV2Transport,
   IdempotencyKey,
@@ -2286,7 +2288,7 @@ export function createAuthorizedWorkspaceV2Gateway(
       new HttpsPlatformV2Transport(
         options.endpoint,
         options.token,
-        options.fetcher,
+        options.fetcher ?? httpFetch,
       ),
     ),
     ...(options.now === undefined ? {} : { now: options.now }),

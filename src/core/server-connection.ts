@@ -3,10 +3,12 @@
 import {
   MobileHttpsOrigin,
   MobileLifecycleClient,
+  MobileLifecycleError,
   type MobileDiscovery,
 } from '@automonique/sdk';
 
 import { normalizeEndpoint } from './network-policy';
+import { httpFetch } from './http-fetch';
 import { negotiateMobileProtocolVersion } from './negotiation';
 
 export interface CompatibleAutomoniqueServer {
@@ -36,7 +38,11 @@ export async function inspectAutomoniqueServer(
 ): Promise<CompatibleAutomoniqueServer> {
   const origin = MobileHttpsOrigin(normalizeEndpoint(input, false));
   const discover = dependencies.discover ?? MobileLifecycleClient.discover;
-  const client = await discover(origin, dependencies.fetcher ?? fetch, signal);
+  const client = await discover(
+    origin,
+    dependencies.fetcher ?? httpFetch,
+    signal,
+  );
   const { discovery } = client;
   return {
     origin: discovery.origin,
@@ -49,7 +55,12 @@ export async function inspectAutomoniqueServer(
 }
 
 export function describeServerConnectionError(error: unknown): string {
-  const category = error instanceof Error ? error.message : '';
+  const category =
+    error instanceof MobileLifecycleError
+      ? error.category
+      : error instanceof Error
+        ? error.message
+        : '';
   switch (category) {
     case 'invalid_url':
       return 'Enter the public origin only, for example https://ops.example.com.';
@@ -61,6 +72,8 @@ export function describeServerConnectionError(error: unknown): string {
       return 'This server answered, but its mobile API is not compatible with this app.';
     case 'mobile_protocol_unsupported':
       return 'This server speaks a mobile protocol version this app build does not. Update the app.';
+    case 'response_stream_unavailable':
+      return 'This app could not read the server response. Install the latest app version and try again.';
     default:
       return 'The app could not verify the Automonique mobile API at this origin. Check HTTPS, DNS, the reverse proxy, and /.well-known/automonique-mobile.';
   }

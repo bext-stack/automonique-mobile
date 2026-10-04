@@ -2,6 +2,11 @@ name: Android preview artifact
 
 on:
   workflow_dispatch:
+    inputs:
+      smoke_origin:
+        description: Public HTTPS Monique origin for credential-free Android network acceptance
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -20,7 +25,8 @@ jobs:
       attestations: write
       artifact-metadata: write
     env:
-      PREVIEW_APK_NAME: automonique-mobile-0.1.0-preview.8.apk
+      PREVIEW_SMOKE_ORIGIN: ${{ inputs.smoke_origin }}
+      PREVIEW_APK_NAME: automonique-mobile-0.1.0-preview.9.apk
       PREVIEW_OUTPUT_DIR: ${{ github.workspace }}/preview-output
       ANDROID_PLATFORM: android-36
       ANDROID_BUILD_TOOLS: 36.0.0
@@ -280,6 +286,8 @@ jobs:
           test "$rendered" = true
           python3 scripts/android-preview-scanner-smoke.py \
             --adb "$adb" --output "$PREVIEW_OUTPUT_DIR"
+          python3 scripts/android-preview-network-smoke.py \
+            --adb "$adb" --origin "$PREVIEW_SMOKE_ORIGIN" --output "$PREVIEW_OUTPUT_DIR"
           test -n "$("$adb" shell pidof dev.bext.automonique)"
           "$adb" logcat -d -v threadtime \
             > "$PREVIEW_OUTPUT_DIR/emulator-logcat.txt"

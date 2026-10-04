@@ -31,6 +31,7 @@ import {
   type MobileAuthorization,
 } from './negotiation';
 import { normalizeEndpoint } from './network-policy';
+import { httpFetch } from './http-fetch';
 import {
   decimalRevision,
   type AttachmentHandle,
@@ -655,7 +656,7 @@ export function createAuthorizedHttpsGateway(
   const transport = new HttpsPlatformTransport(
     endpoint,
     options.token,
-    options.fetcher,
+    options.fetcher ?? httpFetch,
   );
   function create(
     authorization: MobileAuthorization,
@@ -680,7 +681,7 @@ export function createAuthorizedHttpsGateway(
   async function mobileClient(signal?: AbortSignal) {
     lifecycle ??= await MobileLifecycleClient.discover(
       new URL(endpoint).origin,
-      options.fetcher,
+      options.fetcher ?? httpFetch,
       signal,
       options.expectedServerIdentity,
     );

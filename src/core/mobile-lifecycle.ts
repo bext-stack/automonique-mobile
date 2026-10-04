@@ -19,6 +19,7 @@ import {
 } from './credential-store';
 import { negotiateMobileProtocolVersion } from './negotiation';
 import { createAuthorizedHttpsGateway } from './sdk-gateway';
+import { httpFetch } from './http-fetch';
 import type { MobileAutomoniqueGateway } from './types';
 import {
   createAuthorizedWorkspaceV2Gateway,
@@ -361,7 +362,7 @@ export class MobileLifecycleCoordinator {
 
   constructor(dependencies: MobileLifecycleDependencies = {}) {
     this.discover = dependencies.discover ?? MobileLifecycleClient.discover;
-    this.fetcher = dependencies.fetcher ?? fetch;
+    this.fetcher = dependencies.fetcher ?? httpFetch;
     this.now = dependencies.now ?? Date.now;
     this.credentialStore =
       dependencies.credentialStore ?? LEGACY_CREDENTIAL_STORE;
