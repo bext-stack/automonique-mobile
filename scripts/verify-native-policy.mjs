@@ -10,7 +10,7 @@ import {
   symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
@@ -122,8 +122,12 @@ try {
     'package.json',
     'package-lock.json',
     'assets',
+    'modules',
   ]) {
-    cpSync(join(root, path), join(workspace, path), { recursive: true });
+    cpSync(join(root, path), join(workspace, path), {
+      recursive: true,
+      filter: (source) => !['build', '.gradle'].includes(basename(source)),
+    });
   }
   const installedModules = join(root, 'node_modules');
   assert.ok(
@@ -131,6 +135,37 @@ try {
     'run npm ci before native verification',
   );
   symlinkSync(installedModules, join(workspace, 'node_modules'), 'dir');
+
+  // A JS export can pass even when a local native module was omitted from the
+  // binary. Check the same autolinking graph used by fresh native builds.
+  for (const platform of ['android', 'apple']) {
+    const autolinking = spawnSync(
+      process.execPath,
+      [
+        join(
+          installedModules,
+          'expo-modules-autolinking',
+          'bin',
+          'expo-modules-autolinking.js',
+        ),
+        'resolve',
+        '--platform',
+        platform,
+        '--json',
+      ],
+      { cwd: workspace, encoding: 'utf8' },
+    );
+    assert.equal(autolinking.status, 0, autolinking.stderr);
+    const scanner = JSON.parse(autolinking.stdout).modules.find(
+      (module) => module.packageName === 'pairing-scanner',
+    );
+    assert.ok(scanner, `${platform} must link the native pairing scanner`);
+    assert.match(
+      JSON.stringify(scanner),
+      /PairingScannerModule/,
+      `${platform} must register the scanner bridge`,
+    );
+  }
 
   const expoCli = join(installedModules, 'expo', 'bin', 'cli');
   const prebuild = spawnSync(
@@ -151,6 +186,11 @@ try {
   const androidManifest = readFileSync(
     join(workspace, 'android', 'app', 'src', 'main', 'AndroidManifest.xml'),
     'utf8',
+  );
+  assert.match(
+    androidManifest,
+    /android:name="android\.permission\.CAMERA"/,
+    'generated Android release must declare camera use for live QR scanning',
   );
   assert.match(
     androidManifest,
@@ -191,6 +231,11 @@ try {
     iosInfo,
     /NSPhotoLibraryUsageDescription/,
     'generated iOS app must not request photo-library access',
+  );
+  assert.match(
+    iosInfo,
+    /<key>NSCameraUsageDescription<\/key>\s*<string>Allow Automonique to scan a one-time server pairing QR code on this device\.<\/string>/,
+    'generated iOS app must explain camera use for live QR scanning',
   );
   assert.match(
     iosInfo,

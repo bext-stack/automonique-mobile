@@ -2,13 +2,13 @@
 
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import {
-  launchCameraAsync,
   launchImageLibraryAsync,
   requestCameraPermissionsAsync,
 } from 'expo-image-picker';
 import { useEffect, useRef, useState } from 'react';
 import {
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,6 +18,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { decodePairingQrJpeg } from '@/core/qr-image';
+import {
+  dismissPairingScanner,
+  scanPairingQr,
+} from '@/core/native-pairing-scanner';
+import { MAX_PAIRING_OFFER_BYTES } from '@/core/pairing-offer';
 import { usePalette } from '@/theme/palette';
 
 interface PairingScannerProps {
@@ -28,7 +33,7 @@ interface PairingScannerProps {
 
 const MAX_CAPTURE_PIXELS = 2_400_000;
 
-/** Decode camera captures or saved QR images locally, without uploading them. */
+/** Scan live with native camera decoding; keep saved-image import as a fallback. */
 export function PairingScanner({
   visible,
   onCancel,
@@ -39,7 +44,7 @@ export function PairingScanner({
   const inFlight = useRef(false);
   const [locked, setLocked] = useState(false);
   const [message, setMessage] = useState(
-    'Open the system camera and fill the frame with the pairing QR code.',
+    'Point the camera at the pairing QR code. It will be read automatically.',
   );
 
   useEffect(() => {
@@ -47,6 +52,7 @@ export function PairingScanner({
     inFlight.current = false;
     return () => {
       generation.current += 1;
+      void dismissPairingScanner().catch(() => undefined);
     };
   }, [visible]);
 
@@ -54,6 +60,7 @@ export function PairingScanner({
     generation.current += 1;
     inFlight.current = false;
     setLocked(false);
+    void dismissPairingScanner().catch(() => undefined);
     onCancel();
   }
 
@@ -65,6 +72,12 @@ export function PairingScanner({
     setLocked(true);
     try {
       if (source === 'camera') {
+        if (Platform.OS === 'web') {
+          setMessage(
+            'Live scanning is available in the mobile app. Import the downloaded QR image here.',
+          );
+          return;
+        }
         const permission = await requestCameraPermissionsAsync();
         if (!active()) return;
         if (!permission.granted) {
@@ -75,10 +88,20 @@ export function PairingScanner({
           );
           return;
         }
+        const value = await scanPairingQr();
+        if (!active()) return;
+        if (value === null) {
+          setMessage('Scanning stopped. Try again or import a saved QR image.');
+          return;
+        }
+        if (value.length === 0 || value.length > MAX_PAIRING_OFFER_BYTES) {
+          throw new Error('mobile_pairing_qr_invalid');
+        }
+        generation.current += 1;
+        onScan(value);
+        return;
       }
-      const pick =
-        source === 'camera' ? launchCameraAsync : launchImageLibraryAsync;
-      const capture = await pick({
+      const capture = await launchImageLibraryAsync({
         allowsEditing: false,
         base64: false,
         exif: false,
@@ -88,7 +111,7 @@ export function PairingScanner({
       if (!active()) return;
       if (capture.canceled) {
         setMessage(
-          'Selection canceled. Take a photo or choose a saved QR image when ready.',
+          'Selection canceled. Scan the code or choose a saved QR image when ready.',
         );
         return;
       }
@@ -119,11 +142,15 @@ export function PairingScanner({
         throw new Error('camera_base64_missing');
       }
       if (!active()) return;
-      onScan(decodePairingQrJpeg(resized.base64));
+      const value = decodePairingQrJpeg(resized.base64);
+      generation.current += 1;
+      onScan(value);
     } catch {
       if (!active()) return;
       setMessage(
-        'No pairing QR code was found. Choose the QR image downloaded from Monique, or take a clear photo of the full code.',
+        source === 'camera'
+          ? 'Live scanning is unavailable. Try again, import the QR image downloaded from Monique, or cancel and paste the invite.'
+          : 'No pairing QR code was found. Choose the QR image downloaded from Monique, or try live scanning.',
       );
     } finally {
       if (active()) {
@@ -152,13 +179,14 @@ export function PairingScanner({
               Open pairing QR code
             </Text>
             <Text style={[styles.copy, { color: palette.textMuted }]}>
-              Take a photo of the code on another screen, or import the QR image
-              downloaded from Monique. Review the server before connecting.
+              Point your camera at the code on another screen. It scans
+              automatically, without taking a photo. You can also import the
+              downloaded QR image. Review the server before connecting.
             </Text>
           </View>
 
           <View
-            accessibilityLabel="Pairing QR camera capture"
+            accessibilityLabel="Pairing QR scanner"
             style={[
               styles.captureCard,
               { backgroundColor: palette.surface, borderColor: palette.border },
@@ -192,7 +220,7 @@ export function PairingScanner({
             ]}
           >
             <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-              {locked ? 'Reading QR code…' : 'Open camera'}
+              {locked ? 'Reading QR code…' : 'Scan with camera'}
             </Text>
           </Pressable>
 
