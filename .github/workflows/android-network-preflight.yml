@@ -73,22 +73,30 @@ jobs:
         run: |
           set -euo pipefail
           sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          adb="$ANDROID_SDK_ROOT/platform-tools/adb"
+          "$adb" start-server
           export ANDROID_AVD_HOME="$TEST_ROOT/avd"
           mkdir -p "$ANDROID_AVD_HOME"
-          printf 'no\n' | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager" create avd --name network-test --package 'system-images;android-36;google_apis;x86_64' --device pixel_6
+          printf 'no\n' | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager" create avd --name network-test --path "$ANDROID_AVD_HOME/network-test.avd" --package 'system-images;android-36;google_apis;x86_64' --device pixel_6
           "$ANDROID_SDK_ROOT/emulator/emulator" -avd network-test -accel on -gpu software \
             -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -memory 4096 -cores 4 \
             > "$TEST_ROOT/output/emulator-console.txt" 2>&1 &
           emulator_pid=$!
-          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          cleanup() {
+            "$adb" devices -l > "$TEST_ROOT/output/adb-devices.txt" || true
+            "$adb" logcat -d -v threadtime > "$TEST_ROOT/output/emulator-logcat.txt" || true
+            kill "$emulator_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
           booted=false
           for attempt in $(seq 1 180); do
-            if adb shell getprop sys.boot_completed 2>/dev/null | grep -qx 1; then booted=true; break; fi
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then break; fi
+            if "$adb" shell getprop sys.boot_completed 2>/dev/null | grep -qx 1; then booted=true; break; fi
             sleep 2
           done
           test "$booted" = true
-          adb install --no-streaming "$TEST_ROOT/test-only.apk"
-          python3 scripts/android-preview-network-smoke.py --adb "$ANDROID_SDK_ROOT/platform-tools/adb" \
+          "$adb" install --no-streaming "$TEST_ROOT/test-only.apk"
+          python3 scripts/android-preview-network-smoke.py --adb "$adb" \
             --origin "$SMOKE_ORIGIN" --output "$TEST_ROOT/output"
       - name: Retain test diagnostics only
         if: always()
