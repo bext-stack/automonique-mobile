@@ -2,6 +2,7 @@
 
 import {
   MOBILE_AUTH_SCHEMA_V1,
+  MOBILE_CLOCK_SKEW_MILLIS,
   MobileAccessToken,
   MobileActor,
   MobileCredentialId,
@@ -791,14 +792,16 @@ test('ready state expires on a timer and foreground validation gates navigation'
   }
 });
 
-test('pairing refuses an offer whose lifetime exceeds the canonical five minutes', async () => {
+test('pairing refuses an offer beyond five minutes plus bounded clock skew', async () => {
   loadStored.mockResolvedValue(null);
   const lifecycle = new MobileLifecycleCoordinator({ now: () => NOW });
   await lifecycle.hydrate();
   await expect(
     lifecycle.pair({
       ...PAIRING_OFFER,
-      expires_at_ms: MobileEpochMillis(BigInt(NOW + 300_001)),
+      expires_at_ms: MobileEpochMillis(
+        BigInt(NOW + 300_000 + MOBILE_CLOCK_SKEW_MILLIS + 1),
+      ),
     }),
   ).rejects.toThrow('mobile_pairing_lifetime_invalid');
 });
@@ -1003,7 +1006,7 @@ test.each([
       ...withWorkspaceAuthorization(value),
       workspaceAuthorization: {
         ...withWorkspaceAuthorization(value).workspaceAuthorization!,
-        issued_at_ms: BigInt(NOW + 1),
+        issued_at_ms: BigInt(NOW + MOBILE_CLOCK_SKEW_MILLIS + 1),
       },
     }),
   ],

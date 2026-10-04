@@ -54,6 +54,11 @@ Use **Create another invite** in the dashboard. Keep downloaded QR images privat
 delete them when finished; they contain the same one-time secret as the copied
 invite.
 
+The app permits up to five seconds of device/server clock difference when
+admitting newly issued credentials. Expiry still has no grace period. Keep the
+phone's automatic date and time enabled; larger clock differences can prevent
+pairing even when the server has already consumed the invite.
+
 ### Administrator access to all conversations
 
 Choose administrator access when this phone should see **all current and

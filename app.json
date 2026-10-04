@@ -22,7 +22,7 @@
     "android": {
       "package": "dev.bext.automonique",
       "permissions": ["android.permission.CAMERA"],
-      "versionCode": 8,
+      "versionCode": 9,
       "adaptiveIcon": {
         "backgroundColor": "#0B3529",
         "foregroundImage": "./assets/images/automonique-mark.png"

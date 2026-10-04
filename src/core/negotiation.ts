@@ -2,6 +2,7 @@
 
 import {
   MOBILE_AUTH_SCHEMA_V1,
+  MOBILE_CLOCK_SKEW_MILLIS,
   MobileProtocolVersion_MAX,
   MobileProtocolVersion_MIN,
   type MobileAuthorization,
@@ -63,7 +64,7 @@ export function admitMobileAuthorization(
   if (
     value.schema !== MOBILE_AUTH_SCHEMA_V1 ||
     value.server_identity !== expectedIdentity ||
-    value.issued_at_ms > BigInt(now) ||
+    value.issued_at_ms > BigInt(now + MOBILE_CLOCK_SKEW_MILLIS) ||
     value.issued_at_ms >= value.expires_at_ms ||
     value.expires_at_ms <= BigInt(now) ||
     value.actions.length === 0 ||

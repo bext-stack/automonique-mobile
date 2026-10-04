@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-import { ProjectId } from '@automonique/sdk';
+import { MOBILE_CLOCK_SKEW_MILLIS, ProjectId } from '@automonique/sdk';
 
 import {
   MOBILE_V2_ACTIONS,
@@ -147,7 +147,10 @@ test.each([
   ],
   ['wrong credential revision', { ...document(), credential_revision: 4n }],
   ['expired', { ...document(), expires_at_ms: BigInt(NOW) }],
-  ['future-issued', { ...document(), issued_at_ms: BigInt(NOW + 1) }],
+  [
+    'future-issued',
+    { ...document(), issued_at_ms: BigInt(NOW + MOBILE_CLOCK_SKEW_MILLIS + 1) },
+  ],
   [
     'unsorted roots',
     {

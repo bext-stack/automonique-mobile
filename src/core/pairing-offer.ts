@@ -69,6 +69,10 @@ export function describePairingError(error: unknown): string {
       return 'The server answered with an unexpected response. Ask your administrator to check the mobile API and reverse proxy.';
     case 'secure_store_unavailable':
       return 'This device could not store the connection securely. Restart the app and create a new invite before trying again.';
+    case 'mobile_auth_invalid_body':
+    case 'issued_connection_mismatch':
+    case 'mobile_capabilities_incompatible':
+      return 'The app could not verify the issued credentials. Check that your phone uses automatic date and time, then create a new invite in Monique.';
     default:
       return 'Could not connect to Monique. Check your internet connection and server address, then try a new invite.';
   }

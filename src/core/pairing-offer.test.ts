@@ -63,3 +63,11 @@ test('unexpected failures never expose server details or invite secrets', () => 
     describePairingError(new Error('mobile_protocol_unsupported')),
   ).toContain('Update the app');
 });
+
+test('credential admission failures explain device time without exposing credentials', () => {
+  expect(
+    describePairingError(
+      new MobileLifecycleError(201, 'mobile_auth_invalid_body'),
+    ),
+  ).toContain('automatic date and time');
+});
