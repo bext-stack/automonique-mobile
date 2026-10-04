@@ -1,0 +1,30 @@
+{
+  "name": "braces",
+  "version": "3.0.4-automonique.1",
+  "description": "Downstream depth-guard patch; not an upstream braces release.",
+  "advisory": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+  "upstreamUrl": "https://registry.npmjs.org/braces/-/braces-3.0.3.tgz",
+  "upstreamIntegrity": "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==",
+  "files": {
+    "lib/parse.js": {
+      "before": "e572166565f15fa6ad9865ae49d678218e32aabfd1b3720f6d0d43d39800d310",
+      "after": "e4b41dbd23a180a28353a8f865b7215de7269879c8caf64bde455e1af7f0bc68"
+    },
+    "lib/compile.js": {
+      "before": "dc98f22eee3d511785d92a00758d5f0d48efed5f5813bdecc2de430c529b5c9f",
+      "after": "2147cc425cf039e753a8fddfaeb985abc6c909a0ae1e3f684befe7e588bb8c9f"
+    },
+    "lib/expand.js": {
+      "before": "41ccc196ebfa7b7781a634e721eb744e4e7bcb54cba427a7e3d6806a1b9e58f7",
+      "after": "9682ab0f4ce6b9a1171b7c270cce2ded1a847f21cb33f18018718435604e407a"
+    },
+    "lib/stringify.js": {
+      "before": "379f22d77bfa1478341ccd49c5e4267464aabcbba03558bab332aac23fc6f23a",
+      "after": "08a50e56dc1c2b9d13d076d4cd98dae9d79aa6931b62457dec0a9145691661ad"
+    }
+  },
+  "archive": "braces-3.0.4-automonique.1.tgz",
+  "archiveSha256": "9f1499f1ab3a0fc87a407b4dbbc3fabe8e4c54fcbbabb16f0283ba54e6d1691a",
+  "integrity": "sha512-YY8VMCyK2jKhUCYRPYDrsZ3ECcd/KV12GYZ2YCPUEKsruhiCE+5lx+bUeNq6hu0AJ8ZcwXi+IVwFBZMEzbwsSQ==",
+  "license": "MIT"
+}

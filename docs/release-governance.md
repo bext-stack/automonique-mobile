@@ -66,11 +66,18 @@ locally derived attention reminders and does not use remote push. Unknown
 package versions, pristine source digests, or hardened outputs fail closed; the
 aggregate license gate remains unchanged.
 
+The build/test graph also pins the downstream `braces` depth-guard patch
+documented in `vendor/braces-hardening.md`. Installation and security checks
+verify its archive/source hashes and nesting regressions; the npm audit gate
+remains unchanged.
+
 The reviewed `.github/workflows/android-preview.yml` workflow implements that
 CI path. It is manual-only, accepts no ref input, rejects any dispatch whose
 selected source is not protected `main`, uploads the APK and complete evidence
 as a retained Actions artifact and emulator-tests that same universal APK. It
-performs no publication. A later publication operator must review that retained
+performs no publication. Its emulated-camera smoke also opens the native pairing
+scanner and cancels back to the pairing flow; this is not physical-camera
+decoding acceptance. A later publication operator must review that retained
 evidence and mirror only the exact attested APK; the workflow itself does not
 authorize publication.
 
@@ -104,7 +111,7 @@ Before publishing a preview:
    image, Node, npm, Java, Gradle, Android SDK/build-tools, NDK, and EAS CLI
    versions as applicable.
 3. Name the artifact
-   `automonique-mobile-0.1.0-preview.7.apk` and compute its SHA-256 digest. The
+   `automonique-mobile-0.1.0-preview.8.apk` and compute its SHA-256 digest. The
    APK must be the exact artifact produced by the recorded build; do not
    rebuild or re-sign it for upload.
 4. Inspect the packaged effective manifest with `apkanalyzer`, Android Studio

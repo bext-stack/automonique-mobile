@@ -13709,7 +13709,7 @@ Declared license: MIT
 
 Packages:
 
-- braces@3.0.3 (node_modules/braces)
+- braces@3.0.4-automonique.1 (node_modules/braces)
 - fill-range@7.1.1 (node_modules/fill-range)
 - is-number@7.0.0 (node_modules/is-number)
 - micromatch@4.0.8 (node_modules/micromatch)

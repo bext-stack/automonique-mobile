@@ -26,3 +26,7 @@ The local live QR scanner additionally uses the Android Maven artifacts
 dependencies and bundled notices are collected by the existing native Maven
 inventory for each preview build. iOS scanning uses the platform VisionKit
 framework.
+
+The build and test tooling uses a pinned downstream MIT-licensed `braces` patch
+for bounded nesting. See [the patch record](vendor/braces-hardening.md), its
+reproducible packaging script, source digests, and installation regressions.
