@@ -2,6 +2,7 @@
 
 import {
   decodeMobilePairingOffer,
+  MobileLifecycleError,
   parseCanonical,
   type MobilePairingOffer,
 } from '@automonique/sdk';
@@ -36,7 +37,12 @@ export function assertPairingOfferCurrent(
 }
 
 export function describePairingError(error: unknown): string {
-  const category = error instanceof Error ? error.message : '';
+  const category =
+    error instanceof MobileLifecycleError
+      ? error.category
+      : error instanceof Error
+        ? error.message
+        : '';
   switch (category) {
     case 'mobile_pairing_offer_expired':
     case 'mobile_pairing_expired':
@@ -55,6 +61,14 @@ export function describePairingError(error: unknown): string {
     case 'mobile_auth_unauthorized':
     case 'mobile_pairing_invalid':
       return 'This invite is no longer available. It may have expired or already been used. Create a new invite in Monique.';
+    case 'response_stream_unavailable':
+      return 'This app could not read the server response. Install the latest app version and try again.';
+    case 'content_type_mismatch':
+    case 'cache_control_mismatch':
+    case 'response_url_mismatch':
+      return 'The server answered with an unexpected response. Ask your administrator to check the mobile API and reverse proxy.';
+    case 'secure_store_unavailable':
+      return 'This device could not store the connection securely. Restart the app and create a new invite before trying again.';
     default:
       return 'Could not connect to Monique. Check your internet connection and server address, then try a new invite.';
   }

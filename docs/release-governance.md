@@ -111,7 +111,7 @@ Before publishing a preview:
    image, Node, npm, Java, Gradle, Android SDK/build-tools, NDK, and EAS CLI
    versions as applicable.
 3. Name the artifact
-   `automonique-mobile-0.1.0-preview.8.apk` and compute its SHA-256 digest. The
+   `automonique-mobile-0.1.0-preview.9.apk` and compute its SHA-256 digest. The
    APK must be the exact artifact produced by the recorded build; do not
    rebuild or re-sign it for upload.
 4. Inspect the packaged effective manifest with `apkanalyzer`, Android Studio
@@ -153,6 +153,12 @@ Before publishing a preview:
     credential-free, non-production Android preview and does not establish an
     authorized live connection, physical-device support, production signing,
     app-store readiness, or deployment of Automonique itself.
+
+The Android preview workflow also requires a public HTTPS `smoke_origin`. Its
+native UI must verify that server's discovery and receive a typed refusal for a
+fabricated pairing offer. The test never consumes a real invite or grants
+access. This exercises the installed APK's streaming transport, beyond opening
+the scanner. Authenticated behavior remains a separate acceptance concern.
 
 The versioned content-addressed website path is the public immutability
 boundary. Deployment records must connect it to the retained Actions artifact;

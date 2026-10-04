@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-import type { MobileDiscovery } from '@automonique/sdk';
+import { MobileLifecycleError, type MobileDiscovery } from '@automonique/sdk';
 
 import {
   describeServerConnectionError,
@@ -9,6 +9,19 @@ import {
 import { SUPPORTED_MOBILE_PROTOCOL_VERSIONS } from './negotiation';
 
 const IDENTITY = `sha256:${'a'.repeat(64)}`;
+
+test('reads SDK error categories instead of treating every refusal as an outage', () => {
+  expect(
+    describeServerConnectionError(
+      new MobileLifecycleError(200, 'response_stream_unavailable'),
+    ),
+  ).toContain('latest app version');
+  expect(
+    describeServerConnectionError(
+      new MobileLifecycleError(200, 'mobile_protocol_unsupported'),
+    ),
+  ).toContain('Update the app');
+});
 
 function discovery(
   origin: string,
