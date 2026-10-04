@@ -48,7 +48,10 @@ def hierarchy():
 
 def scroll():
     width, height = map(int, re.findall(r'(\d+)x(\d+)', adb('shell', 'wm', 'size'))[-1])
-    adb('shell', 'input', 'swipe', str(width // 2), str(height * 3 // 4), str(width // 2), str(height // 3), '350')
+    # Swipe through the screen gutter: the multiline invite input can consume
+    # centered swipes, reopen the keyboard, and turn them into glide typing.
+    x = max(1, width // 20)
+    adb('shell', 'input', 'swipe', str(x), str(height * 3 // 4), str(x), str(height // 3), '350')
 
 
 def find(label, tap=False, scrolling=False):
