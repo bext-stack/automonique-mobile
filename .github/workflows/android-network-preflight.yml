@@ -1,0 +1,100 @@
+name: Android network preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      smoke_origin:
+        description: Public HTTPS Monique origin for credential-free acceptance
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BASE_COMMIT: afab4316077cc53052afd71c3fd19188e9994c90
+      BASE_SHA256: 3899a85aff93745b3ad7eeede7e5a72d0933af416b132ffc46ed8c9c848c041b
+      SMOKE_ORIGIN: ${{ inputs.smoke_origin }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: 21.0.12+101.0.LTS
+      - name: Refuse a native-incompatible baseline
+        run: |
+          git diff --exit-code "$BASE_COMMIT" HEAD -- package.json package-lock.json modules assets
+          python3 - <<'PY'
+          import json, os, subprocess
+          old = json.loads(subprocess.check_output(['git', 'show', os.environ['BASE_COMMIT'] + ':app.json']))
+          with open('app.json') as file:
+              new = json.load(file)
+          old['expo']['android'].pop('versionCode')
+          new['expo']['android'].pop('versionCode')
+          assert old == new, 'Native configuration changed; build a new baseline APK.'
+          PY
+      - run: npm ci
+      - name: Prepare the Android toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes --no-install-recommends libpulse0
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install 'build-tools;36.0.0' emulator 'system-images;android-36;google_apis;x86_64'
+      - name: Prepare a private test-only APK with the candidate JavaScript
+        env:
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          test_root="$RUNNER_TEMP/network-preflight"
+          mkdir -p "$test_root/output"
+          echo "TEST_ROOT=$test_root" >> "$GITHUB_ENV"
+          base="https://www.automonique.fr/downloads/android/0.1.0-preview.8/$BASE_SHA256"
+          curl --fail --silent --show-error "$base/automonique-mobile-0.1.0-preview.8.apk" -o "$test_root/base.apk"
+          printf '%s  %s\n' "$BASE_SHA256" "$test_root/base.apk" | sha256sum --check
+          npx expo export:embed --platform android --entry-file node_modules/expo-router/entry \
+            --dev false --bytecode --bundle-output "$test_root/index.android.bundle" --max-workers 2
+          python3 scripts/android-network-test-apk.py "$test_root"
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -P 16 -f 4 "$test_root/unsigned.apk" "$test_root/aligned.apk"
+          keytool -genkeypair -keystore "$test_root/test.keystore" -storepass android -keypass android \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 1 -dname 'CN=Test Only'
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" sign --ks "$test_root/test.keystore" \
+            --ks-pass pass:android --key-pass pass:android --out "$test_root/test-only.apk" "$test_root/aligned.apk"
+      - name: Run the network acceptance driver on Android
+        run: |
+          set -euo pipefail
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          export ANDROID_AVD_HOME="$TEST_ROOT/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          printf 'no\n' | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager" create avd --name network-test --package 'system-images;android-36;google_apis;x86_64' --device pixel_6
+          "$ANDROID_SDK_ROOT/emulator/emulator" -avd network-test -accel on -gpu software \
+            -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -memory 4096 -cores 4 \
+            > "$TEST_ROOT/output/emulator-console.txt" 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          booted=false
+          for attempt in $(seq 1 180); do
+            if adb shell getprop sys.boot_completed 2>/dev/null | grep -qx 1; then booted=true; break; fi
+            sleep 2
+          done
+          test "$booted" = true
+          adb install --no-streaming "$TEST_ROOT/test-only.apk"
+          python3 scripts/android-preview-network-smoke.py --adb "$ANDROID_SDK_ROOT/platform-tools/adb" \
+            --origin "$SMOKE_ORIGIN" --output "$TEST_ROOT/output"
+      - name: Retain test diagnostics only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-network-preflight-${{ github.sha }}
+          path: ${{ runner.temp }}/network-preflight/output/
+          if-no-files-found: ignore
+          retention-days: 7

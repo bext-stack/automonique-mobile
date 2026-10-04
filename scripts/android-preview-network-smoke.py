@@ -34,7 +34,9 @@ def adb(*arguments):
 
 def hierarchy():
     adb('shell', 'uiautomator', 'dump', '/sdcard/automonique-network.xml')
-    return ET.fromstring(adb('shell', 'cat', '/sdcard/automonique-network.xml'))
+    xml = adb('shell', 'cat', '/sdcard/automonique-network.xml')
+    (output / 'emulator-network-window.xml').write_text(xml)
+    return ET.fromstring(xml)
 
 
 def scroll():
@@ -51,7 +53,7 @@ def find(label, tap=False, scrolling=False):
                 if x2 > x1 and y2 > y1:
                     if tap:
                         adb('shell', 'input', 'tap', str((x1 + x2) // 2), str((y1 + y2) // 2))
-                    return
+                    return node
         if scrolling:
             scroll()
         time.sleep(1)
@@ -59,11 +61,18 @@ def find(label, tap=False, scrolling=False):
 
 
 def enter(label, value, scrolling=False):
-    find(label, tap=True, scrolling=scrolling)
+    field = find(label, tap=True, scrolling=scrolling)
+    # The server input starts with https://. Replace its current value rather
+    # than appending another origin. ADB accepts several key codes per call.
+    existing = field.get('text', '')
+    if existing:
+        adb('shell', 'input', 'keyevent', 'KEYCODE_MOVE_END', *(['KEYCODE_DEL'] * len(existing)))
     # shlex.quote protects JSON quotes from the Android shell. No real proof is
     # entered by this test, and subprocess receives an explicit argument vector.
     adb('shell', 'input', 'text', shlex.quote(value))
     adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+    field = find(label)
+    assert field.get('text') == value, f'Text input did not match the intended value: {label}'
 
 
 request = urllib.request.Request(origin + '/.well-known/automonique-mobile', headers={'User-Agent': 'Automonique-Android-Preview-Smoke', 'Accept': 'application/vnd.automonique.mobile-auth.v1+json'})

@@ -302,6 +302,16 @@ jobs:
           wait "$emulator_pid" || true
           trap - EXIT
 
+      - name: Retain a failed candidate for diagnosis
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-preview-failed-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ env.PREVIEW_OUTPUT_DIR }}/
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0
+
       - name: Attest the exact verified APK
         id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2

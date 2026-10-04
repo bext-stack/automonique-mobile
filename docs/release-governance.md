@@ -160,6 +160,16 @@ fabricated pairing offer. The test never consumes a real invite or grants
 access. This exercises the installed APK's streaming transport, beyond opening
 the scanner. Authenticated behavior remains a separate acceptance concern.
 
+`Android network preflight` can exercise a JavaScript-only change before a full
+native build. It verifies the published baseline APK digest and refuses changes
+to native dependencies, modules, assets, or native configuration (except the
+version code). It replaces the JavaScript bundle and signs a private test APK
+with a disposable key. That transformed APK is never uploaded or published and
+is not release evidence. The final preview still passes every gate above with
+its freshly built, exact artifact. Failed full-build candidates may be retained
+for seven days under a distinct `android-preview-failed-*` artifact name; they
+must not be published.
+
 The versioned content-addressed website path is the public immutability
 boundary. Deployment records must connect it to the retained Actions artifact;
 cache or CDN layers must return the exact bytes. A replaceable URL or asset that
