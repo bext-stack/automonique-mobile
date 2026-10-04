@@ -33,10 +33,17 @@ def adb(*arguments):
 
 
 def hierarchy():
-    adb('shell', 'uiautomator', 'dump', '/sdcard/automonique-network.xml')
-    xml = adb('shell', 'cat', '/sdcard/automonique-network.xml')
-    (output / 'emulator-network-window.xml').write_text(xml)
-    return ET.fromstring(xml)
+    # Android can briefly have no accessibility root while the app starts or
+    # a keyboard/window transition settles. Never reuse an older XML dump.
+    for _ in range(6):
+        adb('shell', 'rm', '-f', '/sdcard/automonique-network.xml')
+        result = adb('shell', 'uiautomator', 'dump', '/sdcard/automonique-network.xml')
+        if 'UI hierchary dumped' in result:
+            xml = adb('shell', 'cat', '/sdcard/automonique-network.xml')
+            (output / 'emulator-network-window.xml').write_text(xml)
+            return ET.fromstring(xml)
+        time.sleep(1)
+    raise RuntimeError('Android accessibility hierarchy did not become available')
 
 
 def scroll():
