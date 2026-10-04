@@ -64,16 +64,19 @@ def enter(label, value, scrolling=False):
     field = find(label, tap=True, scrolling=scrolling)
     # The server input starts with https://. Replace its current value rather
     # than appending another origin. ADB accepts several key codes per call.
+    time.sleep(1)  # Let focus and keyboard animations settle before editing.
     existing = field.get('text', '')
     if existing:
         adb('shell', 'input', 'keyevent', 'KEYCODE_MOVE_END', *(['KEYCODE_DEL'] * len(existing)))
+    time.sleep(1)  # Let the controlled input acknowledge deletions.
     # shlex.quote protects JSON quotes from the Android shell. No real proof is
     # entered by this test, and subprocess receives an explicit argument vector.
-    # Long single input commands can exceed Android's stale-event window
-    # while the controlled multiline input rerenders. Keep each batch short.
-    for start in range(0, len(value), 12):
-        adb('shell', 'input', 'text', shlex.quote(value[start:start + 12]))
-        time.sleep(0.2)
+    # A controlled input can rerender between injected key events. Pace each
+    # character so Android does not drop stale events or race a prior edit.
+    for character in value:
+        adb('shell', 'input', 'text', shlex.quote(character))
+        time.sleep(0.1)
+    time.sleep(1)
     adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
     field = find(label)
     assert field.get('text') == value, f'Text input did not match the intended value: {label}'
