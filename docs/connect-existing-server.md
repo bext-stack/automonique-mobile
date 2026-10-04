@@ -159,3 +159,13 @@ origin-bound document—not HTML, a proxy login, or a redirect.
 If discovery succeeds but pairing fails, create a fresh invite and confirm its
 origin and server identity match the verified server. An expired, consumed,
 redirected, or identity-mismatched invite fails closed.
+
+Access tokens expire after 15 minutes. The app renews them automatically while
+open, on startup, and when returning to the foreground, using the existing
+server-issued refresh credential. A network failure leaves cached views read
+only; **Refresh access** retries renewal. A revoked or rejected credential
+requires a new server invitation. Renewal never replays a command.
+
+After pairing, **Open Automonique** opens the conversation and action tabs.
+Large conversation histories stay available in the live view; the offline
+cache keeps recent, contiguous history within the phone's storage budget.

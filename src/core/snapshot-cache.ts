@@ -440,7 +440,49 @@ export function boundMobileSnapshot(snapshot: MobileSnapshot): MobileSnapshot {
 }
 
 export function encodeCachedSnapshot(snapshot: MobileSnapshot): string {
-  const encoded = JSON.stringify(boundMobileSnapshot(snapshot));
+  const bounded = boundMobileSnapshot(snapshot);
+  const timelines: Record<string, readonly SessionEvent[]> = {};
+  const encoder = new TextEncoder();
+  const size = (value: unknown): number =>
+    encoder.encode(JSON.stringify(value)).byteLength;
+  let remaining = MAX_CACHED_SNAPSHOT_BYTES - size({ ...bounded, timelines });
+  // The event ceiling does not bound bytes: a valid administrator view may
+  // contain thousands of messages. Cache contiguous suffixes ending at each
+  // acknowledged cursor, without reducing the live view or its permissions.
+  for (const [sessionId, events] of Object.entries(bounded.timelines)) {
+    const cursor = bounded.sessions.find(
+      (session) => session.target.coordinate.id === sessionId,
+    )?.lastCursor;
+    const anchor = events.findIndex((event) => event.cursor === cursor);
+    if (anchor < 0) continue;
+    const overhead =
+      size({ [sessionId]: [] }) -
+      2 +
+      (Object.keys(timelines).length > 0 ? 1 : 0);
+    let capacity = remaining - overhead;
+    let start = anchor + 1;
+    for (let index = anchor; index >= 0; index -= 1) {
+      const cost = size(events[index]) + (start <= anchor ? 1 : 0);
+      if (cost > capacity) break;
+      capacity -= cost;
+      start = index;
+    }
+    if (start > anchor) continue;
+    let end = anchor + 1;
+    // Local previews remain a contiguous prefix after the acknowledged
+    // anchor, and are kept only when its complete acknowledged prefix fits.
+    if (start === 0) {
+      while (end < events.length) {
+        const cost = size(events[end]) + 1;
+        if (cost > capacity) break;
+        capacity -= cost;
+        end += 1;
+      }
+    }
+    timelines[sessionId] = events.slice(start, end);
+    remaining = capacity;
+  }
+  const encoded = JSON.stringify({ ...bounded, timelines });
   if (
     new TextEncoder().encode(encoded).byteLength > MAX_CACHED_SNAPSHOT_BYTES
   ) {

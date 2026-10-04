@@ -8,6 +8,10 @@ import { syntheticSnapshot } from '@/core/fixtures';
 import { createMockGateway } from '@/core/mock-gateway';
 import { createPendingMutationStore } from '@/core/reconciliation';
 import {
+  decodeCachedSnapshot,
+  MAX_CACHED_SNAPSHOT_BYTES,
+} from '@/core/snapshot-cache';
+import {
   decimalRevision,
   type MobileAutomoniqueGateway,
   type Receipt,
@@ -466,6 +470,59 @@ test('cache persistence failure forces the live projection read only', async () 
   expect(AsyncStorage.removeItem).toHaveBeenCalled();
   await fireEvent.press(view.getByLabelText('Test resume'));
   expect(view.queryByText('live:true')).toBeNull();
+});
+
+test('a large live history stays usable while its offline cache is bounded', async () => {
+  const base = createMockGateway();
+  const source = syntheticSnapshot.timelines['session-synthetic-001']![0]!;
+  const events = Array.from({ length: 20 }, (_, index) => ({
+    ...source,
+    id: `large-${index + 1}`,
+    cursor: String(index + 1),
+    sequence: decimalRevision(String(index + 1)),
+    text: 'History '.repeat(3_000),
+  }));
+  const gateway: MobileAutomoniqueGateway = {
+    ...base,
+    async attach(session, cursor, signal) {
+      if (session.coordinate.id !== 'session-synthetic-001')
+        return base.attach(session, cursor, signal);
+      return {
+        session,
+        cursor: null,
+        sequence: null,
+        async *events() {
+          yield {
+            sessionId: session.coordinate.id,
+            afterCursor: null,
+            cursor: '20',
+            events,
+          };
+        },
+      };
+    },
+  };
+  const view = await render(
+    <MobileProvider gateway={gateway}>
+      <Probe />
+    </MobileProvider>,
+  );
+  await waitFor(() => expect(view.getByText('live:true')).toBeTruthy());
+  await waitFor(async () => {
+    const encoded = await AsyncStorage.getItem(
+      'automonique.mobile.snapshot.v1',
+    );
+    expect(encoded).not.toBeNull();
+    const cached = decodeCachedSnapshot(encoded!);
+    expect(cached.timelines['session-synthetic-001']?.at(-1)?.cursor).toBe(
+      '20',
+    );
+    expect(new TextEncoder().encode(encoded!).byteLength).toBeLessThanOrEqual(
+      MAX_CACHED_SNAPSHOT_BYTES,
+    );
+  });
+  expect(view.getByText('events:20')).toBeTruthy();
+  expect(view.getByText('live:true')).toBeTruthy();
 });
 
 test('replacing a gateway aborts the previous generation bootstrap', async () => {

@@ -153,7 +153,12 @@ export async function bootstrapVerticalSlice(
           previousSession === undefined
             ? []
             : (previous?.timelines[session.target.coordinate.id] ?? []);
-        const resumeCursor = previousSession?.lastCursor ?? null;
+        // Byte-bounded offline caches may omit a conversation's history.
+        // Fetch a fresh page instead of resuming beyond unseen messages.
+        const resumeCursor =
+          previousEvents.length === 0
+            ? null
+            : (previousSession?.lastCursor ?? null);
         const attachment = await gateway.attach(
           session.target,
           resumeCursor,

@@ -174,3 +174,46 @@ test('administrator access survives caching with offline mutations disabled', ()
   expect(decoded.connection.allowedActions).toContain('all_sessions');
   expect(decoded.connection.mutationsAllowed).toBe(false);
 });
+
+test('large histories fit the byte budget while preserving cursor anchors and fences', () => {
+  const source = syntheticSnapshot.timelines['session-synthetic-001']![0]!;
+  const events = Array.from({ length: 100 }, (_, index) => ({
+    ...source,
+    id: `large-${index + 1}`,
+    cursor: String(index + 1),
+    sequence: String(index + 1) as typeof source.sequence,
+    text: 'Conversation history 😀'.repeat(500),
+  }));
+  const snapshot = {
+    ...syntheticSnapshot,
+    sessions: syntheticSnapshot.sessions.map((session, index) =>
+      index === 0
+        ? {
+            ...session,
+            lastCursor: '100',
+            followUpFenceRevision: session.target.revision,
+            followUpAllowed: false,
+          }
+        : session,
+    ),
+    timelines: {
+      ...syntheticSnapshot.timelines,
+      'session-synthetic-001': events,
+    },
+  };
+  const encoded = encodeCachedSnapshot(snapshot);
+  expect(new TextEncoder().encode(encoded).byteLength).toBeLessThanOrEqual(
+    MAX_CACHED_SNAPSHOT_BYTES,
+  );
+  const cached = decodeCachedSnapshot(encoded);
+  const retained = cached.timelines['session-synthetic-001']!;
+  expect(retained.length).toBeGreaterThan(0);
+  expect(retained.length).toBeLessThan(events.length);
+  expect(retained).toEqual(events.slice(-retained.length));
+  expect(retained.at(-1)?.cursor).toBe('100');
+  expect(cached.sessions[0]?.followUpFenceRevision).toBe(
+    snapshot.sessions[0]?.followUpFenceRevision,
+  );
+  expect(cached.connection.mutationsAllowed).toBe(false);
+  expect(snapshot.timelines['session-synthetic-001']).toHaveLength(100);
+});

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Link } from 'expo-router';
 import { MobileHttpsOrigin, type MobilePairingOffer } from '@automonique/sdk';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -286,6 +287,22 @@ export default function SettingsScreen() {
 
   return (
     <Screen bottomInset showConnectionBanner={!needsSetup}>
+      {state.phase === 'ready' && (
+        <Link href="/(tabs)" replace asChild>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open conversations and actions"
+            style={StyleSheet.flatten([
+              styles.button,
+              { backgroundColor: palette.accent },
+            ])}
+          >
+            <Text style={{ color: palette.accentText, fontWeight: '800' }}>
+              Open Automonique
+            </Text>
+          </Pressable>
+        </Link>
+      )}
       <PairingScanner
         key={scannerGeneration}
         onCancel={() => setScannerVisible(false)}
