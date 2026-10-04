@@ -111,18 +111,20 @@ its channel binding. Existing phone credentials gain no new permissions.
 ## Public Android preview
 
 Download the immutable
-[Automonique Mobile 0.1.0-preview.8 APK](https://www.automonique.fr/downloads/android/0.1.0-preview.8/3899a85aff93745b3ad7eeede7e5a72d0933af416b132ffc46ed8c9c848c041b/automonique-mobile-0.1.0-preview.8.apk).
+[Automonique Mobile 0.1.0-preview.9 APK](https://www.automonique.fr/downloads/android/0.1.0-preview.9/91b77c0b1fe1f45e5b15678340e93d2ff47fb46d50461506bdda4ea42593996a/automonique-mobile-0.1.0-preview.9.apk).
 
-SHA-256: `3899a85aff93745b3ad7eeede7e5a72d0933af416b132ffc46ed8c9c848c041b`
+SHA-256: `91b77c0b1fe1f45e5b15678340e93d2ff47fb46d50461506bdda4ea42593996a`
 
-Preview 8 reads pairing QR codes continuously through the native camera scanner,
-without taking a photo. Importing a QR image remains available. The exact APK
-passed an emulator check for opening and cancelling the native scanner;
-physical-camera decoding has not been verified for this release.
+Preview 9 fixes native server connection failures after scanning by using streamed
+HTTP responses throughout discovery, pairing, sessions, tasks, and workspaces.
+The native camera scanner reads QR codes continuously without taking a photo;
+image import remains available. The exact APK passed Android emulator checks for
+scanner launch/cancellation, real HTTPS server discovery, and pairing refusal.
+Physical-camera decoding has not been verified for this release.
 
-The adjacent [publication record](https://www.automonique.fr/downloads/android/0.1.0-preview.8/3899a85aff93745b3ad7eeede7e5a72d0933af416b132ffc46ed8c9c848c041b/publication.json) connects these
+The adjacent [publication record](https://www.automonique.fr/downloads/android/0.1.0-preview.9/91b77c0b1fe1f45e5b15678340e93d2ff47fb46d50461506bdda4ea42593996a/publication.json) connects these
 exact bytes to protected `main`, retained GitHub Actions run
-[`37189079568`](https://github.com/bext-stack/automonique-mobile/actions/runs/37189079568),
+[`37197107961`](https://github.com/bext-stack/automonique-mobile/actions/runs/37197107961),
 the GitHub artifact attestation, packaged manifest, ABIs, debug-only signer,
 toolchains, and dependency notices.
 
@@ -137,7 +139,7 @@ The earlier
 [0.1.0-preview.2 path](https://www.automonique.fr/downloads/android/0.1.0-preview.2/4c7b7fac529c8060ecc84691b00156c1fc42989c86adab467cdf9f43e959b353/automonique-mobile-0.1.0-preview.2.apk)
 stays published and unchanged; a preview path is never overwritten or
 redirected. The synthetic TalkBack traversal recorded for preview.1 was not
-repeated for preview.2 through preview.8 and does not cover those versions.
+repeated for preview.2 through preview.9 and does not cover those versions.
 
 ## Requirements
 
