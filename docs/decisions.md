@@ -132,3 +132,24 @@ The current signal is tracked in
 [Automonique Mobile #37](https://github.com/bext-stack/automonique-mobile/issues/37);
 it is schema-digest review evidence, not a claim that this retained-session
 change needs a different SDK archive.
+
+## Live pairing QR scanning
+
+Camera pairing uses an app-local Expo module with a native live scanner. Android
+uses `com.journeyapps:zxing-android-embedded:4.3.0` and
+`com.google.zxing:core:3.5.3` (Apache-2.0), with autofocus, a portrait camera
+preview, QR-only detection, and no saved barcode image. It does not require an
+external scanner app, Google Play Services, or an ML Kit model download. iOS
+uses Apple's VisionKit `DataScannerViewController`, restricted to QR codes.
+Unsupported iOS hardware and web keep image import and invite paste available.
+
+The camera permission is requested only when the operator chooses live scanning.
+Cancellation releases the native camera and late results are ignored. Native
+results are handed to the same bounded pairing-offer validation and server
+review as image import and paste; scanning never connects automatically. Images
+are decoded locally only for the explicit saved-image import fallback.
+
+Keep the existing ban on Expo Camera / ML Kit dependencies and the Maven
+license gate. The app-local module must be autolinked into a fresh native build;
+a JavaScript-only update cannot enable it in an older installed APK. Physical
+camera acceptance on Android and supported iOS hardware is still required.

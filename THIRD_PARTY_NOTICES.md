@@ -19,3 +19,14 @@ request fails `npm run notices:check` when the committed inventory is stale.
 Native CocoaPods and Maven inventories must be captured from each immutable EAS
 build before a distributable release; the current simulator evidence profile is
 not a production release.
+
+The local live QR scanner additionally uses the Android Maven artifacts
+`com.journeyapps:zxing-android-embedded:4.3.0` and
+`com.google.zxing:core:3.5.3`, both under Apache-2.0. Their resolved transitive
+dependencies and bundled notices are collected by the existing native Maven
+inventory for each preview build. iOS scanning uses the platform VisionKit
+framework.
+
+The build and test tooling uses a pinned downstream MIT-licensed `braces` patch
+for bounded nesting. See [the patch record](vendor/braces-hardening.md), its
+reproducible packaging script, source digests, and installation regressions.

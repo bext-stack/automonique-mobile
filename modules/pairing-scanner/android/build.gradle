@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: Elastic-2.0
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.bext.pairingscanner'
+version = '0.1.0'
+
+android {
+  namespace 'dev.bext.pairingscanner'
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}
+
+dependencies {
+  implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
+  implementation 'com.google.zxing:core:3.5.3'
+}

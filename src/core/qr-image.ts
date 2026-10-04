@@ -10,7 +10,7 @@ const MAX_JPEG_BASE64_CHARS = 16 * 1024 * 1024;
 const MAX_JPEG_MEGAPIXELS = 3;
 const MAX_JPEG_MEMORY_MB = 64;
 
-/** Decode one bounded, in-memory camera capture without a remote scanner. */
+/** Decode one bounded, imported QR image without a remote scanner. */
 export function decodePairingQrJpeg(base64: string): string {
   if (base64.length === 0 || base64.length > MAX_JPEG_BASE64_CHARS) {
     throw new Error('mobile_pairing_qr_image_invalid');

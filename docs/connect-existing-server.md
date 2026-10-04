@@ -40,8 +40,9 @@ In the authenticated Monique dashboard, open **Health → Pair a phone**
 this phone needs, then create the invite. The dashboard displays its QR code
 and offers **Download QR code** and **Copy invite**.
 
-In the app, choose **Scan or import QR code** to photograph a code on another
-screen or import the downloaded image. Importing an image does not require
+In the app, choose **Scan or import QR code**, then **Scan with camera** and
+point at the code on another screen. Detection is automatic; no photo is needed.
+Alternatively, import the downloaded image. Importing an image does not require
 camera permission. You can also paste the copied invite. Review the server
 address, then choose **Connect this server**. Reading the QR code alone does
 not verify the server; pairing checks its identity and protocol before the

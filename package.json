@@ -61,10 +61,11 @@
     "jest-expo": "~57.0.5",
     "prettier": "^3.9.6",
     "qrcode": "1.5.4",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "braces": "file:vendor/braces-3.0.4-automonique.1.tgz"
   },
   "scripts": {
-    "postinstall": "node scripts/harden-xcode-uuid.mjs && node scripts/harden-expo-application.mjs && node scripts/harden-expo-notifications-local-only.mjs && node scripts/verify-node-forge.mjs",
+    "postinstall": "node scripts/harden-xcode-uuid.mjs && node scripts/harden-expo-application.mjs && node scripts/harden-expo-notifications-local-only.mjs && node scripts/verify-node-forge.mjs && node scripts/verify-braces.mjs",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
@@ -81,7 +82,7 @@
     "notices:generate": "node scripts/generate-third-party-notices.mjs",
     "notices:check": "node scripts/generate-third-party-notices.mjs --check",
     "native:verify": "node scripts/verify-native-policy.mjs",
-    "security:verify": "node scripts/harden-xcode-uuid.mjs --check && node scripts/harden-expo-application.mjs --check && node scripts/harden-expo-notifications-local-only.mjs --check && node scripts/verify-node-forge.mjs",
+    "security:verify": "node scripts/harden-xcode-uuid.mjs --check && node scripts/harden-expo-application.mjs --check && node scripts/harden-expo-notifications-local-only.mjs --check && node scripts/verify-node-forge.mjs && node scripts/verify-braces.mjs",
     "production:verify": "node scripts/verify-production-boundary.mjs",
     "production:verify:test": "node --test scripts/verify-production-boundary.test.mjs",
     "production:verify:bundle": "node scripts/verify-production-boundary.mjs --require-bundle",
@@ -94,7 +95,8 @@
     "xcode": {
       "uuid": "14.0.2"
     },
-    "node-forge": "$node-forge"
+    "node-forge": "$node-forge",
+    "braces": "$braces"
   },
   "private": true,
   "jest": {

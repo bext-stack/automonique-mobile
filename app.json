@@ -21,7 +21,8 @@
     },
     "android": {
       "package": "dev.bext.automonique",
-      "versionCode": 6,
+      "permissions": ["android.permission.CAMERA"],
+      "versionCode": 7,
       "adaptiveIcon": {
         "backgroundColor": "#0B3529",
         "foregroundImage": "./assets/images/automonique-mark.png"
@@ -50,7 +51,7 @@
       [
         "expo-image-picker",
         {
-          "cameraPermission": "Allow Automonique to capture a one-time server pairing QR code for local decoding.",
+          "cameraPermission": "Allow Automonique to scan a one-time server pairing QR code on this device.",
           "microphonePermission": "Allow Automonique to turn your voice into a reviewable text follow-up.",
           "photosPermission": false
         }

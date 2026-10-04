@@ -20,7 +20,7 @@ jobs:
       attestations: write
       artifact-metadata: write
     env:
-      PREVIEW_APK_NAME: automonique-mobile-0.1.0-preview.7.apk
+      PREVIEW_APK_NAME: automonique-mobile-0.1.0-preview.8.apk
       PREVIEW_OUTPUT_DIR: ${{ github.workspace }}/preview-output
       ANDROID_PLATFORM: android-36
       ANDROID_BUILD_TOOLS: 36.0.0
@@ -210,7 +210,7 @@ jobs:
           emulator_console="$PREVIEW_OUTPUT_DIR/emulator-console.txt"
           "$emulator" -avd "$avd_name" -accel on -gpu software \
             -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data \
-            -no-metrics -camera-back none -memory 4096 -cores 4 \
+            -no-metrics -camera-back emulated -memory 4096 -cores 4 \
             > "$emulator_console" 2>&1 &
           emulator_pid=$!
           emulator_cleanup() {
@@ -278,6 +278,8 @@ jobs:
             sleep 2
           done
           test "$rendered" = true
+          python3 scripts/android-preview-scanner-smoke.py \
+            --adb "$adb" --output "$PREVIEW_OUTPUT_DIR"
           test -n "$("$adb" shell pidof dev.bext.automonique)"
           "$adb" logcat -d -v threadtime \
             > "$PREVIEW_OUTPUT_DIR/emulator-logcat.txt"
