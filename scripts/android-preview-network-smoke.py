@@ -69,7 +69,11 @@ def enter(label, value, scrolling=False):
         adb('shell', 'input', 'keyevent', 'KEYCODE_MOVE_END', *(['KEYCODE_DEL'] * len(existing)))
     # shlex.quote protects JSON quotes from the Android shell. No real proof is
     # entered by this test, and subprocess receives an explicit argument vector.
-    adb('shell', 'input', 'text', shlex.quote(value))
+    # Long single input commands can exceed Android's stale-event window
+    # while the controlled multiline input rerenders. Keep each batch short.
+    for start in range(0, len(value), 12):
+        adb('shell', 'input', 'text', shlex.quote(value[start:start + 12]))
+        time.sleep(0.2)
     adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
     field = find(label)
     assert field.get('text') == value, f'Text input did not match the intended value: {label}'
