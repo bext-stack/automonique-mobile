@@ -3,16 +3,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import {
-  Alert,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ApprovalContent } from '../(tabs)/approvals';
+import { ChatComposer } from '@/components/chat-composer';
 import { ReceiptCard } from '@/components/receipt-card';
 import { Screen } from '@/components/screen';
 import { TimelineEventCard } from '@/components/timeline-event-card';
@@ -306,61 +300,51 @@ export default function SessionScreen() {
   }
 
   const composer = (
-    <View
-      style={[
-        styles.composer,
-        { backgroundColor: palette.surface, borderColor: palette.border },
-      ]}
-    >
-      <Text
-        accessibilityRole="header"
-        style={[styles.section, { color: palette.text }]}
-      >
-        Reply
-      </Text>
-      <TextInput
-        accessibilityLabel="Follow-up message"
-        editable={followUpAllowed}
-        multiline
-        maxLength={followUpLimit}
-        onChangeText={setDraft}
-        placeholder={
-          followUpAllowed
-            ? 'Message Monique…'
-            : 'Read only while stale or unauthorized'
-        }
-        placeholderTextColor={palette.textMuted}
-        style={[
-          styles.input,
-          { color: palette.text, borderColor: palette.border },
-        ]}
-        value={draft}
-      />
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={
-          dictating ? 'Stop voice dictation' : 'Start voice dictation'
-        }
-        accessibilityState={{ disabled: !followUpAllowed }}
-        disabled={!followUpAllowed}
-        onPress={() => void toggleDictation()}
-        style={[
-          styles.voice,
-          {
-            borderColor: dictating ? palette.accent : palette.border,
-            opacity: followUpAllowed ? 1 : 0.45,
-          },
-        ]}
-      >
-        <Text
-          style={{
-            color: dictating ? palette.accent : palette.text,
-            fontWeight: '800',
-          }}
+    <ChatComposer
+      value={draft}
+      onChangeText={setDraft}
+      inputLabel="Follow-up message"
+      sendLabel="Send follow-up"
+      editable={followUpAllowed}
+      maxLength={followUpLimit}
+      placeholder={
+        followUpAllowed
+          ? 'Message Monique…'
+          : 'Replies unavailable — check connection'
+      }
+      canSend={
+        followUpAllowed && !dictating && !!draft.trim() && draftWithinLimit
+      }
+      busy={busyAction !== null}
+      onSend={() => void submitFollowUp()}
+      accessory={
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            dictating ? 'Stop voice dictation' : 'Start voice dictation'
+          }
+          accessibilityState={{ disabled: !followUpAllowed }}
+          disabled={!followUpAllowed}
+          onPress={() => void toggleDictation()}
+          style={[
+            styles.voice,
+            {
+              borderColor: dictating ? palette.accent : palette.border,
+              opacity: followUpAllowed ? 1 : 0.45,
+            },
+          ]}
         >
-          {dictating ? 'Stop listening' : 'Dictate with voice'}
-        </Text>
-      </Pressable>
+          <Text
+            style={{
+              color: dictating ? palette.accent : palette.text,
+              fontWeight: '800',
+            }}
+          >
+            {dictating ? '■ Stop listening' : '◉ Voice'}
+          </Text>
+        </Pressable>
+      }
+    >
       {(dictating || !dictationMessage.startsWith('Voice is transcribed')) && (
         <Text
           accessibilityLiveRegion="polite"
@@ -383,39 +367,6 @@ export default function SessionScreen() {
           {draftWithinLimit ? '' : ' · too long'}
         </Text>
       )}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Send follow-up"
-        accessibilityState={{
-          disabled:
-            !followUpAllowed || dictating || !draft.trim() || !draftWithinLimit,
-        }}
-        disabled={
-          !followUpAllowed || dictating || !draft.trim() || !draftWithinLimit
-        }
-        onPress={() => void submitFollowUp()}
-        style={[
-          styles.primary,
-          {
-            backgroundColor:
-              followUpAllowed && !dictating && draftWithinLimit
-                ? palette.accent
-                : palette.surfaceMuted,
-          },
-        ]}
-      >
-        <Text
-          style={{
-            color:
-              followUpAllowed && !dictating && draftWithinLimit
-                ? palette.accentText
-                : palette.textMuted,
-            fontWeight: '800',
-          }}
-        >
-          Send follow-up
-        </Text>
-      </Pressable>
       {session.run && session.state === 'active' && (
         <Pressable
           accessibilityRole="button"
@@ -429,14 +380,14 @@ export default function SessionScreen() {
           ]}
         >
           <Text style={{ color: palette.danger, fontWeight: '800' }}>
-            Stop exact run
+            Stop response
           </Text>
         </Pressable>
       )}
-    </View>
+    </ChatComposer>
   );
   return (
-    <Screen bottomInset footer={composer}>
+    <Screen key={id} bottomInset footer={composer} followTail={!details}>
       <View style={styles.header}>
         <Text
           accessibilityRole="header"
@@ -487,12 +438,19 @@ export default function SessionScreen() {
                 : 'Conversation saved'}
       </Text>
       <View style={styles.timeline}>
-        <Text
-          accessibilityRole="header"
-          style={[styles.section, { color: palette.text }]}
-        >
-          Messages
-        </Text>
+        {events.filter((event) => event.kind === 'message').length === 0 && (
+          <Text
+            style={{
+              color: palette.textMuted,
+              paddingVertical: 24,
+              textAlign: 'center',
+            }}
+          >
+            {session.state === 'active'
+              ? 'Monique is preparing a response…'
+              : 'No messages available yet.'}
+          </Text>
+        )}
         {events
           .filter((event) => details || event.kind === 'message')
           .map((event) => (
@@ -532,30 +490,15 @@ const styles = StyleSheet.create({
   meta: { fontSize: 12 },
   section: { fontSize: 19, fontWeight: '800' },
   timeline: { gap: 11 },
-  composer: { borderWidth: 1, borderRadius: 18, padding: 12, gap: 8 },
-  input: {
-    minHeight: 56,
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    fontSize: 16,
-    textAlignVertical: 'top',
-  },
   byteLimit: { fontSize: 12, textAlign: 'right' },
   voice: {
     minHeight: 44,
-    borderWidth: 1,
+    paddingHorizontal: 12,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   voiceStatus: { fontSize: 12, lineHeight: 18 },
-  primary: {
-    minHeight: 48,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   stop: {
     minHeight: 46,
     borderWidth: 1,

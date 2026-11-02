@@ -4,7 +4,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import { Link, router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ChatComposer } from '@/components/chat-composer';
 import { Screen } from '@/components/screen';
 import { createTaskExecution, type TaskHandle } from '@/core/task-execution';
 import { useMobile } from '@/providers/mobile-provider';
@@ -140,17 +141,66 @@ function TaskComposer() {
       snapshot.connection.limits.maxFollowUpBytes;
   const canSubmit = allowed && loaded && !busy && !pending && validText;
   return (
-    <Screen bottomInset contentContainerStyle={{ flexGrow: 1 }}>
-      <Text
-        accessibilityRole="header"
-        style={[styles.title, { color: palette.text }]}
-      >
-        What can I help with?
-      </Text>
-      <Text style={{ color: palette.textMuted }}>
-        Describe what you need. Monique works in an isolated workspace; use Work
-        for project tickets.
-      </Text>
+    <Screen
+      bottomInset
+      contentContainerStyle={{ flexGrow: 1 }}
+      footer={
+        <ChatComposer
+          value={text}
+          onChangeText={setText}
+          editable={allowed && !busy && !pending}
+          canSend={canSubmit}
+          busy={busy || pending}
+          onSend={() => void run(true)}
+        />
+      }
+    >
+      <View style={styles.welcome}>
+        <View style={[styles.mark, { backgroundColor: palette.surfaceMuted }]}>
+          <Text style={{ color: palette.accent, fontSize: 28 }}>✳</Text>
+        </View>
+        <Text
+          accessibilityRole="header"
+          style={[styles.title, { color: palette.text }]}
+        >
+          What can I help with?
+        </Text>
+        <Text style={[styles.subtitle, { color: palette.textMuted }]}>
+          Think it through. Build something. Get work done.
+        </Text>
+        <View style={styles.suggestions}>
+          {[
+            'Help me plan a change',
+            'Help me investigate a problem',
+            'Review an idea with me',
+          ].map((prompt) => (
+            <Pressable
+              key={prompt}
+              accessibilityRole="button"
+              disabled={!allowed || busy || pending}
+              accessibilityState={{ disabled: !allowed || busy || pending }}
+              onPress={() => setText(prompt + ': ')}
+              style={({ pressed }) => [
+                styles.suggestion,
+                {
+                  borderColor: palette.border,
+                  backgroundColor: pressed
+                    ? palette.surfaceMuted
+                    : palette.surface,
+                },
+              ]}
+            >
+              <Text style={{ color: palette.text, fontSize: 14 }}>
+                {prompt}
+              </Text>
+              <Text style={{ color: palette.textMuted }}>↗</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text style={[styles.scope, { color: palette.textMuted }]}>
+          Monique works in an isolated workspace. Use Work for project tickets.
+        </Text>
+      </View>
       {!granted && (
         <Text style={{ color: palette.textMuted }}>
           This device cannot start tasks yet. Create a new pairing invitation in
@@ -163,40 +213,6 @@ function TaskComposer() {
           Reconnect to start work or check task status.
         </Text>
       )}
-      <View style={{ flex: 1, minHeight: 24 }} />
-      <TextInput
-        accessibilityLabel="Message Monique"
-        placeholder="Message Monique…"
-        placeholderTextColor={palette.textMuted}
-        multiline
-        value={text}
-        onChangeText={setText}
-        editable={allowed && !busy && !pending}
-        style={[
-          styles.input,
-          {
-            color: palette.text,
-            borderColor: palette.border,
-            backgroundColor: palette.surface,
-          },
-        ]}
-      />
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ disabled: !canSubmit }}
-        disabled={!canSubmit}
-        onPress={() => {
-          void run(true);
-        }}
-        style={[
-          styles.button,
-          { backgroundColor: palette.accent, opacity: canSubmit ? 1 : 0.45 },
-        ]}
-      >
-        <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-          {busy ? 'Connecting…' : 'Send message'}
-        </Text>
-      </Pressable>
       <View accessibilityLiveRegion="polite" style={styles.status}>
         {pending && (
           <Text style={{ color: palette.text }}>
@@ -270,14 +286,38 @@ function TaskComposer() {
   );
 }
 const styles = StyleSheet.create({
-  title: { fontSize: 26, fontWeight: '700' },
-  input: {
-    minHeight: 96,
+  welcome: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 16,
+    paddingVertical: 24,
+  },
+  mark: {
+    width: 56,
+    height: 56,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: {
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  subtitle: { fontSize: 15, lineHeight: 22, textAlign: 'center' },
+  scope: { fontSize: 12, lineHeight: 18, textAlign: 'center', maxWidth: 310 },
+  suggestions: { gap: 8, width: '100%', maxWidth: 380, marginVertical: 8 },
+  suggestion: {
+    minHeight: 48,
     borderWidth: 1,
     borderRadius: 16,
-    padding: 16,
-    textAlignVertical: 'top',
-    fontSize: 16,
+    padding: 14,
+    gap: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   button: {
     minHeight: 48,

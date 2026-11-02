@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { Screen } from './components/screen';
 import { router } from 'expo-router';
 import ChatScreen from './app/(tabs)/index';
 
@@ -752,4 +753,39 @@ test('lost sessions with historical run IDs are not counted as running', async (
   mockUseMobile.mockReturnValue(value);
   const view = await render(<OverviewScreen />);
   expect(view.getByLabelText('Running: 0')).toBeTruthy();
+});
+
+test('chat scroll offers a way back to the latest messages without following while reading history', async () => {
+  const view = await render(<Screen followTail showConnectionBanner={false} />);
+  const scroll = view.getByLabelText('Conversation messages');
+  await fireEvent.scroll(scroll, {
+    nativeEvent: {
+      contentSize: { height: 2000, width: 400 },
+      layoutMeasurement: { height: 500, width: 400 },
+      contentOffset: { y: 300, x: 0 },
+    },
+  });
+  expect(view.getByLabelText('Jump to latest message')).toBeTruthy();
+  await fireEvent(scroll, 'contentSizeChange', 400, 2100);
+  expect(view.getByLabelText('Jump to latest message')).toBeTruthy();
+  await fireEvent.press(view.getByLabelText('Jump to latest message'));
+  expect(view.queryByLabelText('Jump to latest message')).toBeNull();
+});
+
+test('a suggestion only fills the draft and never submits work', async () => {
+  const request = jest.fn();
+  const value = {
+    ...mobileValue(['start_task']),
+    storageScope: 'server:suggestion-device:a1',
+    taskGateway: { request },
+  };
+  mockUseMobile.mockReturnValue(value);
+  const view = await render(<TaskScreen />);
+  await fireEvent.press(view.getByText('Help me plan a change'));
+  expect(view.getByLabelText('Message Monique')).toHaveProp(
+    'value',
+    'Help me plan a change: ',
+  );
+  expect(router.push).not.toHaveBeenCalled();
+  expect(request).not.toHaveBeenCalled();
 });
