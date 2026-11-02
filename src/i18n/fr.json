@@ -500,5 +500,12 @@
   "Open link": "Ouvrir le lien",
   "Prepare ticket": "Préparer un ticket",
   "Could not open this link.": "Impossible d’ouvrir ce lien.",
-  "No matching messages.": "Aucun message correspondant."
+  "No matching messages.": "Aucun message correspondant.",
+  "Internal events": "Événements internes",
+  "Provider diagnostics": "Diagnostics du moteur",
+  "Hide": "Masquer",
+  "Internal provider events are grouped here. Messages and run states remain in the conversation.": "Les événements internes du moteur sont regroupés ici. Les messages et états d’exécution restent dans la conversation.",
+  "Cursor range": "Plage de curseurs",
+  "Show raw events": "Afficher les événements bruts",
+  "Show next events": "Afficher les événements suivants"
 }
