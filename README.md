@@ -85,7 +85,7 @@ build and publication evidence below.
 
 ## Start and continue tasks
 
-Open **Sessions → Run a task** to ask Monique to create files, execute scripts,
+Open **Chat** to ask Monique to create files, execute scripts,
 or investigate a problem. The phone must be paired with the dashboard's explicit
 **Allow this phone to start tasks** permission. Existing pairings keep their
 current permissions; create a new invitation and pair again to enable this.
@@ -100,8 +100,10 @@ not by itself prove the requested work succeeded; check its session output.
 
 ## Slack and ticket queues
 
-The **Work** tab reads the server-configured Slack channel and lists that
-instance’s GitHub-linked Monique ticket queue. Enable the dashboard’s explicit
+The **Tasks** tab separates the server-configured Slack channel, the
+instance’s GitHub-linked ticket queue, and new-ticket preparation. Slack messages
+are searchable and recognized GitHub issue links appear once. Preparing a ticket
+from a Slack link fills the form; it does not submit or execute it. Enable the dashboard’s explicit
 Slack and ticket permission when pairing. You can then submit a ticket, approve
 its pending gate, or reject it with a reason. These controls require a live
 connection and a confirmation; interrupted requests retain their original key
@@ -111,25 +113,30 @@ its channel binding. Existing phone credentials gain no new permissions.
 ## Public Android preview
 
 Download the immutable
-[Automonique Mobile 0.1.0-preview.11 APK](https://www.automonique.fr/downloads/android/0.1.0-preview.11/99169a14f9f12fc65ef9a01c8bdb40bce6734bee89a8d745319fa7c0faef8def/automonique-mobile-0.1.0-preview.11.apk).
+[Automonique Mobile 0.1.0-preview.12 APK](https://www.automonique.fr/downloads/android/0.1.0-preview.12/a8039fcff384b002e65410c13e79481c7ae0b0dc909257aada20e7915f2c92b2/automonique-mobile-0.1.0-preview.12.apk).
 
-SHA-256: `99169a14f9f12fc65ef9a01c8bdb40bce6734bee89a8d745319fa7c0faef8def`
+SHA-256: `a8039fcff384b002e65410c13e79481c7ae0b0dc909257aada20e7915f2c92b2`
 
-Preview 11 keeps large administrator views live by fitting recent history into
-the offline cache budget. Expired access renews automatically while the app is
-open, on startup, and on return to the foreground. **Open Automonique** in paired
-settings opens the conversation and action tabs. Existing pairing is preserved.
-Credential issuance allows at most five seconds of clock difference; expiry
-remains strict. Native networking uses streamed HTTP responses throughout
-discovery, pairing, sessions, tasks, and workspaces.
+Preview 12 opens directly in Chat, with conversation history in the side menu,
+a keyboard-aware composer, and a compact bottom navigation bar. English and
+French can be selected from the menu or Connection settings and persist across
+restarts. The Dashboard keeps counts, attention items, and recent conversations
+near the top; Tasks, Projects, and Approvals use focused views.
+
+Conversation Details groups repeated internal provider events into compact
+summaries. Event types and cursor ranges remain inspectable; raw entries appear
+only on request, 20 at a time. Messages, run states, tool failures, and approvals
+retain their original behavior. Existing pairing and language settings survive
+an in-place preview update. Credential expiry and authorization remain strict.
+
 The native camera scanner reads QR codes continuously without taking a photo;
 image import remains available. The exact APK passed Android emulator checks for
 scanner launch/cancellation, real HTTPS server discovery, and pairing refusal.
 Physical-camera decoding has not been verified for this release.
 
-The adjacent [publication record](https://www.automonique.fr/downloads/android/0.1.0-preview.11/99169a14f9f12fc65ef9a01c8bdb40bce6734bee89a8d745319fa7c0faef8def/publication.json) connects these
+The adjacent [publication record](https://www.automonique.fr/downloads/android/0.1.0-preview.12/a8039fcff384b002e65410c13e79481c7ae0b0dc909257aada20e7915f2c92b2/publication.json) connects these
 exact bytes to protected `main`, retained GitHub Actions run
-[`37217842269`](https://github.com/bext-stack/automonique-mobile/actions/runs/37217842269),
+[`41490054510`](https://github.com/bext-stack/automonique-mobile/actions/runs/41490054510),
 the GitHub artifact attestation, packaged manifest, ABIs, debug-only signer,
 toolchains, and dependency notices.
 
@@ -144,7 +151,7 @@ The earlier
 [0.1.0-preview.2 path](https://www.automonique.fr/downloads/android/0.1.0-preview.2/4c7b7fac529c8060ecc84691b00156c1fc42989c86adab467cdf9f43e959b353/automonique-mobile-0.1.0-preview.2.apk)
 stays published and unchanged; a preview path is never overwritten or
 redirected. The synthetic TalkBack traversal recorded for preview.1 was not
-repeated for preview.2 through preview.11 and does not cover those versions.
+repeated for preview.2 through preview.12 and does not cover those versions.
 
 ## Requirements
 
