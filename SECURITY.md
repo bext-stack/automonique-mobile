@@ -28,9 +28,12 @@ The Platform v2 client is bound to the current credential generation and exact
 HTTPS endpoint. It negotiates before use, requires explicit project roots,
 keeps authority previews memory-only and single-use, and treats submission as a
 refresh obligation rather than local proof of success.
-The Expo SDK 57 native tooling hardens the pinned `xcode@3.0.1` dependency at
-install time: an exact-digest patch replaces its CommonJS `uuid.v4()` call with
-Node's `crypto.randomUUID()`, while npm resolves `uuid@14.0.2`. Installation and
-validation fail closed if either reviewed dependency or source digest drifts.
+The Expo SDK 57 native tooling uses `xcode@4.0.0`, which replaces the uuid
+dependency upstream with Node's `crypto.randomUUID()`. Installation and
+validation verify the reviewed source digest and UUID generation behavior.
+The local-notifications-only patch remains pinned to expo-notifications
+57.0.24; its Gradle changes from 57.0.21 only update the package version.
+Security overrides pin decode-uri-component 0.5.1 and Zod 4.6.7; type checking,
+linting, tests, and platform exports exercise their consumers before release.
 Native signing custody, immutable build evidence, production authorization, and
 incident rollback follow [docs/release-governance.md](docs/release-governance.md).

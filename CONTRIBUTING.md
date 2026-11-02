@@ -7,8 +7,8 @@ npm run validate
 ```
 
 Do not disable npm lifecycle scripts. The reviewed Expo SDK 57 dependency graph
-still includes `xcode@3.0.1`; installation replaces its sole UUID call with
-Node's `crypto.randomUUID` and validation rejects missing or drifted hardening.
+uses `xcode@4.0.0` with native `crypto.randomUUID`. Installation verifies its
+exact source digest and applies the native notification/referrer restrictions.
 
 Keep screens behind `MobileAutomoniqueGateway`. Do not add generic execution,
 provider credentials, direct database access, offline mutation queues, or

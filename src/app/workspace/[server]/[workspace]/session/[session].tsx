@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { Redirect, useLocalSearchParams } from 'expo-router';
 import { Text } from 'react-native';
 
@@ -15,6 +17,8 @@ import { useWorkspaces } from '@/providers/workspace-provider';
 import { usePalette } from '@/theme/palette';
 
 export default function ExactWorkspaceSessionLink() {
+  const { t } = useLanguage();
+
   const params = useLocalSearchParams<{
     server: string;
     tenant: string;
@@ -110,11 +114,12 @@ export default function ExactWorkspaceSessionLink() {
         accessibilityRole="header"
         style={{ color: palette.text, fontSize: 24, fontWeight: '800' }}
       >
-        Retained session unavailable
+        {t('Retained session unavailable')}
       </Text>
       <Text style={{ color: palette.textMuted }}>
-        The exact server, workspace, workspace revision, session relation, and
-        retained mobile session must all still match.
+        {t(
+          'The exact server, workspace, workspace revision, session relation, and retained mobile session must all still match.',
+        )}
       </Text>
     </Screen>
   );

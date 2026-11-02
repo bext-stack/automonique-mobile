@@ -7,6 +7,14 @@ import type { MobileLifecycleState } from '@/core/mobile-lifecycle';
 
 import { Navigation } from './app/_layout';
 
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  __esModule: true,
+  default: {
+    getItem: jest.fn(async () => null),
+    setItem: jest.fn(async () => undefined),
+  },
+}));
+
 let mockPhase: MobileLifecycleState['phase'] = 'loading';
 
 jest.mock('@/providers/production-mobile-provider', () => ({

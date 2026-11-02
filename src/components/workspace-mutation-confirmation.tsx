@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { PreparedWorkspaceMutation } from '@/core/workspace-v2-gateway';
@@ -39,6 +41,8 @@ export function WorkspaceMutationConfirmation({
   readonly onConfirm: () => void;
   readonly onDeny: () => void;
 }) {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   const { preview } = prepared;
   const authority = AUTHORITY_AXES.map((axis) => ({
@@ -49,7 +53,7 @@ export function WorkspaceMutationConfirmation({
   return (
     <View
       accessibilityRole="summary"
-      accessibilityLabel="Workspace authority preview"
+      accessibilityLabel={t('Workspace authority preview')}
       style={[
         styles.card,
         { backgroundColor: palette.surface, borderColor: palette.warning },
@@ -59,51 +63,60 @@ export function WorkspaceMutationConfirmation({
         accessibilityRole="header"
         style={[styles.title, { color: palette.text }]}
       >
-        Confirm workspace change
+        {t('Confirm workspace change')}
       </Text>
       <Text style={[styles.copy, { color: palette.textMuted }]}>
-        This is a server-issued preview. Nothing runs until you confirm this
-        exact revision.
+        {t(
+          'This is a server-issued preview. Nothing runs until you confirm this exact revision.',
+        )}
       </Text>
       <View style={styles.details}>
         <Text style={[styles.detail, { color: palette.text }]}>
-          Action · {preview.proposal.intent.kind.replaceAll('_', ' ')}
+          {t('Action ·') + ' '}
+          {preview.proposal.intent.kind.replaceAll('_', ' ')}
         </Text>
         <Text style={[styles.detail, { color: palette.text }]}>
-          Project · {prepared.project}
+          {t('Project ·') + ' '}
+          {prepared.project}
         </Text>
         <Text style={[styles.detail, { color: palette.text }]}>
-          Server · {authorityPreview.serverIdentity}
+          {t('Server ·') + ' '}
+          {authorityPreview.serverIdentity}
         </Text>
         <Text style={[styles.detail, { color: palette.text }]}>
-          Workspace · {authorityPreview.workspaceId} revision{' '}
+          {t('Workspace ·') + ' '}
+          {authorityPreview.workspaceId} {' ' + t('revision')}{' '}
           {authorityPreview.workspaceRevision}
         </Text>
         <Text style={[styles.detail, { color: palette.text }]}>
-          External task · {authorityPreview.externalWorkItem.provider} /{' '}
+          {t('External task ·') + ' '}
+          {authorityPreview.externalWorkItem.provider} /{' '}
           {authorityPreview.externalWorkItem.key} ·{' '}
           {authorityPreview.externalWorkItem.title}
         </Text>
         <Text style={[styles.detail, { color: palette.text }]}>
-          Result · {preview.resulting.label} ({preview.resulting.lifecycle})
+          {t('Result ·') + ' '}
+          {preview.resulting.label} ({preview.resulting.lifecycle})
         </Text>
         <Text style={[styles.detail, { color: palette.text }]}>
-          Preview revision · {preview.preview.revision.toString()}
+          {t('Preview revision ·') + ' '}
+          {preview.preview.revision.toString()}
         </Text>
         <Text style={[styles.detail, { color: palette.text }]}>
-          Server approval · {preview.approval.replaceAll('_', ' ')}
+          {t('Server approval ·') + ' '}
+          {preview.approval.replaceAll('_', ' ')}
         </Text>
       </View>
       <View
-        accessibilityLabel="Effective workspace authority"
+        accessibilityLabel={t('Effective workspace authority')}
         style={[styles.authority, { backgroundColor: palette.surfaceMuted }]}
       >
         <Text style={[styles.authorityTitle, { color: palette.text }]}>
-          Authority ceiling
+          {t('Authority ceiling')}
         </Text>
         {authority.length === 0 ? (
           <Text style={[styles.meta, { color: palette.textMuted }]}>
-            No authority grants requested.
+            {t('No authority grants requested.')}
           </Text>
         ) : (
           authority.map((entry) => (
@@ -111,19 +124,20 @@ export function WorkspaceMutationConfirmation({
               key={entry.axis}
               style={[styles.meta, { color: palette.textMuted }]}
             >
-              {entry.axis} · {entry.effective} effective of {entry.inherited}{' '}
-              inherited
+              {entry.axis} · {entry.effective} {' ' + t('effective of') + ' '}
+              {entry.inherited} {t('inherited')}
             </Text>
           ))
         )}
       </View>
       <Text style={[styles.meta, { color: palette.textMuted }]}>
-        Expires {new Date(Number(preview.expires_at_ms)).toISOString()}
+        {t('Expires') + ' '}
+        {new Date(Number(preview.expires_at_ms)).toISOString()}
       </Text>
       <View style={styles.actions}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Deny workspace change"
+          accessibilityLabel={t('Deny workspace change')}
           disabled={busy}
           onPress={onDeny}
           style={[
@@ -132,11 +146,13 @@ export function WorkspaceMutationConfirmation({
             busy && styles.disabled,
           ]}
         >
-          <Text style={{ color: palette.text, fontWeight: '800' }}>Deny</Text>
+          <Text style={{ color: palette.text, fontWeight: '800' }}>
+            {t('Deny')}
+          </Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Confirm exact workspace change"
+          accessibilityLabel={t('Confirm exact workspace change')}
           disabled={busy}
           onPress={onConfirm}
           style={[
@@ -146,7 +162,7 @@ export function WorkspaceMutationConfirmation({
           ]}
         >
           <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-            Confirm exact change
+            {t('Confirm exact change')}
           </Text>
         </Pressable>
       </View>

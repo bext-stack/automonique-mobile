@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { Screen } from './components/screen';
+import { router } from 'expo-router';
+import ChatScreen from './app/(tabs)/index';
+
 import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import type { ReactNode } from 'react';
 
 import ActivityScreen from './app/(tabs)/activity';
-import ApprovalsScreen from './app/(tabs)/approvals';
-import OverviewScreen from './app/(tabs)/index';
+import ApprovalsScreen, { ApprovalContent } from './app/(tabs)/approvals';
+import OverviewScreen from './app/(tabs)/overview';
 import SessionsScreen from './app/(tabs)/sessions';
 import SessionScreen from './app/session/[id]';
 import SettingsScreen from './app/settings';
@@ -68,6 +72,7 @@ jest.mock('@/core/server-connection', () => ({
 }));
 
 jest.mock('expo-router', () => ({
+  router: { push: jest.fn() },
   Link: ({ children }: { readonly children: ReactNode }) => {
     const { isValidElement } =
       jest.requireActual<typeof import('react')>('react');
@@ -403,7 +408,7 @@ test('overview exposes real attention and authorized workload counts', async () 
   mockUseMobile.mockReturnValue(mobileValue(['attach']));
   const view = await render(<OverviewScreen />);
 
-  expect(view.getByText('Your Automonique')).toBeTruthy();
+  expect(view.getByText('Recent sessions')).toBeTruthy();
   expect(view.getByLabelText('Active: 2')).toBeTruthy();
   expect(view.getByLabelText('Approvals: 1')).toBeTruthy();
   expect(view.getByText('Review 1 pending approval')).toBeTruthy();
@@ -641,11 +646,11 @@ test('a refusal without a receipt id remains visibly reconcilable', async () => 
 
 test('task creation remains unavailable without the explicit device grant', async () => {
   mockUseMobile.mockReturnValue(mobileValue(['attach', 'follow_up']));
-  const view = await render(<TaskScreen />);
+  const view = await render(<ChatScreen />);
   expect(view.getByText(/This device cannot start tasks yet/)).toBeTruthy();
-  expect(view.getByLabelText('Task instructions').props.editable).toBe(false);
+  expect(view.getByLabelText('Message Monique').props.editable).toBe(false);
   expect(
-    view.getByRole('button', { name: 'Start task' }).props.accessibilityState
+    view.getByRole('button', { name: 'Send message' }).props.accessibilityState
       .disabled,
   ).toBe(true);
 });
@@ -676,22 +681,28 @@ test('authorized task submission persists a receipt and opens only a freshly aut
   const view = await render(<TaskScreen />);
   await waitFor(() => expect(AsyncStorage.getItem).toHaveBeenCalled());
   await fireEvent.changeText(
-    view.getByLabelText('Task instructions'),
+    view.getByLabelText('Message Monique'),
     'Create a script',
   );
   await waitFor(() =>
     expect(
-      view.getByRole('button', { name: 'Start task' }).props.accessibilityState
-        .disabled,
+      view.getByRole('button', { name: 'Send message' }).props
+        .accessibilityState.disabled,
     ).toBe(false),
   );
-  await fireEvent.press(view.getByRole('button', { name: 'Start task' }));
-  await waitFor(() => expect(view.getByText('Open task session')).toBeTruthy());
+  await fireEvent.press(view.getByRole('button', { name: 'Send message' }));
+  await waitFor(() =>
+    expect(view.getByText('Continue conversation')).toBeTruthy(),
+  );
   expect(request.mock.calls.map(([request]) => request.action)).toEqual([
     'prepare',
     'submit',
   ]);
   expect(value.refreshProjection).toHaveBeenCalledTimes(1);
+  expect(router.push).toHaveBeenCalledWith({
+    pathname: '/session/[id]',
+    params: { id: value.snapshot.sessions[0]!.target.coordinate.id },
+  });
   const writes = jest.mocked(AsyncStorage.setItem).mock.calls;
   expect(
     writes.some(
@@ -720,6 +731,97 @@ test('an invite that expires during review cannot be exchanged', async () => {
     expect(mockPair).not.toHaveBeenCalled();
     expect(view.queryByLabelText('Pairing invite confirmation')).toBeNull();
     expect(view.getByText(/This invite has expired/)).toBeTruthy();
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test('conversation approvals exclude other sessions', async () => {
+  const value = mobileValue(['decide_approval']);
+  mockUseMobile.mockReturnValue(value);
+  const view = await render(<ApprovalContent sessionId="unrelated-session" />);
+  expect(view.queryByText(value.snapshot.approvals[0]!.title)).toBeNull();
+  expect(value.decideApproval).not.toHaveBeenCalled();
+});
+
+test('lost sessions with historical run IDs are not counted as running', async () => {
+  const value = mobileValue(['attach']);
+  value.snapshot.sessions = value.snapshot.sessions.map((session) => ({
+    ...session,
+    state: 'lost' as const,
+  }));
+  mockUseMobile.mockReturnValue(value);
+  const view = await render(<OverviewScreen />);
+  expect(view.getByLabelText('Running: 0')).toBeTruthy();
+});
+
+test('chat scroll offers a way back to the latest messages without following while reading history', async () => {
+  const view = await render(<Screen followTail showConnectionBanner={false} />);
+  const scroll = view.getByLabelText('Conversation messages');
+  await fireEvent.scroll(scroll, {
+    nativeEvent: {
+      contentSize: { height: 2000, width: 400 },
+      layoutMeasurement: { height: 500, width: 400 },
+      contentOffset: { y: 300, x: 0 },
+    },
+  });
+  expect(view.getByLabelText('Jump to latest message')).toBeTruthy();
+  await fireEvent(scroll, 'contentSizeChange', 400, 2100);
+  expect(view.getByLabelText('Jump to latest message')).toBeTruthy();
+  await fireEvent.press(view.getByLabelText('Jump to latest message'));
+  expect(view.queryByLabelText('Jump to latest message')).toBeNull();
+});
+
+test('a suggestion only fills the draft and never submits work', async () => {
+  const request = jest.fn();
+  const value = {
+    ...mobileValue(['start_task']),
+    storageScope: 'server:suggestion-device:a1',
+    taskGateway: { request },
+  };
+  mockUseMobile.mockReturnValue(value);
+  const view = await render(<TaskScreen />);
+  await fireEvent.press(view.getByLabelText('Help me plan a change'));
+  expect(view.getByLabelText('Message Monique')).toHaveProp(
+    'value',
+    'Help me plan a change: ',
+  );
+  expect(router.push).not.toHaveBeenCalled();
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('dashboard does not present cached empty counts as up-to-date', async () => {
+  const value = mobileValue(['attach']);
+  mockUseMobile.mockReturnValue({
+    ...value,
+    snapshot: {
+      ...value.snapshot,
+      sessions: [],
+      approvals: [],
+      receipts: [],
+      connection: { ...value.snapshot.connection, phase: 'stale' },
+    },
+  });
+  const view = await render(<OverviewScreen />);
+  expect(view.getByText('Saved status')).toBeTruthy();
+  expect(view.queryByText('You’re caught up')).toBeNull();
+});
+
+test('an approval that expires while the page is open cannot be submitted', async () => {
+  let now = 1800000000000;
+  const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+  try {
+    const mobile = mobileValue(['decide_approval'], {
+      approvalExpiresAt: new Date(now + 1000).toISOString(),
+    });
+    mockUseMobile.mockReturnValue(mobile);
+    const view = await render(<ApprovalsScreen />);
+    const approve = view.getByLabelText(
+      'grant Publish the preview build at revision 3',
+    );
+    now += 2000;
+    await fireEvent.press(approve);
+    expect(mobile.decideApproval).not.toHaveBeenCalled();
   } finally {
     clock.mockRestore();
   }

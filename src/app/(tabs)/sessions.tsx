@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { Link } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -24,6 +26,8 @@ function matchesFilter(
 }
 
 export default function SessionsScreen() {
+  const { t } = useLanguage();
+
   const { snapshot } = useMobile();
   const palette = usePalette();
   const [filter, setFilter] = useState<SessionFilter>('all');
@@ -38,10 +42,11 @@ export default function SessionsScreen() {
           accessibilityRole="header"
           style={[styles.title, { color: palette.text }]}
         >
-          Sessions
+          {t('Sessions')}
         </Text>
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          {snapshot.sessions.length} authorized · {filtered.length} shown
+          {snapshot.sessions.length} {' ' + t('authorized ·') + ' '}
+          {filtered.length} {' ' + t('shown')}
         </Text>
       </View>
 
@@ -54,14 +59,14 @@ export default function SessionsScreen() {
           ])}
         >
           <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-            Run a task
+            {t('Run a task')}
           </Text>
         </Pressable>
       </Link>
       <View accessibilityRole="tablist" style={styles.filters}>
         {(['all', 'active', 'waiting', 'completed'] as const).map((value) => (
           <Pressable
-            key={value}
+            key={t(value)}
             accessibilityRole="tab"
             accessibilityState={{ selected: filter === value }}
             onPress={() => setFilter(value)}
@@ -83,7 +88,7 @@ export default function SessionsScreen() {
                 textTransform: 'capitalize',
               }}
             >
-              {value}
+              {t(value)}
             </Text>
           </Pressable>
         ))}
@@ -101,10 +106,14 @@ export default function SessionsScreen() {
             ]}
           >
             <Text style={[styles.emptyTitle, { color: palette.text }]}>
-              No {filter === 'all' ? '' : `${filter} `}sessions
+              {t('No') + ' '}
+              {filter === 'all' ? '' : `${t(filter)} `}
+              {t('sessions')}
             </Text>
             <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-              The server only returns sessions authorized for this device.
+              {t(
+                'The server only returns sessions authorized for this device.',
+              )}
             </Text>
           </View>
         )}

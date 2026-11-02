@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import {
   launchImageLibraryAsync,
@@ -39,6 +41,8 @@ export function PairingScanner({
   onCancel,
   onScan,
 }: PairingScannerProps) {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   const generation = useRef(0);
   const inFlight = useRef(false);
@@ -176,28 +180,29 @@ export function PairingScanner({
               accessibilityRole="header"
               style={[styles.title, { color: palette.text }]}
             >
-              Open pairing QR code
+              {t('Open pairing QR code')}
             </Text>
             <Text style={[styles.copy, { color: palette.textMuted }]}>
-              Point your camera at the code on another screen. It scans
-              automatically, without taking a photo. You can also import the
-              downloaded QR image. Review the server before connecting.
+              {t(
+                'Point your camera at the code on another screen. It scans automatically, without taking a photo. You can also import the downloaded QR image. Review the server before connecting.',
+              )}
             </Text>
           </View>
 
           <View
-            accessibilityLabel="Pairing QR scanner"
+            accessibilityLabel={t('Pairing QR scanner')}
             style={[
               styles.captureCard,
               { backgroundColor: palette.surface, borderColor: palette.border },
             ]}
           >
             <Text style={[styles.captureTitle, { color: palette.text }]}>
-              QR
+              {t('QR')}
             </Text>
             <Text style={[styles.copy, { color: palette.textMuted }]}>
-              QR images are read on this device and are never uploaded.
-              Downloaded invitations expire after five minutes.
+              {t(
+                'QR images are read on this device and are never uploaded. Downloaded invitations expire after five minutes.',
+              )}
             </Text>
           </View>
 
@@ -205,7 +210,7 @@ export function PairingScanner({
             accessibilityLiveRegion="polite"
             style={[styles.copy, { color: palette.textMuted }]}
           >
-            {message}
+            {t(message)}
           </Text>
           <Pressable
             accessibilityRole="button"
@@ -220,7 +225,7 @@ export function PairingScanner({
             ]}
           >
             <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-              {locked ? 'Reading QR code…' : 'Scan with camera'}
+              {locked ? t('Reading QR code…') : t('Scan with camera')}
             </Text>
           </Pressable>
 
@@ -234,7 +239,7 @@ export function PairingScanner({
             ]}
           >
             <Text style={{ color: palette.text, fontWeight: '800' }}>
-              Import QR image
+              {t('Import QR image')}
             </Text>
           </Pressable>
 
@@ -244,7 +249,7 @@ export function PairingScanner({
             style={[styles.secondary, { borderColor: palette.border }]}
           >
             <Text style={{ color: palette.text, fontWeight: '800' }}>
-              Cancel
+              {t('Cancel')}
             </Text>
           </Pressable>
         </ScrollView>

@@ -1,21 +1,35 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
-import { Link } from 'expo-router';
+import { Link, router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ChatComposer } from '@/components/chat-composer';
 import { Screen } from '@/components/screen';
 import { createTaskExecution, type TaskHandle } from '@/core/task-execution';
 import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
 
-export default function TaskScreen() {
+export default function TaskScreen({
+  bottomInset = true,
+}: {
+  readonly bottomInset?: boolean;
+}) {
   const mobile = useMobile();
   // Remount state and abort requests when the selected device/server changes.
-  return <TaskComposer key={mobile.storageScope ?? 'unpaired'} />;
+  return (
+    <TaskComposer
+      key={mobile.storageScope ?? 'unpaired'}
+      bottomInset={bottomInset}
+    />
+  );
 }
-function TaskComposer() {
+function TaskComposer({ bottomInset }: { readonly bottomInset: boolean }) {
+  const { t } = useLanguage();
+
   const {
     snapshot,
     storageScope,
@@ -32,6 +46,7 @@ function TaskComposer() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const openCreatedConversation = useRef(false);
   const lifetime = useRef(new AbortController());
   const execution = useMemo(
     () =>
@@ -84,6 +99,7 @@ function TaskComposer() {
   async function run(submit: boolean) {
     if (!execution || !loaded || !allowed || inFlight.current) return;
     inFlight.current = true;
+    if (submit) openCreatedConversation.current = true;
     setBusy(true);
     setError(null);
     const signal = lifetime.current.signal;
@@ -119,89 +135,125 @@ function TaskComposer() {
   const session = snapshot.sessions.find(
     (entry) => entry.target.coordinate.id === handle?.sessionId,
   );
+  useEffect(() => {
+    if (
+      session &&
+      handle?.state === 'started' &&
+      openCreatedConversation.current
+    ) {
+      openCreatedConversation.current = false;
+      router.push({
+        pathname: '/session/[id]',
+        params: { id: session.target.coordinate.id },
+      });
+    }
+  }, [session, handle]);
   const validText =
     text.trim().length > 0 &&
     new TextEncoder().encode(text).byteLength <=
       snapshot.connection.limits.maxFollowUpBytes;
   const canSubmit = allowed && loaded && !busy && !pending && validText;
   return (
-    <Screen bottomInset>
-      <Text
-        accessibilityRole="header"
-        style={[styles.title, { color: palette.text }]}
-      >
-        Run a task
-      </Text>
-      <Text style={{ color: palette.textMuted }}>
-        Ask Monique to create files, run a script, or investigate a problem.
-        Open the resulting session to see progress and send follow-ups.
-      </Text>
+    <Screen
+      bottomInset={bottomInset}
+      showConnectionBanner={
+        snapshot.connection.phase !== 'live' || snapshot.connection.synthetic
+      }
+      contentContainerStyle={{ flexGrow: 1 }}
+      footer={
+        <ChatComposer
+          value={text}
+          onChangeText={setText}
+          editable={allowed && !busy && !pending}
+          canSend={canSubmit}
+          busy={busy || pending}
+          onSend={() => void run(true)}
+        />
+      }
+    >
+      <View style={styles.welcome}>
+        <Text
+          accessibilityRole="header"
+          style={[styles.title, { color: palette.text }]}
+        >
+          {t('What’s on your mind?')}
+        </Text>
+        <View style={styles.suggestions}>
+          {[
+            'Help me plan a change',
+            'Help me investigate a problem',
+            'Review an idea with me',
+          ].map((prompt, index) => (
+            <Pressable
+              key={prompt}
+              accessibilityRole="button"
+              accessibilityLabel={t(prompt)}
+              disabled={!allowed || busy || pending}
+              accessibilityState={{ disabled: !allowed || busy || pending }}
+              onPress={() => setText(t(prompt) + ': ')}
+              style={({ pressed }) => [
+                styles.suggestion,
+                {
+                  borderColor: palette.border,
+                  backgroundColor: pressed
+                    ? palette.surfaceMuted
+                    : palette.surface,
+                },
+              ]}
+            >
+              <Text style={{ color: palette.text, fontSize: 14 }}>
+                {
+                  [
+                    t('Plan a change'),
+                    t('Investigate a problem'),
+                    t('Explore an idea'),
+                  ][index]
+                }
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text style={[styles.scope, { color: palette.textMuted }]}>
+          {t('A new conversation in an isolated workspace.')}
+        </Text>
+      </View>
       {!granted && (
         <Text style={{ color: palette.textMuted }}>
-          This device cannot start tasks yet. Create a new pairing invitation in
-          the dashboard with “Allow this phone to start tasks” enabled, then
-          pair this phone.
+          {t(
+            'This device cannot start tasks yet. Create a new pairing invitation in the dashboard with “Allow this phone to start tasks” enabled, then pair this phone.',
+          )}
         </Text>
       )}
       {granted && !allowed && (
         <Text style={{ color: palette.textMuted }}>
-          Reconnect to start work or check task status.
+          {t('Reconnect to start work or check task status.')}
         </Text>
       )}
-      <TextInput
-        accessibilityLabel="Task instructions"
-        placeholder="What should Monique do?"
-        placeholderTextColor={palette.textMuted}
-        multiline
-        value={text}
-        onChangeText={setText}
-        editable={allowed && !busy && !pending}
-        style={[
-          styles.input,
-          {
-            color: palette.text,
-            borderColor: palette.border,
-            backgroundColor: palette.surface,
-          },
-        ]}
-      />
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ disabled: !canSubmit }}
-        disabled={!canSubmit}
-        onPress={() => {
-          void run(true);
-        }}
-        style={[
-          styles.button,
-          { backgroundColor: palette.accent, opacity: canSubmit ? 1 : 0.45 },
-        ]}
-      >
-        <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-          {busy ? 'Checking task…' : 'Start task'}
-        </Text>
-      </Pressable>
       <View accessibilityLiveRegion="polite" style={styles.status}>
         {pending && (
           <Text style={{ color: palette.text }}>
-            Waiting for confirmation. The app will check the saved receipt; it
-            will not submit the task again.
+            {t(
+              'Waiting for confirmation. The app will check the saved receipt; it will not submit the task again.',
+            )}
           </Text>
         )}
         {handle?.state === 'failed' && (
           <Text style={{ color: palette.text }}>
-            The server declined this task. You can edit the instructions and try
-            again.
+            {t(
+              'The server declined this task. You can edit the instructions and try again.',
+            )}
           </Text>
         )}
-        {handle?.state === 'started' && (
+        {handle?.state === 'started' && !session && (
           <Text style={{ color: palette.text }}>
-            Task started. Open its session to follow progress.
+            {t(
+              'Your conversation is ready. Open it to follow the reply and keep chatting.',
+            )}
           </Text>
         )}
         {error && (
           <Text accessibilityRole="alert" style={{ color: palette.text }}>
-            {error}
+            {error && t(error)}
           </Text>
         )}
       </View>
@@ -214,7 +266,9 @@ function TaskComposer() {
           }}
           style={styles.button}
         >
-          <Text style={{ color: palette.accent }}>Check task status</Text>
+          <Text style={{ color: palette.accent }}>
+            {t('Check task status')}
+          </Text>
         </Pressable>
       )}
       {session && (
@@ -228,13 +282,20 @@ function TaskComposer() {
           <Pressable
             accessibilityRole="button"
             style={StyleSheet.flatten([
-              styles.button,
-              { backgroundColor: palette.accent },
+              styles.resume,
+              { borderColor: palette.border },
             ])}
           >
-            <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-              Open task session
+            <Text
+              style={{
+                color: palette.textMuted,
+                fontWeight: '500',
+                fontSize: 14,
+              }}
+            >
+              {t('Continue conversation')}
             </Text>
+            <Text style={{ color: palette.textMuted }}>→</Text>
           </Pressable>
         </Link>
       )}
@@ -246,21 +307,54 @@ function TaskComposer() {
           }}
           style={styles.button}
         >
-          <Text style={{ color: palette.accent }}>Refresh connection</Text>
+          <Text style={{ color: palette.accent }}>
+            {t('Refresh connection')}
+          </Text>
         </Pressable>
       )}
     </Screen>
   );
 }
 const styles = StyleSheet.create({
-  title: { fontSize: 28, fontWeight: '800' },
-  input: {
-    minHeight: 160,
+  welcome: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 20,
+    paddingVertical: 20,
+  },
+  title: {
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  scope: { fontSize: 12, lineHeight: 18, textAlign: 'center', maxWidth: 310 },
+  suggestions: {
+    gap: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    maxWidth: 380,
+  },
+  suggestion: {
+    minHeight: 48,
     borderWidth: 1,
-    borderRadius: 16,
-    padding: 16,
-    textAlignVertical: 'top',
-    fontSize: 16,
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  resume: {
+    minHeight: 44,
+    paddingHorizontal: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
   },
   button: {
     minHeight: 48,

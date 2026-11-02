@@ -14,6 +14,14 @@ import {
 } from '@/core/native-pairing-scanner';
 import { MAX_PAIRING_OFFER_BYTES } from '@/core/pairing-offer';
 
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  __esModule: true,
+  default: {
+    getItem: jest.fn(async () => null),
+    setItem: jest.fn(async () => undefined),
+  },
+}));
+
 jest.mock('@/core/native-pairing-scanner', () => ({
   scanPairingQr: jest.fn(),
   dismissPairingScanner: jest.fn(),

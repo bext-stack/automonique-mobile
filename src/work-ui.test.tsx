@@ -6,6 +6,7 @@ import { MobileLifecycleError, type MobileWorkRequest } from '@automonique/sdk';
 import WorkScreen from './app/(tabs)/work';
 import { syntheticSnapshot } from './core/fixtures';
 
+jest.mock('expo-router', () => ({ useFocusEffect: jest.fn() }));
 const mockMobile = jest.fn();
 jest.mock('@/providers/mobile-provider', () => ({
   useMobile: () => mockMobile(),
@@ -84,9 +85,12 @@ test('work controls require an explicit pairing grant', async () => {
 test('reads the channel but approves only after a separate confirmation', async () => {
   const { request } = setup();
   const view = await render(<WorkScreen />);
+  await fireEvent.press(view.getByRole('tab', { name: 'Slack' }));
   await waitFor(() =>
     expect(view.getByText('Fixture channel message')).toBeTruthy(),
   );
+  await fireEvent.press(view.getByRole('tab', { name: 'Tickets' }));
+  await fireEvent.press(view.getByText('Fixture ticket'));
   await fireEvent.press(view.getByText('Approve ticket'));
   expect(request.mock.calls.some(([value]) => value.action === 'decide')).toBe(
     false,
@@ -110,7 +114,8 @@ test('reads the channel but approves only after a separate confirmation', async 
 test('reject requires a reason and sends the exact pending job coordinates', async () => {
   const { request } = setup();
   const view = await render(<WorkScreen />);
-  await waitFor(() => expect(view.getByText('Reject ticket')).toBeTruthy());
+  await waitFor(() => expect(view.getByText('Fixture ticket')).toBeTruthy());
+  await fireEvent.press(view.getByText('Fixture ticket'));
   await fireEvent.press(view.getByText('Reject ticket'));
   await fireEvent.press(view.getByText('Confirm action'));
   expect(request.mock.calls.some(([value]) => value.action === 'decide')).toBe(
@@ -156,6 +161,7 @@ test('a definite first-attempt refusal explains recovery and keeps new actions a
   const { request } = setup();
   const view = await render(<WorkScreen />);
   await waitFor(() => expect(view.getByText('Fixture ticket')).toBeTruthy());
+  await fireEvent.press(view.getByText('Fixture ticket'));
   request.mockRejectedValueOnce(
     new MobileLifecycleError(409, 'mobile_work_not_applied'),
   );
@@ -170,4 +176,72 @@ test('a definite first-attempt refusal explains recovery and keeps new actions a
   );
   expect(AsyncStorage.removeItem).toHaveBeenCalled();
   expect(view.queryByText('Retry same request')).toBeNull();
+});
+
+test('work sections isolate tickets, Slack and ticket creation without sending a command', async () => {
+  const { request } = setup();
+  const view = await render(<WorkScreen />);
+  await waitFor(() => expect(view.getByText('Fixture ticket')).toBeTruthy());
+  expect(view.queryByText('Fixture channel message')).toBeNull();
+  expect(view.queryByLabelText('GitHub issue URL')).toBeNull();
+  await fireEvent.press(view.getByRole('tab', { name: 'New ticket' }));
+  expect(view.getByLabelText('GitHub issue URL')).toBeTruthy();
+  expect(view.queryByText('Fixture ticket')).toBeNull();
+  expect(
+    request.mock.calls.every(
+      ([value]) => value.action === 'channel' || value.action === 'snapshot',
+    ),
+  ).toBe(true);
+});
+
+test('ticket search keeps the queue scoped and preserves its filter when returning from details', async () => {
+  setup();
+  const view = await render(<WorkScreen />);
+  await waitFor(() => expect(view.getByText('Fixture ticket')).toBeTruthy());
+  await fireEvent.changeText(view.getByLabelText('Search tickets'), 'Fixture');
+  await fireEvent.press(view.getByText('Fixture ticket'));
+  await fireEvent.press(view.getByText('Back to tickets'));
+  expect(view.getByLabelText('Search tickets')).toHaveProp('value', 'Fixture');
+  await fireEvent.changeText(view.getByLabelText('Search tickets'), 'no match');
+  expect(view.queryByText('Fixture ticket')).toBeNull();
+  expect(view.getByText('No tickets match these filters.')).toBeTruthy();
+});
+
+test('a Slack issue link prepares an editable ticket without dispatching it', async () => {
+  const { request } = setup();
+  request.mockResolvedValueOnce({
+    kind: 'channel',
+    channel: 'team',
+    text: '2026-11-02T12:00:00Z Alice: <https://github.com/example/repo/issues/42|Please review>',
+  } as never);
+  const view = await render(<WorkScreen />);
+  await fireEvent.press(view.getByRole('tab', { name: 'Slack' }));
+  await waitFor(() =>
+    expect(
+      view.getByLabelText(
+        'Prepare ticket: https://github.com/example/repo/issues/42',
+      ),
+    ).toBeTruthy(),
+  );
+  await fireEvent.press(
+    view.getByLabelText(
+      'Prepare ticket: https://github.com/example/repo/issues/42',
+    ),
+  );
+  expect(view.getByLabelText('GitHub issue URL')).toHaveProp(
+    'value',
+    'https://github.com/example/repo/issues/42',
+  );
+  expect(
+    request.mock.calls.every(
+      ([value]) => value.action === 'channel' || value.action === 'snapshot',
+    ),
+  ).toBe(true);
+  await fireEvent.press(view.getByText('Review ticket submission'));
+  expect(view.getByText('Confirm action')).toBeTruthy();
+  expect(
+    request.mock.calls.every(
+      ([value]) => value.action === 'channel' || value.action === 'snapshot',
+    ),
+  ).toBe(true);
 });

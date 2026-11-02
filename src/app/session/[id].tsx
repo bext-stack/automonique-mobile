@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import {
-  Alert,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { ApprovalContent } from '../(tabs)/approvals';
+import { ChatComposer } from '@/components/chat-composer';
 import { ReceiptCard } from '@/components/receipt-card';
 import { Screen } from '@/components/screen';
 import { TimelineEventCard } from '@/components/timeline-event-card';
@@ -35,6 +32,8 @@ function draftKey(id: string, scope: string | null): string {
 }
 
 export default function SessionScreen() {
+  const { t, language } = useLanguage();
+
   const params = useLocalSearchParams<{
     id: string;
     scope_server?: string;
@@ -61,6 +60,7 @@ export default function SessionScreen() {
   } = useWorkspaces();
   const palette = usePalette();
   const [draft, setDraft] = useState('');
+  const [details, setDetails] = useState(false);
   const [loadedDraftKey, setLoadedDraftKey] = useState<string | null>(null);
   const [dictating, setDictating] = useState(false);
   const [dictationMessage, setDictationMessage] = useState(
@@ -208,8 +208,10 @@ export default function SessionScreen() {
       <Screen bottomInset>
         <Text style={{ color: palette.text }}>
           {scopeRequested
-            ? 'The exact scoped session is no longer current. Return to the workspace and refresh before continuing.'
-            : 'Session is not present in the bounded projection.'}
+            ? t(
+                'The exact scoped session is no longer current. Return to the workspace and refresh before continuing.',
+              )
+            : t('Session is not present in the bounded projection.')}
         </Text>
       </Screen>
     );
@@ -244,7 +246,7 @@ export default function SessionScreen() {
       }
     } catch (error) {
       Alert.alert(
-        'Follow-up not sent',
+        t('Follow-up not sent'),
         error instanceof Error ? error.message : 'unknown_error',
       );
     }
@@ -278,7 +280,7 @@ export default function SessionScreen() {
         contextualStrings: ['Automonique', 'Monique'],
         continuous: false,
         interimResults: true,
-        lang: Intl.DateTimeFormat().resolvedOptions().locale || 'en-US',
+        lang: language === 'fr' ? 'fr-FR' : 'en-US',
         maxAlternatives: 1,
         requiresOnDeviceRecognition: true,
       });
@@ -297,79 +299,35 @@ export default function SessionScreen() {
       );
     } catch (error) {
       Alert.alert(
-        'Run not stopped',
+        t('Run not stopped'),
         error instanceof Error ? error.message : 'unknown_error',
       );
     }
   }
 
-  return (
-    <Screen bottomInset>
-      <View style={styles.header}>
-        <Text
-          accessibilityRole="header"
-          style={[styles.title, { color: palette.text }]}
-        >
-          {session.title}
-        </Text>
-        <Text style={[styles.meta, { color: palette.textMuted }]}>
-          {session.target.coordinate.authority}/{session.target.coordinate.kind}
-          /{session.target.coordinate.id}
-        </Text>
-        <Text style={[styles.meta, { color: palette.textMuted }]}>
-          revision {session.target.revision} · cursor {session.lastCursor}
-        </Text>
-        <Text style={[styles.meta, { color: palette.textMuted }]}>
-          run {session.run?.coordinate.id ?? 'none'}
-        </Text>
-      </View>
-
-      <View style={styles.timeline}>
-        <Text
-          accessibilityRole="header"
-          style={[styles.section, { color: palette.text }]}
-        >
-          Timeline
-        </Text>
-        {events.map((event) => (
-          <TimelineEventCard key={event.id} event={event} />
-        ))}
-      </View>
-
-      <View
-        style={[
-          styles.composer,
-          { backgroundColor: palette.surface, borderColor: palette.border },
-        ]}
-      >
-        <Text
-          accessibilityRole="header"
-          style={[styles.section, { color: palette.text }]}
-        >
-          Exact-session follow-up
-        </Text>
-        <TextInput
-          accessibilityLabel="Follow-up message"
-          editable={followUpAllowed}
-          multiline
-          maxLength={followUpLimit}
-          onChangeText={setDraft}
-          placeholder={
-            followUpAllowed
-              ? 'Send a bound follow-up…'
-              : 'Read only while stale or unauthorized'
-          }
-          placeholderTextColor={palette.textMuted}
-          style={[
-            styles.input,
-            { color: palette.text, borderColor: palette.border },
-          ]}
-          value={draft}
-        />
+  const composer = (
+    <ChatComposer
+      value={draft}
+      onChangeText={setDraft}
+      inputLabel="Follow-up message"
+      sendLabel="Send follow-up"
+      editable={followUpAllowed}
+      maxLength={followUpLimit}
+      placeholder={
+        followUpAllowed
+          ? t('Message Monique…')
+          : t('Replies unavailable — check connection')
+      }
+      canSend={
+        followUpAllowed && !dictating && !!draft.trim() && draftWithinLimit
+      }
+      busy={busyAction !== null}
+      onSend={() => void submitFollowUp()}
+      accessory={
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
-            dictating ? 'Stop voice dictation' : 'Start voice dictation'
+            dictating ? t('Stop voice dictation') : t('Start voice dictation')
           }
           accessibilityState={{ disabled: !followUpAllowed }}
           disabled={!followUpAllowed}
@@ -388,15 +346,20 @@ export default function SessionScreen() {
               fontWeight: '800',
             }}
           >
-            {dictating ? 'Stop listening' : 'Dictate with voice'}
+            {dictating ? t('■ Stop listening') : t('◉ Voice')}
           </Text>
         </Pressable>
+      }
+    >
+      {(dictating || !dictationMessage.startsWith('Voice is transcribed')) && (
         <Text
           accessibilityLiveRegion="polite"
           style={[styles.voiceStatus, { color: palette.textMuted }]}
         >
-          {dictationMessage}
+          {t(dictationMessage)}
         </Text>
+      )}
+      {draftBytes > followUpLimit * 0.8 && (
         <Text
           accessibilityLiveRegion="polite"
           style={[
@@ -406,71 +369,117 @@ export default function SessionScreen() {
             },
           ]}
         >
-          {draftBytes} / {followUpLimit} bytes
-          {draftWithinLimit ? '' : ' · too long'}
+          {draftBytes} / {followUpLimit} {' ' + t('bytes')}
+          {draftWithinLimit ? '' : t(' · too long')}
+        </Text>
+      )}
+      {session.run && session.state === 'active' && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Stop exact run ${session.run.coordinate.id}`}
+          accessibilityState={{ disabled: !stopAllowed }}
+          disabled={!stopAllowed}
+          onPress={() => void requestStop()}
+          style={[
+            styles.stop,
+            { borderColor: palette.danger, opacity: stopAllowed ? 1 : 0.45 },
+          ]}
+        >
+          <Text style={{ color: palette.danger, fontWeight: '800' }}>
+            {t('Stop response')}
+          </Text>
+        </Pressable>
+      )}
+    </ChatComposer>
+  );
+  return (
+    <Screen key={id} bottomInset footer={composer} followTail={!details}>
+      <View style={styles.header}>
+        <Text
+          accessibilityRole="header"
+          numberOfLines={2}
+          style={[styles.title, { color: palette.text }]}
+        >
+          {session.title}
         </Text>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Send follow-up"
-          accessibilityState={{
-            disabled:
-              !followUpAllowed ||
-              dictating ||
-              !draft.trim() ||
-              !draftWithinLimit,
-          }}
-          disabled={
-            !followUpAllowed || dictating || !draft.trim() || !draftWithinLimit
-          }
-          onPress={() => void submitFollowUp()}
-          style={[
-            styles.primary,
-            {
-              backgroundColor:
-                followUpAllowed && !dictating && draftWithinLimit
-                  ? palette.accent
-                  : palette.surfaceMuted,
-            },
-          ]}
+          accessibilityState={{ expanded: details }}
+          onPress={() => setDetails(!details)}
+          style={{ minHeight: 44, justifyContent: 'center' }}
         >
-          <Text
-            style={{
-              color:
-                followUpAllowed && !dictating && draftWithinLimit
-                  ? palette.accentText
-                  : palette.textMuted,
-              fontWeight: '800',
-            }}
-          >
-            Send follow-up
+          <Text style={{ color: palette.textMuted }}>
+            {details ? t('Hide details') : t('Conversation details')}
           </Text>
         </Pressable>
-        {session.run && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Stop exact run ${session.run.coordinate.id}`}
-            accessibilityState={{ disabled: !stopAllowed }}
-            disabled={!stopAllowed}
-            onPress={() => void requestStop()}
-            style={[
-              styles.stop,
-              { borderColor: palette.danger, opacity: stopAllowed ? 1 : 0.45 },
-            ]}
-          >
-            <Text style={{ color: palette.danger, fontWeight: '800' }}>
-              Stop exact run
+        {details && (
+          <View>
+            {' '}
+            <Text style={[styles.meta, { color: palette.textMuted }]}>
+              {session.target.coordinate.authority}/
+              {session.target.coordinate.kind}/{session.target.coordinate.id}
             </Text>
-          </Pressable>
+            <Text style={[styles.meta, { color: palette.textMuted }]}>
+              {t('revision') + ' '}
+              {session.target.revision} {' ' + t('· cursor') + ' '}
+              {session.lastCursor}
+            </Text>
+            <Text style={[styles.meta, { color: palette.textMuted }]}>
+              {t('run') + ' '}
+              {session.run?.coordinate.id ?? 'none'}
+            </Text>
+          </View>
         )}
       </View>
 
-      {receipts.length > 0 && (
+      <Text
+        accessibilityLiveRegion="polite"
+        style={{ color: palette.textMuted }}
+      >
+        {!session.attachable
+          ? t('Conversation saved')
+          : session.state === 'active'
+            ? t('Monique is working…')
+            : session.state === 'lost'
+              ? t('Run status unavailable. Check Details before retrying.')
+              : session.state === 'waiting'
+                ? t('Waiting for a decision')
+                : t('Conversation saved')}
+      </Text>
+      <View style={styles.timeline}>
+        {events.filter((event) => event.kind === 'message').length === 0 && (
+          <Text
+            style={{
+              color: palette.textMuted,
+              paddingVertical: 24,
+              textAlign: 'center',
+            }}
+          >
+            {session.state === 'active'
+              ? t('Monique is preparing a response…')
+              : t('No messages available yet.')}
+          </Text>
+        )}
+        {events
+          .filter((event) => details || event.kind === 'message')
+          .map((event) => (
+            <TimelineEventCard
+              key={event.id}
+              event={event}
+              diagnostics={details}
+            />
+          ))}
+      </View>
+
+      <ApprovalContent sessionId={id} />
+
+      {details && receipts.length > 0 && (
         <View style={styles.timeline}>
           <Text
             accessibilityRole="header"
             style={[styles.section, { color: palette.text }]}
           >
-            Durable receipts
+            {t('Durable receipts')}
           </Text>
           {receipts.map((receipt) => (
             <ReceiptCard
@@ -486,34 +495,19 @@ export default function SessionScreen() {
 
 const styles = StyleSheet.create({
   header: { gap: 5 },
-  title: { fontSize: 28, lineHeight: 34, fontWeight: '800' },
+  title: { fontSize: 18, lineHeight: 24, fontWeight: '800' },
   meta: { fontSize: 12 },
   section: { fontSize: 19, fontWeight: '800' },
   timeline: { gap: 11 },
-  composer: { borderWidth: 1, borderRadius: 18, padding: 15, gap: 12 },
-  input: {
-    minHeight: 104,
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    fontSize: 16,
-    textAlignVertical: 'top',
-  },
   byteLimit: { fontSize: 12, textAlign: 'right' },
   voice: {
     minHeight: 44,
-    borderWidth: 1,
+    paddingHorizontal: 12,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   voiceStatus: { fontSize: 12, lineHeight: 18 },
-  primary: {
-    minHeight: 48,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   stop: {
     minHeight: 46,
     borderWidth: 1,

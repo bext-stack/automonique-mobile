@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { LanguagePicker } from '@/components/language-picker';
+import { useLanguage } from '@/i18n/language';
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
 import { MobileHttpsOrigin, type MobilePairingOffer } from '@automonique/sdk';
@@ -63,6 +66,8 @@ function describeFollowUpLimit(bytes: number): string {
 }
 
 export default function SettingsScreen() {
+  const { t } = useLanguage();
+
   const { snapshot } = useMobile();
   const {
     state,
@@ -280,7 +285,7 @@ export default function SettingsScreen() {
         accessibilityLiveRegion="polite"
         style={[styles.copy, { color: palette.text }]}
       >
-        {message}
+        {message && t(message)}
       </Text>
     </View>
   );
@@ -291,14 +296,14 @@ export default function SettingsScreen() {
         <Link href="/(tabs)" replace asChild>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Open conversations and actions"
+            accessibilityLabel={t('Open conversations and actions')}
             style={StyleSheet.flatten([
               styles.button,
               { backgroundColor: palette.accent },
             ])}
           >
             <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-              Open Automonique
+              {t('Open Automonique')}
             </Text>
           </Pressable>
         </Link>
@@ -318,31 +323,40 @@ export default function SettingsScreen() {
           accessibilityRole="header"
           style={[styles.title, { color: palette.text }]}
         >
-          {needsSetup ? 'Connect your server' : 'Your Automonique servers'}
+          {needsSetup
+            ? t('Connect your server')
+            : t('Your Automonique servers')}
         </Text>
         <Text style={[styles.copy, { color: palette.textMuted }]}>
           {needsSetup
-            ? 'Use your existing self-hosted installation. The app verifies its public mobile API, then accepts a short-lived invite created by your server.'
-            : 'Each server keeps an independent credential. Exactly one selected server can receive commands.'}
+            ? t(
+                'Use your existing self-hosted installation. The app verifies its public mobile API, then accepts a short-lived invite created by your server.',
+              )
+            : t(
+                'Each server keeps an independent credential. Exactly one selected server can receive commands.',
+              )}
         </Text>
       </View>
+
+      <LanguagePicker />
 
       {!showPairing && messageNotice}
 
       {servers.length > 0 && (
         <View
-          accessibilityLabel="Automonique server inventory"
+          accessibilityLabel={t('Automonique server inventory')}
           style={[
             styles.card,
             { backgroundColor: palette.surface, borderColor: palette.border },
           ]}
         >
           <Text style={[styles.cardTitle, { color: palette.text }]}>
-            Servers
+            {t('Servers')}
           </Text>
           <Text style={[styles.copy, { color: palette.textMuted }]}>
-            Read-only discovery runs independently for each ready server. Only
-            the explicitly selected credential can authorize commands.
+            {t(
+              'Read-only discovery runs independently for each ready server. Only the explicitly selected credential can authorize commands.',
+            )}
           </Text>
           {servers.map((server) => {
             const profile = server.state.profile;
@@ -364,7 +378,9 @@ export default function SettingsScreen() {
                     {profile?.origin ?? 'Credential recovery required'}
                   </Text>
                   <Text style={[styles.status, { color: palette.textMuted }]}>
-                    {selected ? 'Selected for commands' : 'Read-only inventory'}
+                    {selected
+                      ? t('Selected for commands')
+                      : t('Read-only inventory')}
                     {' · '}
                     {server.state.phase.replaceAll('_', ' ')}
                   </Text>
@@ -390,7 +406,7 @@ export default function SettingsScreen() {
                     ]}
                   >
                     <Text style={{ color: palette.text, fontWeight: '800' }}>
-                      Select for commands
+                      {t('Select for commands')}
                     </Text>
                   </Pressable>
                 )}
@@ -405,7 +421,7 @@ export default function SettingsScreen() {
                     <Text
                       style={{ color: palette.accentText, fontWeight: '800' }}
                     >
-                      Refresh access
+                      {t('Refresh access')}
                     </Text>
                   </Pressable>
                 )}
@@ -421,7 +437,7 @@ export default function SettingsScreen() {
                     ]}
                   >
                     <Text style={{ color: palette.text, fontWeight: '800' }}>
-                      Revoke this server
+                      {t('Revoke this server')}
                     </Text>
                   </Pressable>
                 )}
@@ -436,7 +452,7 @@ export default function SettingsScreen() {
               style={[styles.button, { backgroundColor: palette.accent }]}
             >
               <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-                Add another server
+                {t('Add another server')}
               </Text>
             </Pressable>
           )}
@@ -470,12 +486,12 @@ export default function SettingsScreen() {
                 ]}
               >
                 <Text style={{ color: palette.text, fontWeight: '800' }}>
-                  Cancel adding server
+                  {t('Cancel adding server')}
                 </Text>
               </Pressable>
             )}
             <TextInput
-              accessibilityLabel="Automonique HTTPS endpoint"
+              accessibilityLabel={t('Automonique HTTPS endpoint')}
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="url"
@@ -485,7 +501,7 @@ export default function SettingsScreen() {
                 setEndpoint(value);
                 setServerCheck({ phase: 'idle' });
               }}
-              placeholder="https://ops.example.com"
+              placeholder={t('https://ops.example.com')}
               placeholderTextColor={palette.textMuted}
               style={[
                 styles.input,
@@ -501,8 +517,8 @@ export default function SettingsScreen() {
             >
               <Text style={{ color: palette.accentText, fontWeight: '800' }}>
                 {serverCheck.phase === 'checking'
-                  ? 'Checking…'
-                  : 'Check this server'}
+                  ? t('Checking…')
+                  : t('Check this server')}
               </Text>
             </Pressable>
             {serverCheck.phase === 'compatible' && (
@@ -517,7 +533,7 @@ export default function SettingsScreen() {
                 ]}
               >
                 <Text style={[styles.resultTitle, { color: palette.success }]}>
-                  Compatible Automonique server
+                  {t('Compatible Automonique server')}
                 </Text>
                 <Text style={[styles.metadata, { color: palette.text }]}>
                   {serverCheck.server.origin} ·{' '}
@@ -527,7 +543,8 @@ export default function SettingsScreen() {
                   selectable
                   style={[styles.digest, { color: palette.textMuted }]}
                 >
-                  Identity {serverCheck.server.serverIdentity}
+                  {t('Identity') + ' '}
+                  {serverCheck.server.serverIdentity}
                 </Text>
               </View>
             )}
@@ -537,7 +554,7 @@ export default function SettingsScreen() {
                 style={[styles.result, { borderColor: palette.danger }]}
               >
                 <Text style={[styles.resultTitle, { color: palette.danger }]}>
-                  Server not ready
+                  {t('Server not ready')}
                 </Text>
                 <Text style={[styles.copy, { color: palette.textMuted }]}>
                   {serverCheck.message}
@@ -583,20 +600,20 @@ export default function SettingsScreen() {
                 style={[styles.button, { backgroundColor: palette.accent }]}
               >
                 <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-                  Scan or import QR code
+                  {t('Scan or import QR code')}
                 </Text>
               </Pressable>
             )}
 
             <TextInput
-              accessibilityLabel="One-time pairing offer"
+              accessibilityLabel={t('One-time pairing offer')}
               autoCapitalize="none"
               autoCorrect={false}
               maxLength={MAX_PAIRING_OFFER_BYTES}
               multiline
               editable={!lifecycleBusy}
               onChangeText={setPairingOffer}
-              placeholder="Paste the invite copied from Monique"
+              placeholder={t('Paste the invite copied from Monique')}
               placeholderTextColor={palette.textMuted}
               style={[
                 styles.pairingInput,
@@ -611,14 +628,14 @@ export default function SettingsScreen() {
               style={[styles.secondaryButton, { borderColor: palette.border }]}
             >
               <Text style={{ color: palette.text, fontWeight: '800' }}>
-                Review pasted invite
+                {t('Review pasted invite')}
               </Text>
             </Pressable>
             {messageNotice}
 
             {pendingOffer !== null && (
               <View
-                accessibilityLabel="Pairing invite confirmation"
+                accessibilityLabel={t('Pairing invite confirmation')}
                 style={[
                   styles.confirmation,
                   {
@@ -628,14 +645,15 @@ export default function SettingsScreen() {
                 ]}
               >
                 <Text style={[styles.cardTitle, { color: palette.text }]}>
-                  Connect to {pendingOffer.origin}?
+                  {t('Connect to') + ' '}
+                  {pendingOffer.origin}?
                 </Text>
                 <Text style={[styles.copy, { color: palette.textMuted }]}>
-                  Invite expires{' '}
+                  {t('Invite expires')}{' '}
                   {new Date(
                     Number(pendingOffer.expires_at_ms),
                   ).toLocaleString()}
-                  . Confirm that this is your server before continuing.
+                  {t('. Confirm that this is your server before continuing.')}
                 </Text>
                 <Text
                   selectable
@@ -652,7 +670,9 @@ export default function SettingsScreen() {
                   <Text
                     style={{ color: palette.accentText, fontWeight: '800' }}
                   >
-                    {lifecycleBusy ? 'Connecting…' : 'Connect this server'}
+                    {lifecycleBusy
+                      ? t('Connecting…')
+                      : t('Connect this server')}
                   </Text>
                 </Pressable>
                 <Pressable
@@ -665,7 +685,7 @@ export default function SettingsScreen() {
                   ]}
                 >
                   <Text style={{ color: palette.text, fontWeight: '800' }}>
-                    Cancel invite
+                    {t('Cancel invite')}
                   </Text>
                 </Pressable>
               </View>
@@ -675,39 +695,45 @@ export default function SettingsScreen() {
       )}
 
       <View
-        accessibilityLabel="Mobile credential lifecycle"
+        accessibilityLabel={t('Mobile credential lifecycle')}
         style={[
           styles.card,
           { backgroundColor: palette.surface, borderColor: palette.border },
         ]}
       >
-        <Text style={[styles.cardTitle, { color: palette.text }]}>Access</Text>
+        <Text style={[styles.cardTitle, { color: palette.text }]}>
+          {t('Access')}
+        </Text>
         <Text style={[styles.copy, { color: palette.textMuted }]}>
           {state.phase !== 'ready'
             ? `Connection state: ${state.phase.replaceAll('_', ' ')}`
             : snapshot.connection.phase === 'live'
-              ? 'Connected and ready'
+              ? t('Connected and ready')
               : snapshot.connection.phase === 'reconnecting'
-                ? 'Paired · refreshing the server view'
-                : 'Paired, but the server view is not up to date. Commands stay paused until a refresh succeeds.'}
+                ? t('Paired · refreshing the server view')
+                : t(
+                    'Paired, but the server view is not up to date. Commands stay paused until a refresh succeeds.',
+                  )}
         </Text>
         {state.profile !== null && (
           <>
             <Text selectable style={[styles.metadata, { color: palette.text }]}>
-              Signed in as {state.profile.actor}
+              {t('Signed in as') + ' '}
+              {state.profile.actor}
             </Text>
             <Text style={[styles.status, { color: palette.textMuted }]}>
-              {state.profile.origin} · identity{' '}
+              {state.profile.origin} {' ' + t('· identity')}{' '}
               {shortIdentity(state.profile.serverIdentity)}
             </Text>
             <Text
               selectable
               style={[styles.digest, { color: palette.textMuted }]}
             >
-              Device {state.profile.credentialId}
+              {t('Device') + ' '}
+              {state.profile.credentialId}
             </Text>
             <Text style={[styles.status, { color: palette.textMuted }]}>
-              Access expires{' '}
+              {t('Access expires')}{' '}
               {new Date(
                 Number(state.profile.accessExpiresAtMs),
               ).toLocaleString()}
@@ -722,7 +748,7 @@ export default function SettingsScreen() {
             style={[styles.button, { backgroundColor: palette.accent }]}
           >
             <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-              Refresh secure access
+              {t('Refresh secure access')}
             </Text>
           </Pressable>
         )}
@@ -734,7 +760,7 @@ export default function SettingsScreen() {
             style={[styles.secondaryButton, { borderColor: palette.border }]}
           >
             <Text style={{ color: palette.text, fontWeight: '800' }}>
-              Revoke this device
+              {t('Revoke this device')}
             </Text>
           </Pressable>
         )}
@@ -742,18 +768,19 @@ export default function SettingsScreen() {
 
       {state.profile !== null && (
         <View
-          accessibilityLabel="Authorized mobile scope"
+          accessibilityLabel={t('Authorized mobile scope')}
           style={[
             styles.card,
             { backgroundColor: palette.surface, borderColor: palette.border },
           ]}
         >
           <Text style={[styles.cardTitle, { color: palette.text }]}>
-            Authorized scope
+            {t('Authorized scope')}
           </Text>
           <Text style={[styles.copy, { color: palette.textMuted }]}>
-            This phone can only use the actions and sessions issued by the
-            server. Changing the scope requires a new server authorization.
+            {t(
+              'This phone can only use the actions and sessions issued by the server. Changing the scope requires a new server authorization.',
+            )}
           </Text>
           <View style={styles.chips}>
             {state.profile.actions
@@ -767,14 +794,14 @@ export default function SettingsScreen() {
                   ]}
                 >
                   <Text style={[styles.chipText, { color: palette.text }]}>
-                    {ACTION_LABELS[action] ?? action.replaceAll('_', ' ')}
+                    {t(ACTION_LABELS[action] ?? action).replaceAll('_', ' ')}
                   </Text>
                 </View>
               ))}
           </View>
           <Text style={[styles.label, { color: palette.text }]}>
             {state.profile.actions.includes('all_sessions')
-              ? 'Administrator: all current and future conversations'
+              ? t('Administrator: all current and future conversations')
               : `Sessions (${state.profile.sessionScope.length})`}
           </Text>
           {state.profile.sessionScope.map((sessionId) => (
@@ -787,25 +814,29 @@ export default function SettingsScreen() {
             </Text>
           ))}
           <Text style={[styles.status, { color: palette.textMuted }]}>
-            Up to {state.profile.maxPageEvents} events per page · follow-ups up
-            to {describeFollowUpLimit(Number(state.profile.maxFollowUpBytes))}
+            {t('Up to') + ' '}
+            {state.profile.maxPageEvents}{' '}
+            {' ' + t('events per page · follow-ups up to') + ' '}
+            {describeFollowUpLimit(Number(state.profile.maxFollowUpBytes))}
           </Text>
         </View>
       )}
 
       <View
-        accessibilityLabel="Automonique SDK protocol metadata"
+        accessibilityLabel={t('Automonique SDK protocol metadata')}
         style={[
           styles.diagnostics,
           { backgroundColor: palette.surface, borderColor: palette.border },
         ]}
       >
-        <Text style={[styles.label, { color: palette.text }]}>Diagnostics</Text>
+        <Text style={[styles.label, { color: palette.text }]}>
+          {t('Diagnostics')}
+        </Text>
         <Text style={[styles.copy, { color: palette.textMuted }]}>
           {transportLabel}
         </Text>
         <Text style={[styles.metadata, { color: palette.text }]}>
-          {AUTOMONIQUE_SDK_METADATA.schema} · protocol v
+          {AUTOMONIQUE_SDK_METADATA.schema} {' ' + t('· protocol v')}
           {AUTOMONIQUE_SDK_METADATA.protocolVersion}
         </Text>
         <Text style={[styles.status, { color: palette.textMuted }]}>
@@ -826,12 +857,12 @@ export default function SettingsScreen() {
         ]}
       >
         <Text style={[styles.noticeTitle, { color: palette.text }]}>
-          Safe on unreliable networks
+          {t('Safe on unreliable networks')}
         </Text>
         <Text style={[styles.copy, { color: palette.textMuted }]}>
-          Cached reads and drafts remain available offline. Follow-ups,
-          decisions, and stops are disabled whenever the server view is stale;
-          uncertain commands reconcile by receipt instead of being replayed.
+          {t(
+            'Cached reads and drafts remain available offline. Follow-ups, decisions, and stops are disabled whenever the server view is stale; uncertain commands reconcile by receipt instead of being replayed.',
+          )}
         </Text>
       </View>
     </Screen>
@@ -847,6 +878,7 @@ function StepHeading({
   readonly title: string;
   readonly copy: string;
 }) {
+  const { t } = useLanguage();
   const palette = usePalette();
   return (
     <View style={styles.stepHeading}>
@@ -856,8 +888,12 @@ function StepHeading({
         </Text>
       </View>
       <View style={styles.stepCopy}>
-        <Text style={[styles.cardTitle, { color: palette.text }]}>{title}</Text>
-        <Text style={[styles.copy, { color: palette.textMuted }]}>{copy}</Text>
+        <Text style={[styles.cardTitle, { color: palette.text }]}>
+          {t(title)}
+        </Text>
+        <Text style={[styles.copy, { color: palette.textMuted }]}>
+          {t(copy)}
+        </Text>
       </View>
     </View>
   );

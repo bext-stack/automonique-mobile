@@ -2,8 +2,11 @@
 
 ## Product promise
 
-Automonique Mobile gives an operator a small, trustworthy control surface for
-work that is already running on an Automonique server. It is not a second
+Automonique Mobile opens with a conversation composer. The history menu resumes
+authorized conversations; Dashboard, Work, Projects and Approvals remain
+reachable without crowding the phone navigation. New conversations use the
+existing isolated-task service and continue in its retained session; they do not
+gain repository or infrastructure authority merely from conversational wording. It is not a second
 agent runtime. The server remains authoritative for identity, policy,
 execution, history, and mutation outcomes.
 
@@ -16,24 +19,26 @@ clear freshness, and explicit actions rather than an administration cockpit.
 
 ## Jobs to be done
 
-1. Open an overview that distinguishes active work, running sessions, pending
+1. Start a conversation, follow its reply, continue an existing conversation,
+   and decide its authorized approvals in context.
+2. Open an overview that distinguishes active work, running sessions, pending
    approvals, uncertain receipts, lost sessions, and connection freshness.
-2. See which authorized sessions need attention and whether the view is live,
+3. See which authorized sessions need attention and whether the view is live,
    reconnecting, stale, incompatible, or synthetic.
-3. Open one exact session and understand its identity, revision, run,
+4. Open one exact session and understand its identity, revision, run,
    freshness, cursor, and sanitized timeline.
-4. Send a deliberate follow-up to that exact session without accidentally
+5. Send a deliberate follow-up to that exact session without accidentally
    targeting another run or replaying an uncertain write.
-5. Review an approval's requester, impact, expiry, and exact revision before
+6. Review an approval's requester, impact, expiry, and exact revision before
    granting or denying it.
-6. Stop one exact run and receive an authoritative outcome.
-7. Review sanitized cross-session activity and recover the receipt for an
+7. Stop one exact run and receive an authoritative outcome.
+8. Review sanitized cross-session activity and recover the receipt for an
    ambiguous mutation by idempotency key without
    submitting the mutation again.
-8. Inspect the exact server identity, actor, actions, session scope, limits,
+9. Inspect the exact server identity, actor, actions, session scope, limits,
    and credential expiry granted to this phone.
-9. Retain a bounded read-only projection and message draft when connectivity
-   is lost.
+10. Retain a bounded read-only projection and message draft when connectivity
+    is lost.
 
 ## Historical first-slice outcome
 
@@ -257,3 +262,52 @@ Live-server acceptance remains an external gate. Terminal
 relay, attachments, uploads, and background mutation remain separate
 risk-reviewed work. See
 [workspace-companion-threat-model.md](workspace-companion-threat-model.md).
+
+## Interface languages
+
+English and French are available from a compact Language row at the bottom
+of the conversation menu and in Connection settings. The row opens a dedicated
+chooser that marks the current selection. The selection is stored locally for the app and restored on launch;
+changing language does not remount the mobile provider or clear an unsent draft.
+The UI defaults to English when no valid saved selection exists. A failed save
+keeps the current selection and shows an error.
+
+UI copy lives in `src/i18n/fr.json`, accessed with `useLanguage().t`. Translate
+application labels and status copy explicitly. Do not translate conversation
+bodies, project content, session IDs, authorization values or protocol fields.
+Unknown technical/server messages fall back to their original text. Dictation
+uses the selected interface language, while remaining on-device.
+
+The dashboard begins with connection status and a single row of four tappable
+metrics, then attention items and three compact recent sessions. It avoids a
+duplicate page heading and distinguishes cached counts from a live all-clear.
+
+## Work, projects and approvals on mobile
+
+Tasks separates the ticket list, Slack feed and new-ticket form into focused
+sections. Search and the awaiting-approval filter apply only to the authorized
+queue snapshot. Selecting a ticket opens its details; returning preserves the
+list filters. Android Back returns from details or a secondary section before
+leaving Tasks. Approve/reject retain the separate confirmation and durable
+receipt flow, and rejection still requires a reason.
+
+Projects puts search and attention filtering ahead of inventory details. Server
+selection stays explicit, partial coverage remains visible, and delegated access
+details expand on request. Opening a workspace retains its exact server and
+revision coordinates.
+
+Approvals presents the requester, requested change, impact and current expiry
+state before its actions. Diagnostic revision details expand on request; the
+conversation remains directly accessible. Expiry is checked again at the moment
+of a decision, even if the page has stayed open. No bulk approval action is added.
+
+Slack remains the existing read-only mobile feed. Messages are presented as
+searchable cards with author, local date/time, selectable text and expansion for
+long bodies. Unknown feed formats remain visible as plain text. HTTPS links are
+explicit user actions; credentials in URLs and other protocols do not produce
+link actions. A github.com issue link can prepare the new-ticket form, but never
+submits it. The existing review and confirmation steps still apply.
+GitHub issue URLs, including Slack labels that omit the scheme, display as one
+`owner/repository #number` reference. Repeated identical issue links share one
+set of actions; the original HTTPS destination is retained for opening and the
+canonical issue URL is used only to prefill a ticket draft.
