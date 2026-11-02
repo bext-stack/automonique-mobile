@@ -21,20 +21,21 @@
     "@automonique/sdk": "file:vendor/automonique-sdk-0.1.0.tgz",
     "@react-native-async-storage/async-storage": "2.2.0",
     "base64-js": "1.5.1",
-    "expo": "~57.0.18",
+    "expo": "~57.0.31",
     "expo-constants": "~57.0.16",
-    "expo-crypto": "~57.0.2",
-    "expo-image-manipulator": "~57.0.14",
+    "expo-crypto": "~57.0.4",
+    "expo-image-manipulator": "~57.0.21",
     "expo-image-picker": "~57.0.14",
-    "expo-linking": "~57.0.8",
-    "expo-notifications": "~57.0.15",
-    "expo-router": "~57.0.17",
+    "expo-linking": "~57.0.13",
+    "expo-notifications": "~57.0.24",
+    "expo-router": "~57.0.29",
     "expo-secure-store": "~57.0.2",
     "expo-speech-recognition": "56.0.1",
-    "expo-splash-screen": "~57.0.8",
+    "expo-splash-screen": "~57.0.10",
     "expo-status-bar": "~57.0.1",
     "jpeg-js": "0.4.4",
     "jsqr": "1.4.0",
+    "node-forge": "file:vendor/node-forge-1.4.1-automonique.1.tgz",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
@@ -43,8 +44,7 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-web": "~0.21.0",
-    "react-native-worklets": "0.10.1",
-    "node-forge": "file:vendor/node-forge-1.4.1-automonique.1.tgz"
+    "react-native-worklets": "0.10.1"
   },
   "devDependencies": {
     "@react-native/jest-preset": "0.86.3",
@@ -52,20 +52,21 @@
     "@types/jest": "29.5.14",
     "@types/qrcode": "1.5.6",
     "@types/react": "~19.2.2",
+    "braces": "file:vendor/braces-3.0.4-automonique.1.tgz",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~57.0.2",
     "eslint-config-prettier": "^10.1.8",
     "expo-build-properties": "~57.0.15",
     "expo-doctor": "^1.20.3",
     "jest": "29.7.0",
-    "jest-expo": "~57.0.5",
+    "jest-expo": "~57.0.6",
     "prettier": "^3.9.6",
     "qrcode": "1.5.4",
-    "typescript": "~6.0.3",
-    "braces": "file:vendor/braces-3.0.4-automonique.1.tgz"
+    "test-renderer": "1.2.0",
+    "typescript": "~6.0.3"
   },
   "scripts": {
-    "postinstall": "node scripts/harden-xcode-uuid.mjs && node scripts/harden-expo-application.mjs && node scripts/harden-expo-notifications-local-only.mjs && node scripts/verify-node-forge.mjs && node scripts/verify-braces.mjs",
+    "postinstall": "node scripts/harden-xcode-uuid.mjs && node scripts/harden-expo-application.mjs && node scripts/harden-expo-notifications-local-only.mjs && node scripts/verify-node-forge.mjs && node scripts/verify-braces.mjs && node scripts/harden-query-string.mjs",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
@@ -82,7 +83,7 @@
     "notices:generate": "node scripts/generate-third-party-notices.mjs",
     "notices:check": "node scripts/generate-third-party-notices.mjs --check",
     "native:verify": "node scripts/verify-native-policy.mjs",
-    "security:verify": "node scripts/harden-xcode-uuid.mjs --check && node scripts/harden-expo-application.mjs --check && node scripts/harden-expo-notifications-local-only.mjs --check && node scripts/verify-node-forge.mjs && node scripts/verify-braces.mjs",
+    "security:verify": "node scripts/harden-xcode-uuid.mjs --check && node scripts/harden-expo-application.mjs --check && node scripts/harden-expo-notifications-local-only.mjs --check && node scripts/verify-node-forge.mjs && node scripts/verify-braces.mjs && node scripts/harden-query-string.mjs --check",
     "production:verify": "node scripts/verify-production-boundary.mjs",
     "production:verify:test": "node --test scripts/verify-production-boundary.test.mjs",
     "production:verify:bundle": "node scripts/verify-production-boundary.mjs --require-bundle",
@@ -92,11 +93,10 @@
     "validate": "npm run sdk:verify && npm run sdk:drift:test && npm run notices:check && npm run security:verify && npm run native:verify && npm run production:verify:test && npm run production:verify && npm run audit:high && npm run typecheck && npm run lint && npm run test:ci && npm run format:check && npm run doctor && npm run bundle:platforms && npm run production:verify:bundle"
   },
   "overrides": {
-    "xcode": {
-      "uuid": "14.0.2"
-    },
     "node-forge": "$node-forge",
-    "braces": "$braces"
+    "braces": "$braces",
+    "decode-uri-component": "0.5.1",
+    "zod": "4.6.7"
   },
   "private": true,
   "jest": {
@@ -106,7 +106,7 @@
       "/dist/"
     ],
     "transformIgnorePatterns": [
-      "/node_modules/(?!(.pnpm|react-native|@react-native|@react-native-community|expo|@expo|@expo-google-fonts|react-navigation|@react-navigation|@sentry/react-native|native-base|standard-navigation|@automonique/sdk))",
+      "/node_modules/(?!(.pnpm|react-native|@react-native|@react-native-community|expo|@expo|@expo-google-fonts|react-navigation|@react-navigation|@sentry/react-native|native-base|standard-navigation|decode-uri-component|@automonique/sdk))",
       "/node_modules/react-native-reanimated/plugin/",
       "/node_modules/@react-native/babel-preset/"
     ]
