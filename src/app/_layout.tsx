@@ -32,8 +32,11 @@ export function Navigation() {
       >
         <Stack.Protected guard={operational}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="task" options={{ title: 'Run a task' }} />
-          <Stack.Screen name="session/[id]" options={{ title: 'Session' }} />
+          <Stack.Screen name="task" options={{ title: 'New conversation' }} />
+          <Stack.Screen
+            name="session/[id]"
+            options={{ title: 'Conversation' }}
+          />
           <Stack.Screen
             name="workspace/[server]/[workspace]/index"
             options={{ title: 'Workspace' }}

@@ -9,7 +9,7 @@ function eventContent(event: SessionEvent): { title: string; body: string } {
   switch (event.kind) {
     case 'message':
       return {
-        title: event.role === 'user' ? 'Operator' : 'Automonique',
+        title: event.role === 'user' ? 'You' : 'Monique',
         body: event.text,
       };
     case 'tool':
@@ -24,7 +24,13 @@ function eventContent(event: SessionEvent): { title: string; body: string } {
   }
 }
 
-export function TimelineEventCard({ event }: { readonly event: SessionEvent }) {
+export function TimelineEventCard({
+  event,
+  diagnostics = false,
+}: {
+  readonly event: SessionEvent;
+  readonly diagnostics?: boolean;
+}) {
   const palette = usePalette();
   const content = eventContent(event);
   const preview = event.provenance === 'preview';
@@ -32,6 +38,10 @@ export function TimelineEventCard({ event }: { readonly event: SessionEvent }) {
     <View
       style={[
         styles.card,
+        event.kind === 'message' && {
+          alignSelf: event.role === 'user' ? 'flex-end' : 'stretch',
+          maxWidth: event.role === 'user' ? '92%' : '100%',
+        },
         { backgroundColor: palette.surface, borderColor: palette.border },
       ]}
     >
@@ -39,19 +49,23 @@ export function TimelineEventCard({ event }: { readonly event: SessionEvent }) {
         <Text style={[styles.title, { color: palette.text }]}>
           {content.title}
         </Text>
-        <Text
-          style={[
-            styles.provenance,
-            { color: preview ? palette.preview : palette.textMuted },
-          ]}
-        >
-          {event.provenance}
-        </Text>
+        {(diagnostics || preview || event.provenance === 'synthetic') && (
+          <Text
+            style={[
+              styles.provenance,
+              { color: preview ? palette.preview : palette.textMuted },
+            ]}
+          >
+            {event.provenance}
+          </Text>
+        )}
       </View>
       <Text style={[styles.body, { color: palette.text }]}>{content.body}</Text>
-      <Text style={[styles.cursor, { color: palette.textMuted }]}>
-        cursor {event.cursor}
-      </Text>
+      {diagnostics && (
+        <Text style={[styles.cursor, { color: palette.textMuted }]}>
+          cursor {event.cursor}
+        </Text>
+      )}
     </View>
   );
 }

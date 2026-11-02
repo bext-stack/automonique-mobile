@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-import type { PropsWithChildren } from 'react';
+import type { PropsWithChildren, ReactNode } from 'react';
 import {
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   View,
@@ -14,6 +16,7 @@ import { usePalette } from '@/theme/palette';
 
 interface ScreenProps extends PropsWithChildren {
   readonly scroll?: boolean;
+  readonly footer?: ReactNode;
   readonly showConnectionBanner?: boolean;
   /**
    * Keep content clear of the system navigation bar. Screens pushed on the
@@ -25,6 +28,7 @@ interface ScreenProps extends PropsWithChildren {
 
 export function Screen({
   children,
+  footer,
   scroll = true,
   showConnectionBanner = true,
   bottomInset = false,
@@ -41,20 +45,30 @@ export function Screen({
   return (
     <SafeAreaView
       style={[styles.safeArea, { backgroundColor: palette.background }]}
-      edges={bottomInset ? ['top', 'bottom'] : ['top']}
+      edges={bottomInset ? ['bottom'] : []}
     >
-      {scroll ? (
-        <ScrollView
-          automaticallyAdjustKeyboardInsets
-          contentInsetAdjustmentBehavior="automatic"
-          contentContainerStyle={[styles.content, contentContainerStyle]}
-          keyboardShouldPersistTaps="handled"
-        >
-          {content}
-        </ScrollView>
-      ) : (
-        <View style={[styles.content, styles.flex]}>{content}</View>
-      )}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        {scroll ? (
+          <ScrollView
+            automaticallyAdjustKeyboardInsets
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerStyle={[styles.content, contentContainerStyle]}
+            keyboardShouldPersistTaps="handled"
+          >
+            {content}
+          </ScrollView>
+        ) : (
+          <View style={[styles.content, styles.flex]}>{content}</View>
+        )}
+        {footer && (
+          <View style={{ paddingHorizontal: 14, paddingBottom: 8 }}>
+            {footer}
+          </View>
+        )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -62,8 +76,8 @@ export function Screen({
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   content: {
-    padding: 20,
-    gap: 16,
+    padding: 14,
+    gap: 12,
     width: '100%',
     maxWidth: 760,
     alignSelf: 'center',

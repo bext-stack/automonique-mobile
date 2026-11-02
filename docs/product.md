@@ -2,8 +2,11 @@
 
 ## Product promise
 
-Automonique Mobile gives an operator a small, trustworthy control surface for
-work that is already running on an Automonique server. It is not a second
+Automonique Mobile opens with a conversation composer. The history menu resumes
+authorized conversations; Dashboard, Work, Projects and Approvals remain
+reachable without crowding the phone navigation. New conversations use the
+existing isolated-task service and continue in its retained session; they do not
+gain repository or infrastructure authority merely from conversational wording. It is not a second
 agent runtime. The server remains authoritative for identity, policy,
 execution, history, and mutation outcomes.
 
@@ -16,24 +19,26 @@ clear freshness, and explicit actions rather than an administration cockpit.
 
 ## Jobs to be done
 
-1. Open an overview that distinguishes active work, running sessions, pending
+1. Start a conversation, follow its reply, continue an existing conversation,
+   and decide its authorized approvals in context.
+2. Open an overview that distinguishes active work, running sessions, pending
    approvals, uncertain receipts, lost sessions, and connection freshness.
-2. See which authorized sessions need attention and whether the view is live,
+3. See which authorized sessions need attention and whether the view is live,
    reconnecting, stale, incompatible, or synthetic.
-3. Open one exact session and understand its identity, revision, run,
+4. Open one exact session and understand its identity, revision, run,
    freshness, cursor, and sanitized timeline.
-4. Send a deliberate follow-up to that exact session without accidentally
+5. Send a deliberate follow-up to that exact session without accidentally
    targeting another run or replaying an uncertain write.
-5. Review an approval's requester, impact, expiry, and exact revision before
+6. Review an approval's requester, impact, expiry, and exact revision before
    granting or denying it.
-6. Stop one exact run and receive an authoritative outcome.
-7. Review sanitized cross-session activity and recover the receipt for an
+7. Stop one exact run and receive an authoritative outcome.
+8. Review sanitized cross-session activity and recover the receipt for an
    ambiguous mutation by idempotency key without
    submitting the mutation again.
-8. Inspect the exact server identity, actor, actions, session scope, limits,
+9. Inspect the exact server identity, actor, actions, session scope, limits,
    and credential expiry granted to this phone.
-9. Retain a bounded read-only projection and message draft when connectivity
-   is lost.
+10. Retain a bounded read-only projection and message draft when connectivity
+    is lost.
 
 ## Historical first-slice outcome
 

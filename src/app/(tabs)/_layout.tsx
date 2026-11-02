@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { ConversationMenu } from '@/components/conversation-menu';
 import { Tabs } from 'expo-router';
 import { Text, type ColorValue } from 'react-native';
 
@@ -7,7 +8,8 @@ import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
 
 const icons = {
-  index: '⌂',
+  index: '◌',
+  overview: '⌂',
   sessions: '◉',
   work: '☷',
   workspaces: '◇',
@@ -40,6 +42,7 @@ export default function OperatorTabs() {
         headerStyle: { backgroundColor: palette.background },
         headerTintColor: palette.text,
         headerShadowVisible: false,
+        headerLeft: () => <ConversationMenu />,
         sceneStyle: { backgroundColor: palette.background },
         tabBarActiveTintColor: palette.accent,
         tabBarInactiveTintColor: palette.textMuted,
@@ -53,9 +56,16 @@ export default function OperatorTabs() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
-          tabBarAccessibilityLabel: 'Home overview',
+          title: 'Chat',
+          tabBarAccessibilityLabel: 'Chat with Monique',
           tabBarIcon: ({ color }) => <TabIcon color={color} name="index" />,
+        }}
+      />
+      <Tabs.Screen
+        name="overview"
+        options={{
+          title: 'Dashboard',
+          tabBarIcon: ({ color }) => <TabIcon color={color} name="overview" />,
         }}
       />
       <Tabs.Screen
@@ -70,13 +80,14 @@ export default function OperatorTabs() {
         name="sessions"
         options={{
           title: 'Sessions',
+          href: null,
           tabBarIcon: ({ color }) => <TabIcon color={color} name="sessions" />,
         }}
       />
       <Tabs.Screen
         name="workspaces"
         options={{
-          title: 'Workspaces',
+          title: 'Projects',
           tabBarAccessibilityLabel: 'Projects and workspaces',
           tabBarIcon: ({ color }) => (
             <TabIcon color={color} name="workspaces" />
@@ -87,6 +98,7 @@ export default function OperatorTabs() {
         name="attention"
         options={{
           title: 'Attention',
+          href: null,
           tabBarAccessibilityLabel: 'Workspace review attention',
           tabBarIcon: ({ color }) => <TabIcon color={color} name="attention" />,
         }}
@@ -105,6 +117,7 @@ export default function OperatorTabs() {
         name="activity"
         options={{
           title: 'Activity',
+          href: null,
           tabBarIcon: ({ color }) => <TabIcon color={color} name="activity" />,
         }}
       />
@@ -112,6 +125,7 @@ export default function OperatorTabs() {
         name="server"
         options={{
           title: 'Server',
+          href: null,
           tabBarIcon: ({ color }) => <TabIcon color={color} name="server" />,
         }}
       />

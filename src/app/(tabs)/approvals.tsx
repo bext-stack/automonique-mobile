@@ -13,6 +13,14 @@ import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
 
 export default function ApprovalsScreen() {
+  return <ApprovalContent />;
+}
+
+export function ApprovalContent({
+  sessionId,
+}: {
+  readonly sessionId?: string;
+}) {
   const { snapshot, busyAction, decideApproval } = useMobile();
   const palette = usePalette();
   const [observedAt] = useState(() => Date.now());
@@ -41,8 +49,13 @@ export default function ApprovalsScreen() {
     }
   }
 
+  const approvals = snapshot.approvals.filter(
+    (a) => !sessionId || a.session.coordinate.id === sessionId,
+  );
+  const Container = sessionId ? View : Screen;
+  if (sessionId && approvals.length === 0) return null;
   return (
-    <Screen>
+    <Container>
       <View style={styles.heading}>
         <Text
           accessibilityRole="header"
@@ -54,7 +67,7 @@ export default function ApprovalsScreen() {
           Exact, revision-bound decisions from your authorized sessions.
         </Text>
       </View>
-      {snapshot.approvals.length === 0 && (
+      {approvals.length === 0 && (
         <View
           style={[
             styles.empty,
@@ -69,12 +82,12 @@ export default function ApprovalsScreen() {
           </Text>
         </View>
       )}
-      {!actionAllowed && snapshot.approvals.length > 0 && (
+      {!actionAllowed && approvals.length > 0 && (
         <Text style={[styles.detail, { color: palette.textMuted }]}>
           Approval decisions are read only for the current connection.
         </Text>
       )}
-      {snapshot.approvals.map((approval) => (
+      {approvals.map((approval) => (
         <View
           key={approval.target.coordinate.id}
           style={[
@@ -128,7 +141,7 @@ export default function ApprovalsScreen() {
           </View>
         </View>
       ))}
-    </Screen>
+    </Container>
   );
 }
 

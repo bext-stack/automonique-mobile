@@ -47,12 +47,14 @@ export function ConnectionBanner() {
                 ? 'Live · synthetic'
                 : 'Live'}
         </Text>
-        <Text
-          numberOfLines={stale ? undefined : 1}
-          style={[styles.label, { color: palette.textMuted }]}
-        >
-          {snapshot.connection.label}
-        </Text>
+        {stale && (
+          <Text
+            numberOfLines={stale ? undefined : 1}
+            style={[styles.label, { color: palette.textMuted }]}
+          >
+            {snapshot.connection.label}
+          </Text>
+        )}
       </View>
       {stale && projectionReady && (
         <Pressable

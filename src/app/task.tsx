@@ -2,7 +2,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
-import { Link } from 'expo-router';
+import { Link, router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Screen } from '@/components/screen';
@@ -32,6 +32,7 @@ function TaskComposer() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const openCreatedConversation = useRef(false);
   const lifetime = useRef(new AbortController());
   const execution = useMemo(
     () =>
@@ -84,6 +85,7 @@ function TaskComposer() {
   async function run(submit: boolean) {
     if (!execution || !loaded || !allowed || inFlight.current) return;
     inFlight.current = true;
+    if (submit) openCreatedConversation.current = true;
     setBusy(true);
     setError(null);
     const signal = lifetime.current.signal;
@@ -119,22 +121,35 @@ function TaskComposer() {
   const session = snapshot.sessions.find(
     (entry) => entry.target.coordinate.id === handle?.sessionId,
   );
+  useEffect(() => {
+    if (
+      session &&
+      handle?.state === 'started' &&
+      openCreatedConversation.current
+    ) {
+      openCreatedConversation.current = false;
+      router.push({
+        pathname: '/session/[id]',
+        params: { id: session.target.coordinate.id },
+      });
+    }
+  }, [session, handle]);
   const validText =
     text.trim().length > 0 &&
     new TextEncoder().encode(text).byteLength <=
       snapshot.connection.limits.maxFollowUpBytes;
   const canSubmit = allowed && loaded && !busy && !pending && validText;
   return (
-    <Screen bottomInset>
+    <Screen bottomInset contentContainerStyle={{ flexGrow: 1 }}>
       <Text
         accessibilityRole="header"
         style={[styles.title, { color: palette.text }]}
       >
-        Run a task
+        What can I help with?
       </Text>
       <Text style={{ color: palette.textMuted }}>
-        Ask Monique to create files, run a script, or investigate a problem.
-        Open the resulting session to see progress and send follow-ups.
+        Describe what you need. Monique works in an isolated workspace; use Work
+        for project tickets.
       </Text>
       {!granted && (
         <Text style={{ color: palette.textMuted }}>
@@ -148,9 +163,10 @@ function TaskComposer() {
           Reconnect to start work or check task status.
         </Text>
       )}
+      <View style={{ flex: 1, minHeight: 24 }} />
       <TextInput
-        accessibilityLabel="Task instructions"
-        placeholder="What should Monique do?"
+        accessibilityLabel="Message Monique"
+        placeholder="Message Monique…"
         placeholderTextColor={palette.textMuted}
         multiline
         value={text}
@@ -178,7 +194,7 @@ function TaskComposer() {
         ]}
       >
         <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-          {busy ? 'Checking task…' : 'Start task'}
+          {busy ? 'Connecting…' : 'Send message'}
         </Text>
       </Pressable>
       <View accessibilityLiveRegion="polite" style={styles.status}>
@@ -196,7 +212,8 @@ function TaskComposer() {
         )}
         {handle?.state === 'started' && (
           <Text style={{ color: palette.text }}>
-            Task started. Open its session to follow progress.
+            Your conversation is ready. Open it to follow the reply and keep
+            chatting.
           </Text>
         )}
         {error && (
@@ -233,7 +250,7 @@ function TaskComposer() {
             ])}
           >
             <Text style={{ color: palette.accentText, fontWeight: '800' }}>
-              Open task session
+              Continue conversation
             </Text>
           </Pressable>
         </Link>
@@ -253,9 +270,9 @@ function TaskComposer() {
   );
 }
 const styles = StyleSheet.create({
-  title: { fontSize: 28, fontWeight: '800' },
+  title: { fontSize: 26, fontWeight: '700' },
   input: {
-    minHeight: 160,
+    minHeight: 96,
     borderWidth: 1,
     borderRadius: 16,
     padding: 16,
