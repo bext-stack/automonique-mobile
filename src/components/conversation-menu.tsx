@@ -103,7 +103,9 @@ export function ConversationMenu() {
                         : session.title}
                     </Text>
                     <Text style={{ color: palette.textMuted, fontSize: 12 }}>
-                      {session.state}
+                      {session.attachable
+                        ? session.state
+                        : 'Saved conversation'}
                     </Text>
                   </Pressable>
                 </Link>

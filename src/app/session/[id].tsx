@@ -476,13 +476,15 @@ export default function SessionScreen() {
         accessibilityLiveRegion="polite"
         style={{ color: palette.textMuted }}
       >
-        {session.state === 'active'
-          ? 'Monique is working…'
-          : session.state === 'lost'
-            ? 'Run status unavailable. Check Details before retrying.'
-            : session.state === 'waiting'
-              ? 'Waiting for a decision'
-              : 'Conversation saved'}
+        {!session.attachable
+          ? 'Conversation saved'
+          : session.state === 'active'
+            ? 'Monique is working…'
+            : session.state === 'lost'
+              ? 'Run status unavailable. Check Details before retrying.'
+              : session.state === 'waiting'
+                ? 'Waiting for a decision'
+                : 'Conversation saved'}
       </Text>
       <View style={styles.timeline}>
         <Text

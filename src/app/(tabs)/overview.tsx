@@ -45,7 +45,9 @@ export default function OverviewScreen() {
     (receipt) =>
       receipt.outcome === 'accepted' || receipt.outcome === 'unknown',
   );
-  const lost = snapshot.sessions.filter((session) => session.state === 'lost');
+  const lost = snapshot.sessions.filter(
+    (session) => session.state === 'lost' && session.attachable,
+  );
   const attentionCount =
     snapshot.approvals.length +
     unsettled.length +
