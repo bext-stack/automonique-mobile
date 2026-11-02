@@ -281,3 +281,33 @@ uses the selected interface language, while remaining on-device.
 The dashboard begins with connection status and a single row of four tappable
 metrics, then attention items and three compact recent sessions. It avoids a
 duplicate page heading and distinguishes cached counts from a live all-clear.
+
+## Work, projects and approvals on mobile
+
+Tasks separates the ticket list, Slack feed and new-ticket form into focused
+sections. Search and the awaiting-approval filter apply only to the authorized
+queue snapshot. Selecting a ticket opens its details; returning preserves the
+list filters. Android Back returns from details or a secondary section before
+leaving Tasks. Approve/reject retain the separate confirmation and durable
+receipt flow, and rejection still requires a reason.
+
+Projects puts search and attention filtering ahead of inventory details. Server
+selection stays explicit, partial coverage remains visible, and delegated access
+details expand on request. Opening a workspace retains its exact server and
+revision coordinates.
+
+Approvals presents the requester, requested change, impact and current expiry
+state before its actions. Diagnostic revision details expand on request; the
+conversation remains directly accessible. Expiry is checked again at the moment
+of a decision, even if the page has stayed open. No bulk approval action is added.
+
+Slack remains the existing read-only mobile feed. Messages are presented as
+searchable cards with author, local date/time, selectable text and expansion for
+long bodies. Unknown feed formats remain visible as plain text. HTTPS links are
+explicit user actions; credentials in URLs and other protocols do not produce
+link actions. A github.com issue link can prepare the new-ticket form, but never
+submits it. The existing review and confirmation steps still apply.
+GitHub issue URLs, including Slack labels that omit the scheme, display as one
+`owner/repository #number` reference. Repeated identical issue links share one
+set of actions; the original HTTPS destination is retained for opening and the
+canonical issue URL is used only to prefill a ticket draft.

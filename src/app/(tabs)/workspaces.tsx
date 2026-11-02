@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { SectionTabs } from '@/components/section-tabs';
 import { Screen } from '@/components/screen';
 import { presentWorkspaceCatalog } from '@/core/workspace-presentation';
 import type { ServerIdentity } from '@/core/workspace-companion';
@@ -27,6 +28,8 @@ export default function WorkspacesScreen() {
   const router = useRouter();
   const { catalog, status, refresh, selectServer } = useWorkspaces();
   const [query, setQuery] = useState('');
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const [attentionOnly, setAttentionOnly] = useState(false);
   const cards = useMemo(
     () =>
       presentWorkspaceCatalog(catalog, query).filter(
@@ -42,21 +45,32 @@ export default function WorkspacesScreen() {
   );
 
   return (
-    <Screen>
-      <View style={styles.heading}>
-        <Text
-          accessibilityRole="header"
-          style={[styles.title, { color: palette.text }]}
-        >
-          {t('Workspaces')}
-        </Text>
-        <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          {t(
-            'Projects, hosts, tasks, and retained sessions from explicit delegated roots.',
-          )}
-        </Text>
-      </View>
-
+    <Screen showConnectionBanner={false}>
+      <TextInput
+        accessibilityLabel={t(
+          'Search projects, hosts, workspaces, and external tasks',
+        )}
+        onChangeText={setQuery}
+        placeholder={t('Search projects, hosts, tasks…')}
+        placeholderTextColor={palette.textMuted}
+        style={[
+          styles.search,
+          {
+            backgroundColor: palette.surface,
+            borderColor: palette.border,
+            color: palette.text,
+          },
+        ]}
+        value={query}
+      />
+      <SectionTabs
+        value={attentionOnly ? 'attention' : 'all'}
+        onChange={(value) => setAttentionOnly(value === 'attention')}
+        items={[
+          { id: 'all', label: `${t('All')} (${cards.length})` },
+          { id: 'attention', label: t('Needs attention') },
+        ]}
+      />
       <View
         accessibilityLiveRegion="polite"
         style={[
@@ -70,9 +84,11 @@ export default function WorkspacesScreen() {
               ? t('Live workspace inventory')
               : t('Read-only workspace inventory')}
           </Text>
-          <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-            {status.message}
-          </Text>
+          {status.phase !== 'live' && (
+            <Text style={[styles.subtitle, { color: palette.textMuted }]}>
+              {t(status.message)}
+            </Text>
+          )}
           {status.coverage === 'partial' && (
             <Text style={[styles.warning, { color: palette.warning }]}>
               {t('Partial coverage ·') + ' '}
@@ -151,133 +167,147 @@ export default function WorkspacesScreen() {
       )}
 
       {selectedServer !== undefined && (
-        <View
-          accessibilityLabel={t('Delegated project and host discovery')}
-          style={[
-            styles.scope,
-            { backgroundColor: palette.surface, borderColor: palette.border },
-          ]}
-        >
-          <Text style={[styles.statusTitle, { color: palette.text }]}>
-            {t('Delegated scope')}
-          </Text>
-          <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-            {selectedServer.projects.length} {' ' + t('projects ·')}{' '}
-            {selectedServer.hosts.length} {' ' + t('hosts ·')}{' '}
-            {selectedServer.workspaces.length} {' ' + t('workspaces')}
-          </Text>
-          <View style={styles.scopeRows}>
-            {selectedServer.projects.map((project) => (
-              <Text
-                key={project.id}
-                style={[styles.scopeItem, { color: palette.text }]}
-              >
-                {t('Project ·') + ' '}
-                {project.label}
-              </Text>
-            ))}
-            {selectedServer.hosts.map((host) => (
-              <Text
-                key={host.id}
-                style={[styles.scopeItem, { color: palette.textMuted }]}
-              >
-                {t('Host ·') + ' '}
-                {host.label} · {host.state}
-              </Text>
-            ))}
-          </View>
-        </View>
-      )}
-
-      <TextInput
-        accessibilityLabel={t(
-          'Search projects, hosts, workspaces, and external tasks',
-        )}
-        onChangeText={setQuery}
-        placeholder={t('Search projects, hosts, tasks…')}
-        placeholderTextColor={palette.textMuted}
-        style={[
-          styles.search,
-          {
-            backgroundColor: palette.surface,
-            borderColor: palette.border,
-            color: palette.text,
-          },
-        ]}
-        value={query}
-      />
-
-      <View style={styles.list}>
-        {cards.map((card) => (
+        <>
           <Pressable
-            key={card.key}
             accessibilityRole="button"
-            accessibilityLabel={`Open ${card.title} on ${card.hostLabel}`}
-            onPress={() => {
-              void (async () => {
-                await selectServer(card.serverIdentity as ServerIdentity);
-                router.push({
-                  pathname: '/workspace/[server]/[workspace]',
-                  params: {
-                    server: card.serverIdentity,
-                    workspace: card.workspaceId,
-                    revision: card.workspaceRevision,
-                  },
-                });
-              })();
-            }}
+            accessibilityState={{ expanded: scopeOpen }}
+            onPress={() => setScopeOpen(!scopeOpen)}
             style={{
-              backgroundColor: palette.surface,
-              borderColor: palette.border,
-              borderRadius: 18,
-              borderWidth: 1,
-              gap: 10,
-              minHeight: 96,
-              padding: 16,
+              minHeight: 44,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
             }}
           >
-            <View style={styles.cardTop}>
-              <View style={styles.cardTitleGroup}>
-                <Text style={[styles.cardTitle, { color: palette.text }]}>
-                  {card.title}
-                </Text>
-                <Text style={[styles.meta, { color: palette.textMuted }]}>
-                  {card.projectLabel} · {card.hostLabel}
-                </Text>
-              </View>
-              {card.unreadAttention > 0 && (
-                <View
-                  accessibilityLabel={`${card.unreadAttention} unread`}
-                  style={[styles.badge, { backgroundColor: palette.accent }]}
-                >
-                  <Text
-                    style={{ color: palette.accentText, fontWeight: '900' }}
-                  >
-                    {card.unreadAttention}
-                  </Text>
-                </View>
-              )}
-            </View>
-            <View style={styles.states}>
-              <Text style={[styles.state, { color: palette.text }]}>
-                {t('Orchestration:') + ' '}
-                {card.orchestrationStatus}
-              </Text>
-              <Text style={[styles.state, { color: palette.textMuted }]}>
-                {t('External:')}{' '}
-                {card.externalWorkItem === null
-                  ? t('not reported')
-                  : `${card.externalWorkItem.label} · ${card.externalWorkItem.status}`}
-              </Text>
-            </View>
-            <Text style={[styles.meta, { color: palette.textMuted }]}>
-              {freshnessLabel(card.freshness.state)} · {card.sessionCount}{' '}
-              {t('retained session')}
-              {card.sessionCount === 1 ? '' : 's'} {' ' + t('· read only')}
+            <Text style={{ color: palette.textMuted, fontSize: 13 }}>
+              {t('Access details')} · {selectedServer.projects.length}{' '}
+              {t('projects')}
+            </Text>
+            <Text style={{ color: palette.textMuted }}>
+              {scopeOpen ? '−' : '+'}
             </Text>
           </Pressable>
-        ))}
-        {cards.length === 0 && (
+          {scopeOpen && (
+            <View
+              accessibilityLabel={t('Delegated project and host discovery')}
+              style={[
+                styles.scope,
+                {
+                  backgroundColor: palette.surface,
+                  borderColor: palette.border,
+                },
+              ]}
+            >
+              <Text style={[styles.statusTitle, { color: palette.text }]}>
+                {t('Delegated scope')}
+              </Text>
+              <Text style={[styles.subtitle, { color: palette.textMuted }]}>
+                {selectedServer.projects.length} {' ' + t('projects ·')}{' '}
+                {selectedServer.hosts.length} {' ' + t('hosts ·')}{' '}
+                {selectedServer.workspaces.length} {' ' + t('workspaces')}
+              </Text>
+              <View style={styles.scopeRows}>
+                {selectedServer.projects.map((project) => (
+                  <Text
+                    key={project.id}
+                    style={[styles.scopeItem, { color: palette.text }]}
+                  >
+                    {t('Project ·') + ' '}
+                    {project.label}
+                  </Text>
+                ))}
+                {selectedServer.hosts.map((host) => (
+                  <Text
+                    key={host.id}
+                    style={[styles.scopeItem, { color: palette.textMuted }]}
+                  >
+                    {t('Host ·') + ' '}
+                    {host.label} · {host.state}
+                  </Text>
+                ))}
+              </View>
+            </View>
+          )}
+        </>
+      )}
+
+      <View style={styles.list}>
+        {cards
+          .filter((card) => !attentionOnly || card.unreadAttention > 0)
+          .map((card) => (
+            <Pressable
+              key={card.key}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${card.title} on ${card.hostLabel}`}
+              onPress={() => {
+                void (async () => {
+                  await selectServer(card.serverIdentity as ServerIdentity);
+                  router.push({
+                    pathname: '/workspace/[server]/[workspace]',
+                    params: {
+                      server: card.serverIdentity,
+                      workspace: card.workspaceId,
+                      revision: card.workspaceRevision,
+                    },
+                  });
+                })();
+              }}
+              style={{
+                backgroundColor: palette.surface,
+                borderColor: palette.border,
+                borderRadius: 18,
+                borderWidth: 1,
+                gap: 6,
+                minHeight: 80,
+                padding: 12,
+              }}
+            >
+              <View style={styles.cardTop}>
+                <View style={styles.cardTitleGroup}>
+                  <Text
+                    numberOfLines={2}
+                    style={[styles.cardTitle, { color: palette.text }]}
+                  >
+                    {card.title}
+                  </Text>
+                  <Text style={[styles.meta, { color: palette.textMuted }]}>
+                    {card.projectLabel} · {card.hostLabel}
+                  </Text>
+                </View>
+                {card.unreadAttention > 0 && (
+                  <View
+                    accessibilityLabel={`${card.unreadAttention} unread`}
+                    style={[styles.badge, { backgroundColor: palette.accent }]}
+                  >
+                    <Text
+                      style={{ color: palette.accentText, fontWeight: '900' }}
+                    >
+                      {card.unreadAttention}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <View style={styles.states}>
+                <Text style={[styles.state, { color: palette.text }]}>
+                  {t('Orchestration:') + ' '}
+                  {card.orchestrationStatus}
+                </Text>
+                <Text style={[styles.state, { color: palette.textMuted }]}>
+                  {t('External:')}{' '}
+                  {card.externalWorkItem === null
+                    ? t('not reported')
+                    : `${card.externalWorkItem.label} · ${card.externalWorkItem.status}`}
+                </Text>
+              </View>
+              <Text style={[styles.meta, { color: palette.textMuted }]}>
+                {t(freshnessLabel(card.freshness.state))} · {card.sessionCount}{' '}
+                {t('retained session')}
+                {card.sessionCount === 1 ? '' : 's'} {' ' + t('· read only')}
+              </Text>
+            </Pressable>
+          ))}
+        {cards.filter((card) => !attentionOnly || card.unreadAttention > 0)
+          .length === 0 && (
           <View
             style={[
               styles.empty,
@@ -285,13 +315,29 @@ export default function WorkspacesScreen() {
             ]}
           >
             <Text style={[styles.cardTitle, { color: palette.text }]}>
-              {t('No matching delegated workspaces')}
+              {attentionOnly
+                ? t('No projects need attention in this view.')
+                : query.trim()
+                  ? t('No matching projects')
+                  : t('No projects available')}
             </Text>
             <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-              {t(
-                'Mobile does not infer project roots or host access from retained sessions.',
-              )}
+              {t('Only projects shared with this phone appear here.')}
             </Text>
+            {(query || attentionOnly) && (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setQuery('');
+                  setAttentionOnly(false);
+                }}
+                style={{ minHeight: 44, justifyContent: 'center' }}
+              >
+                <Text style={{ color: palette.accent }}>
+                  {t('Clear filters')}
+                </Text>
+              </Pressable>
+            )}
           </View>
         )}
       </View>
@@ -308,7 +354,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: 'row',
     gap: 12,
-    padding: 14,
+    padding: 10,
   },
   statusText: { flex: 1, gap: 3 },
   statusTitle: { fontSize: 15, fontWeight: '800' },
@@ -322,7 +368,7 @@ const styles = StyleSheet.create({
     minHeight: 44,
     paddingHorizontal: 14,
   },
-  serverFilters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  serverFilters: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   serverFilter: {
     borderRadius: 14,
     borderWidth: 1,

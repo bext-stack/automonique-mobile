@@ -806,3 +806,23 @@ test('dashboard does not present cached empty counts as up-to-date', async () =>
   expect(view.getByText('Saved status')).toBeTruthy();
   expect(view.queryByText('You’re caught up')).toBeNull();
 });
+
+test('an approval that expires while the page is open cannot be submitted', async () => {
+  let now = 1800000000000;
+  const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+  try {
+    const mobile = mobileValue(['decide_approval'], {
+      approvalExpiresAt: new Date(now + 1000).toISOString(),
+    });
+    mockUseMobile.mockReturnValue(mobile);
+    const view = await render(<ApprovalsScreen />);
+    const approve = view.getByLabelText(
+      'grant Publish the preview build at revision 3',
+    );
+    now += 2000;
+    await fireEvent.press(approve);
+    expect(mobile.decideApproval).not.toHaveBeenCalled();
+  } finally {
+    clock.mockRestore();
+  }
+});
