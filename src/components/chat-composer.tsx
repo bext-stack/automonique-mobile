@@ -46,20 +46,19 @@ export function ChatComposer({
         { backgroundColor: palette.surface, borderColor: palette.border },
       ]}
     >
-      <TextInput
-        accessibilityLabel={inputLabel}
-        placeholder={placeholder}
-        placeholderTextColor={palette.textMuted}
-        multiline
-        scrollEnabled
-        value={value}
-        onChangeText={onChangeText}
-        editable={editable}
-        maxLength={maxLength}
-        style={[styles.input, { color: palette.text }]}
-      />
-      <View style={styles.actions}>
-        <View style={styles.accessory}>{accessory}</View>
+      <View style={styles.entry}>
+        <TextInput
+          accessibilityLabel={inputLabel}
+          placeholder={placeholder}
+          placeholderTextColor={palette.textMuted}
+          multiline
+          scrollEnabled
+          value={value}
+          onChangeText={onChangeText}
+          editable={editable}
+          maxLength={maxLength}
+          style={[styles.input, { color: palette.text }]}
+        />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={sendLabel}
@@ -90,6 +89,7 @@ export function ChatComposer({
           )}
         </Pressable>
       </View>
+      {accessory && <View style={styles.accessory}>{accessory}</View>}
       {children}
     </View>
   );
@@ -97,7 +97,9 @@ export function ChatComposer({
 
 const styles = StyleSheet.create({
   container: { borderWidth: 1, borderRadius: 24, padding: 8, gap: 4 },
+  entry: { flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
   input: {
+    flex: 1,
     minHeight: 44,
     maxHeight: 144,
     paddingHorizontal: 10,
@@ -107,9 +109,7 @@ const styles = StyleSheet.create({
     lineHeight: 23,
     textAlignVertical: 'top',
   },
-  actions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   accessory: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',

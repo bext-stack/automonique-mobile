@@ -2,34 +2,47 @@
 
 import { ConversationMenu } from '@/components/conversation-menu';
 import { Tabs } from 'expo-router';
-import { Text, type ColorValue } from 'react-native';
+import { Image, View, type ColorValue } from 'react-native';
 
 import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
 
 const icons = {
-  index: '◌',
-  overview: '⌂',
-  sessions: '◉',
-  work: '☷',
-  workspaces: '◇',
-  attention: '!',
-  approvals: '✓',
-  activity: '≋',
-  server: '⌘',
+  index: require('../../../assets/icons/chat.png'),
+  overview: require('../../../assets/icons/dashboard.png'),
+  work: require('../../../assets/icons/work.png'),
+  workspaces: require('../../../assets/icons/projects.png'),
+  approvals: require('../../../assets/icons/approvals.png'),
 } as const;
 
 function TabIcon({
   name,
   color,
+  focused,
 }: {
   readonly name: keyof typeof icons;
   readonly color: ColorValue;
+  readonly focused: boolean;
 }) {
+  const palette = usePalette();
   return (
-    <Text style={{ color, fontSize: 19, fontWeight: '800' }}>
-      {icons[name]}
-    </Text>
+    <View
+      accessible={false}
+      style={{
+        width: 52,
+        height: 32,
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: focused ? palette.surfaceMuted : 'transparent',
+      }}
+    >
+      <Image
+        source={icons[name]}
+        accessible={false}
+        style={{ width: 23, height: 23, tintColor: color }}
+      />
+    </View>
   );
 }
 
@@ -42,6 +55,7 @@ export default function OperatorTabs() {
         headerStyle: { backgroundColor: palette.background },
         headerTintColor: palette.text,
         headerShadowVisible: false,
+        tabBarHideOnKeyboard: true,
         headerLeft: () => <ConversationMenu />,
         sceneStyle: { backgroundColor: palette.background },
         tabBarActiveTintColor: palette.accent,
@@ -49,23 +63,39 @@ export default function OperatorTabs() {
         tabBarStyle: {
           backgroundColor: palette.surface,
           borderTopColor: palette.border,
+          borderTopWidth: 0.5,
+          paddingTop: 6,
+          minHeight: 72,
+          elevation: 0,
         },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '600', marginTop: 3 },
+        tabBarItemStyle: { paddingVertical: 3 },
+        tabBarBadgeStyle: {
+          backgroundColor: palette.accent,
+          color: palette.accentText,
+          fontSize: 10,
+          fontWeight: '700',
+        },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Chat',
+          title: 'Monique',
+          tabBarLabel: 'Chat',
           tabBarAccessibilityLabel: 'Chat with Monique',
-          tabBarIcon: ({ color }) => <TabIcon color={color} name="index" />,
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon focused={focused} color={color} name="index" />
+          ),
         }}
       />
       <Tabs.Screen
         name="overview"
         options={{
           title: 'Dashboard',
-          tabBarIcon: ({ color }) => <TabIcon color={color} name="overview" />,
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon focused={focused} color={color} name="overview" />
+          ),
         }}
       />
       <Tabs.Screen
@@ -73,7 +103,9 @@ export default function OperatorTabs() {
         options={{
           title: 'Work',
           tabBarAccessibilityLabel: 'Slack and ticket queue',
-          tabBarIcon: ({ color }) => <TabIcon color={color} name="work" />,
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon focused={focused} color={color} name="work" />
+          ),
         }}
       />
       <Tabs.Screen
@@ -81,7 +113,6 @@ export default function OperatorTabs() {
         options={{
           title: 'Sessions',
           href: null,
-          tabBarIcon: ({ color }) => <TabIcon color={color} name="sessions" />,
         }}
       />
       <Tabs.Screen
@@ -89,8 +120,8 @@ export default function OperatorTabs() {
         options={{
           title: 'Projects',
           tabBarAccessibilityLabel: 'Projects and workspaces',
-          tabBarIcon: ({ color }) => (
-            <TabIcon color={color} name="workspaces" />
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon focused={focused} color={color} name="workspaces" />
           ),
         }}
       />
@@ -100,7 +131,6 @@ export default function OperatorTabs() {
           title: 'Attention',
           href: null,
           tabBarAccessibilityLabel: 'Workspace review attention',
-          tabBarIcon: ({ color }) => <TabIcon color={color} name="attention" />,
         }}
       />
       <Tabs.Screen
@@ -110,7 +140,9 @@ export default function OperatorTabs() {
           ...(snapshot.approvals.length > 0
             ? { tabBarBadge: snapshot.approvals.length }
             : {}),
-          tabBarIcon: ({ color }) => <TabIcon color={color} name="approvals" />,
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon focused={focused} color={color} name="approvals" />
+          ),
         }}
       />
       <Tabs.Screen
@@ -118,7 +150,6 @@ export default function OperatorTabs() {
         options={{
           title: 'Activity',
           href: null,
-          tabBarIcon: ({ color }) => <TabIcon color={color} name="activity" />,
         }}
       />
       <Tabs.Screen
@@ -126,7 +157,6 @@ export default function OperatorTabs() {
         options={{
           title: 'Server',
           href: null,
-          tabBarIcon: ({ color }) => <TabIcon color={color} name="server" />,
         }}
       />
     </Tabs>

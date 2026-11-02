@@ -11,12 +11,21 @@ import { createTaskExecution, type TaskHandle } from '@/core/task-execution';
 import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
 
-export default function TaskScreen() {
+export default function TaskScreen({
+  bottomInset = true,
+}: {
+  readonly bottomInset?: boolean;
+}) {
   const mobile = useMobile();
   // Remount state and abort requests when the selected device/server changes.
-  return <TaskComposer key={mobile.storageScope ?? 'unpaired'} />;
+  return (
+    <TaskComposer
+      key={mobile.storageScope ?? 'unpaired'}
+      bottomInset={bottomInset}
+    />
+  );
 }
-function TaskComposer() {
+function TaskComposer({ bottomInset }: { readonly bottomInset: boolean }) {
   const {
     snapshot,
     storageScope,
@@ -142,7 +151,10 @@ function TaskComposer() {
   const canSubmit = allowed && loaded && !busy && !pending && validText;
   return (
     <Screen
-      bottomInset
+      bottomInset={bottomInset}
+      showConnectionBanner={
+        snapshot.connection.phase !== 'live' || snapshot.connection.synthetic
+      }
       contentContainerStyle={{ flexGrow: 1 }}
       footer={
         <ChatComposer
@@ -156,27 +168,22 @@ function TaskComposer() {
       }
     >
       <View style={styles.welcome}>
-        <View style={[styles.mark, { backgroundColor: palette.surfaceMuted }]}>
-          <Text style={{ color: palette.accent, fontSize: 28 }}>✳</Text>
-        </View>
         <Text
           accessibilityRole="header"
           style={[styles.title, { color: palette.text }]}
         >
-          What can I help with?
-        </Text>
-        <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          Think it through. Build something. Get work done.
+          What’s on your mind?
         </Text>
         <View style={styles.suggestions}>
           {[
             'Help me plan a change',
             'Help me investigate a problem',
             'Review an idea with me',
-          ].map((prompt) => (
+          ].map((prompt, index) => (
             <Pressable
               key={prompt}
               accessibilityRole="button"
+              accessibilityLabel={prompt}
               disabled={!allowed || busy || pending}
               accessibilityState={{ disabled: !allowed || busy || pending }}
               onPress={() => setText(prompt + ': ')}
@@ -191,14 +198,17 @@ function TaskComposer() {
               ]}
             >
               <Text style={{ color: palette.text, fontSize: 14 }}>
-                {prompt}
+                {
+                  ['Plan a change', 'Investigate a problem', 'Explore an idea'][
+                    index
+                  ]
+                }
               </Text>
-              <Text style={{ color: palette.textMuted }}>↗</Text>
             </Pressable>
           ))}
         </View>
         <Text style={[styles.scope, { color: palette.textMuted }]}>
-          Monique works in an isolated workspace. Use Work for project tickets.
+          A new conversation in an isolated workspace.
         </Text>
       </View>
       {!granted && (
@@ -226,7 +236,7 @@ function TaskComposer() {
             again.
           </Text>
         )}
-        {handle?.state === 'started' && (
+        {handle?.state === 'started' && !session && (
           <Text style={{ color: palette.text }}>
             Your conversation is ready. Open it to follow the reply and keep
             chatting.
@@ -261,13 +271,20 @@ function TaskComposer() {
           <Pressable
             accessibilityRole="button"
             style={StyleSheet.flatten([
-              styles.button,
-              { backgroundColor: palette.accent },
+              styles.resume,
+              { borderColor: palette.border },
             ])}
           >
-            <Text style={{ color: palette.accentText, fontWeight: '800' }}>
+            <Text
+              style={{
+                color: palette.textMuted,
+                fontWeight: '500',
+                fontSize: 14,
+              }}
+            >
               Continue conversation
             </Text>
+            <Text style={{ color: palette.textMuted }}>→</Text>
           </Pressable>
         </Link>
       )}
@@ -290,34 +307,41 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 16,
-    paddingVertical: 24,
-  },
-  mark: {
-    width: 56,
-    height: 56,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
+    gap: 20,
+    paddingVertical: 20,
   },
   title: {
-    fontSize: 28,
-    lineHeight: 34,
+    fontSize: 26,
+    lineHeight: 32,
     fontWeight: '700',
     textAlign: 'center',
   },
-  subtitle: { fontSize: 15, lineHeight: 22, textAlign: 'center' },
   scope: { fontSize: 12, lineHeight: 18, textAlign: 'center', maxWidth: 310 },
-  suggestions: { gap: 8, width: '100%', maxWidth: 380, marginVertical: 8 },
+  suggestions: {
+    gap: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    maxWidth: 380,
+  },
   suggestion: {
     minHeight: 48,
     borderWidth: 1,
-    borderRadius: 16,
-    padding: 14,
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     gap: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  resume: {
+    minHeight: 44,
+    paddingHorizontal: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
   },
   button: {
     minHeight: 48,

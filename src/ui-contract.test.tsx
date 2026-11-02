@@ -781,7 +781,7 @@ test('a suggestion only fills the draft and never submits work', async () => {
   };
   mockUseMobile.mockReturnValue(value);
   const view = await render(<TaskScreen />);
-  await fireEvent.press(view.getByText('Help me plan a change'));
+  await fireEvent.press(view.getByLabelText('Help me plan a change'));
   expect(view.getByLabelText('Message Monique')).toHaveProp(
     'value',
     'Help me plan a change: ',

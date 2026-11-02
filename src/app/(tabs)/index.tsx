@@ -1,3 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-export { default } from '../task';
+import TaskScreen from '../task';
+
+export default function ChatScreen() {
+  return <TaskScreen bottomInset={false} />;
+}
