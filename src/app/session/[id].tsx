@@ -11,7 +11,7 @@ import { ApprovalContent } from '../(tabs)/approvals';
 import { ChatComposer } from '@/components/chat-composer';
 import { ReceiptCard } from '@/components/receipt-card';
 import { Screen } from '@/components/screen';
-import { TimelineEventCard } from '@/components/timeline-event-card';
+import { SessionTimeline } from '@/components/session-timeline';
 import {
   announceForAccessibility,
   receiptAnnouncement,
@@ -460,15 +460,11 @@ export default function SessionScreen() {
               : t('No messages available yet.')}
           </Text>
         )}
-        {events
-          .filter((event) => details || event.kind === 'message')
-          .map((event) => (
-            <TimelineEventCard
-              key={event.id}
-              event={event}
-              diagnostics={details}
-            />
-          ))}
+        <SessionTimeline
+          key={`${id}:${details}`}
+          events={events}
+          diagnostics={details}
+        />
       </View>
 
       <ApprovalContent sessionId={id} />
