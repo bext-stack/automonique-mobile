@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { Link } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -23,6 +25,8 @@ function observedLabel(observedAt: string): string | null {
 }
 
 export function SessionCard({ session }: { readonly session: SessionSummary }) {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   const observed = observedLabel(session.observedAt);
   const [pressed, setPressed] = useState(false);
@@ -66,10 +70,10 @@ export function SessionCard({ session }: { readonly session: SessionSummary }) {
         <View style={styles.footer}>
           <Text style={[styles.meta, { color: palette.textMuted }]}>
             {session.followUpAllowed
-              ? 'Ready for follow-up'
+              ? t('Ready for follow-up')
               : session.attachable
-                ? 'Live session'
-                : 'Retained history'}
+                ? t('Live session')
+                : t('Retained history')}
           </Text>
         </View>
       </Pressable>

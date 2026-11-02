@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import { Link, router } from 'expo-router';
@@ -26,6 +28,8 @@ export default function TaskScreen({
   );
 }
 function TaskComposer({ bottomInset }: { readonly bottomInset: boolean }) {
+  const { t } = useLanguage();
+
   const {
     snapshot,
     storageScope,
@@ -172,7 +176,7 @@ function TaskComposer({ bottomInset }: { readonly bottomInset: boolean }) {
           accessibilityRole="header"
           style={[styles.title, { color: palette.text }]}
         >
-          What’s on your mind?
+          {t('What’s on your mind?')}
         </Text>
         <View style={styles.suggestions}>
           {[
@@ -183,10 +187,10 @@ function TaskComposer({ bottomInset }: { readonly bottomInset: boolean }) {
             <Pressable
               key={prompt}
               accessibilityRole="button"
-              accessibilityLabel={prompt}
+              accessibilityLabel={t(prompt)}
               disabled={!allowed || busy || pending}
               accessibilityState={{ disabled: !allowed || busy || pending }}
-              onPress={() => setText(prompt + ': ')}
+              onPress={() => setText(t(prompt) + ': ')}
               style={({ pressed }) => [
                 styles.suggestion,
                 {
@@ -199,52 +203,57 @@ function TaskComposer({ bottomInset }: { readonly bottomInset: boolean }) {
             >
               <Text style={{ color: palette.text, fontSize: 14 }}>
                 {
-                  ['Plan a change', 'Investigate a problem', 'Explore an idea'][
-                    index
-                  ]
+                  [
+                    t('Plan a change'),
+                    t('Investigate a problem'),
+                    t('Explore an idea'),
+                  ][index]
                 }
               </Text>
             </Pressable>
           ))}
         </View>
         <Text style={[styles.scope, { color: palette.textMuted }]}>
-          A new conversation in an isolated workspace.
+          {t('A new conversation in an isolated workspace.')}
         </Text>
       </View>
       {!granted && (
         <Text style={{ color: palette.textMuted }}>
-          This device cannot start tasks yet. Create a new pairing invitation in
-          the dashboard with “Allow this phone to start tasks” enabled, then
-          pair this phone.
+          {t(
+            'This device cannot start tasks yet. Create a new pairing invitation in the dashboard with “Allow this phone to start tasks” enabled, then pair this phone.',
+          )}
         </Text>
       )}
       {granted && !allowed && (
         <Text style={{ color: palette.textMuted }}>
-          Reconnect to start work or check task status.
+          {t('Reconnect to start work or check task status.')}
         </Text>
       )}
       <View accessibilityLiveRegion="polite" style={styles.status}>
         {pending && (
           <Text style={{ color: palette.text }}>
-            Waiting for confirmation. The app will check the saved receipt; it
-            will not submit the task again.
+            {t(
+              'Waiting for confirmation. The app will check the saved receipt; it will not submit the task again.',
+            )}
           </Text>
         )}
         {handle?.state === 'failed' && (
           <Text style={{ color: palette.text }}>
-            The server declined this task. You can edit the instructions and try
-            again.
+            {t(
+              'The server declined this task. You can edit the instructions and try again.',
+            )}
           </Text>
         )}
         {handle?.state === 'started' && !session && (
           <Text style={{ color: palette.text }}>
-            Your conversation is ready. Open it to follow the reply and keep
-            chatting.
+            {t(
+              'Your conversation is ready. Open it to follow the reply and keep chatting.',
+            )}
           </Text>
         )}
         {error && (
           <Text accessibilityRole="alert" style={{ color: palette.text }}>
-            {error}
+            {error && t(error)}
           </Text>
         )}
       </View>
@@ -257,7 +266,9 @@ function TaskComposer({ bottomInset }: { readonly bottomInset: boolean }) {
           }}
           style={styles.button}
         >
-          <Text style={{ color: palette.accent }}>Check task status</Text>
+          <Text style={{ color: palette.accent }}>
+            {t('Check task status')}
+          </Text>
         </Pressable>
       )}
       {session && (
@@ -282,7 +293,7 @@ function TaskComposer({ bottomInset }: { readonly bottomInset: boolean }) {
                 fontSize: 14,
               }}
             >
-              Continue conversation
+              {t('Continue conversation')}
             </Text>
             <Text style={{ color: palette.textMuted }}>→</Text>
           </Pressable>
@@ -296,7 +307,9 @@ function TaskComposer({ bottomInset }: { readonly bottomInset: boolean }) {
           }}
           style={styles.button}
         >
-          <Text style={{ color: palette.accent }}>Refresh connection</Text>
+          <Text style={{ color: palette.accent }}>
+            {t('Refresh connection')}
+          </Text>
         </Pressable>
       )}
     </Screen>

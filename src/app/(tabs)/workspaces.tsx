@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -19,6 +21,8 @@ function freshnessLabel(state: 'fresh' | 'delayed' | 'unknown'): string {
 }
 
 export default function WorkspacesScreen() {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   const router = useRouter();
   const { catalog, status, refresh, selectServer } = useWorkspaces();
@@ -44,11 +48,12 @@ export default function WorkspacesScreen() {
           accessibilityRole="header"
           style={[styles.title, { color: palette.text }]}
         >
-          Workspaces
+          {t('Workspaces')}
         </Text>
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          Projects, hosts, tasks, and retained sessions from explicit delegated
-          roots.
+          {t(
+            'Projects, hosts, tasks, and retained sessions from explicit delegated roots.',
+          )}
         </Text>
       </View>
 
@@ -62,39 +67,41 @@ export default function WorkspacesScreen() {
         <View style={styles.statusText}>
           <Text style={[styles.statusTitle, { color: palette.text }]}>
             {status.phase === 'live'
-              ? 'Live workspace inventory'
-              : 'Read-only workspace inventory'}
+              ? t('Live workspace inventory')
+              : t('Read-only workspace inventory')}
           </Text>
           <Text style={[styles.subtitle, { color: palette.textMuted }]}>
             {status.message}
           </Text>
           {status.coverage === 'partial' && (
             <Text style={[styles.warning, { color: palette.warning }]}>
-              Partial coverage · {status.omittedProjectCount} projects,{' '}
-              {status.omittedHostCount} hosts, {status.omittedWorkspaceCount}{' '}
-              workspaces, {status.omittedSessionCount} sessions, and{' '}
-              {status.omittedDetailCount} details omitted ·{' '}
-              {status.failedProjectCount} project reads and{' '}
-              {status.failedDetailCount} detail reads unavailable
+              {t('Partial coverage ·') + ' '}
+              {status.omittedProjectCount} {' ' + t('projects,')}{' '}
+              {status.omittedHostCount} {' ' + t('hosts,') + ' '}
+              {status.omittedWorkspaceCount} {t('workspaces,') + ' '}
+              {status.omittedSessionCount} {' ' + t('sessions, and')}{' '}
+              {status.omittedDetailCount} {' ' + t('details omitted ·')}{' '}
+              {status.failedProjectCount} {' ' + t('project reads and')}{' '}
+              {status.failedDetailCount} {' ' + t('detail reads unavailable')}
             </Text>
           )}
         </View>
         <Pressable
-          accessibilityLabel="Refresh workspace inventory"
+          accessibilityLabel={t('Refresh workspace inventory')}
           accessibilityRole="button"
           disabled={status.phase === 'loading'}
           onPress={() => void refresh()}
           style={[styles.refresh, { borderColor: palette.border }]}
         >
           <Text style={{ color: palette.text, fontWeight: '800' }}>
-            Refresh
+            {t('Refresh')}
           </Text>
         </Pressable>
       </View>
 
       {catalog.servers.length > 0 && (
         <View
-          accessibilityLabel="Authorized server identities"
+          accessibilityLabel={t('Authorized server identities')}
           style={styles.serverFilters}
         >
           {catalog.servers.map((server) => {
@@ -134,8 +141,8 @@ export default function WorkspacesScreen() {
                   }}
                 >
                   {server.authorization === 'active'
-                    ? 'current grant'
-                    : 'cached · read only'}
+                    ? t('current grant')
+                    : t('cached · read only')}
                 </Text>
               </Pressable>
             );
@@ -145,19 +152,19 @@ export default function WorkspacesScreen() {
 
       {selectedServer !== undefined && (
         <View
-          accessibilityLabel="Delegated project and host discovery"
+          accessibilityLabel={t('Delegated project and host discovery')}
           style={[
             styles.scope,
             { backgroundColor: palette.surface, borderColor: palette.border },
           ]}
         >
           <Text style={[styles.statusTitle, { color: palette.text }]}>
-            Delegated scope
+            {t('Delegated scope')}
           </Text>
           <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-            {selectedServer.projects.length} projects ·{' '}
-            {selectedServer.hosts.length} hosts ·{' '}
-            {selectedServer.workspaces.length} workspaces
+            {selectedServer.projects.length} {' ' + t('projects ·')}{' '}
+            {selectedServer.hosts.length} {' ' + t('hosts ·')}{' '}
+            {selectedServer.workspaces.length} {' ' + t('workspaces')}
           </Text>
           <View style={styles.scopeRows}>
             {selectedServer.projects.map((project) => (
@@ -165,7 +172,8 @@ export default function WorkspacesScreen() {
                 key={project.id}
                 style={[styles.scopeItem, { color: palette.text }]}
               >
-                Project · {project.label}
+                {t('Project ·') + ' '}
+                {project.label}
               </Text>
             ))}
             {selectedServer.hosts.map((host) => (
@@ -173,7 +181,8 @@ export default function WorkspacesScreen() {
                 key={host.id}
                 style={[styles.scopeItem, { color: palette.textMuted }]}
               >
-                Host · {host.label} · {host.state}
+                {t('Host ·') + ' '}
+                {host.label} · {host.state}
               </Text>
             ))}
           </View>
@@ -181,9 +190,11 @@ export default function WorkspacesScreen() {
       )}
 
       <TextInput
-        accessibilityLabel="Search projects, hosts, workspaces, and external tasks"
+        accessibilityLabel={t(
+          'Search projects, hosts, workspaces, and external tasks',
+        )}
         onChangeText={setQuery}
-        placeholder="Search projects, hosts, tasks…"
+        placeholder={t('Search projects, hosts, tasks…')}
         placeholderTextColor={palette.textMuted}
         style={[
           styles.search,
@@ -249,18 +260,20 @@ export default function WorkspacesScreen() {
             </View>
             <View style={styles.states}>
               <Text style={[styles.state, { color: palette.text }]}>
-                Orchestration: {card.orchestrationStatus}
+                {t('Orchestration:') + ' '}
+                {card.orchestrationStatus}
               </Text>
               <Text style={[styles.state, { color: palette.textMuted }]}>
-                External:{' '}
+                {t('External:')}{' '}
                 {card.externalWorkItem === null
-                  ? 'not reported'
+                  ? t('not reported')
                   : `${card.externalWorkItem.label} · ${card.externalWorkItem.status}`}
               </Text>
             </View>
             <Text style={[styles.meta, { color: palette.textMuted }]}>
               {freshnessLabel(card.freshness.state)} · {card.sessionCount}{' '}
-              retained session{card.sessionCount === 1 ? '' : 's'} · read only
+              {t('retained session')}
+              {card.sessionCount === 1 ? '' : 's'} {' ' + t('· read only')}
             </Text>
           </Pressable>
         ))}
@@ -272,11 +285,12 @@ export default function WorkspacesScreen() {
             ]}
           >
             <Text style={[styles.cardTitle, { color: palette.text }]}>
-              No matching delegated workspaces
+              {t('No matching delegated workspaces')}
             </Text>
             <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-              Mobile does not infer project roots or host access from retained
-              sessions.
+              {t(
+                'Mobile does not infer project roots or host access from retained sessions.',
+              )}
             </Text>
           </View>
         )}

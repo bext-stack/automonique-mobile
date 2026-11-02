@@ -408,7 +408,7 @@ test('overview exposes real attention and authorized workload counts', async () 
   mockUseMobile.mockReturnValue(mobileValue(['attach']));
   const view = await render(<OverviewScreen />);
 
-  expect(view.getByText('Your Automonique')).toBeTruthy();
+  expect(view.getByText('Recent sessions')).toBeTruthy();
   expect(view.getByLabelText('Active: 2')).toBeTruthy();
   expect(view.getByLabelText('Approvals: 1')).toBeTruthy();
   expect(view.getByText('Review 1 pending approval')).toBeTruthy();
@@ -788,4 +788,21 @@ test('a suggestion only fills the draft and never submits work', async () => {
   );
   expect(router.push).not.toHaveBeenCalled();
   expect(request).not.toHaveBeenCalled();
+});
+
+test('dashboard does not present cached empty counts as up-to-date', async () => {
+  const value = mobileValue(['attach']);
+  mockUseMobile.mockReturnValue({
+    ...value,
+    snapshot: {
+      ...value.snapshot,
+      sessions: [],
+      approvals: [],
+      receipts: [],
+      connection: { ...value.snapshot.connection, phase: 'stale' },
+    },
+  });
+  const view = await render(<OverviewScreen />);
+  expect(view.getByText('Saved status')).toBeTruthy();
+  expect(view.queryByText('You’re caught up')).toBeNull();
 });

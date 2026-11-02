@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { SessionEvent } from '@/core/types';
@@ -31,6 +33,8 @@ export function TimelineEventCard({
   readonly event: SessionEvent;
   readonly diagnostics?: boolean;
 }) {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   const content = eventContent(event);
   const preview = event.provenance === 'preview';
@@ -52,7 +56,7 @@ export function TimelineEventCard({
     >
       <View style={styles.header}>
         <Text style={[styles.title, { color: palette.text }]}>
-          {content.title}
+          {event.kind === 'message' ? t(content.title) : content.title}
         </Text>
         {(diagnostics || preview || event.provenance === 'synthetic') && (
           <Text
@@ -113,7 +117,8 @@ export function TimelineEventCard({
         })}
       {diagnostics && (
         <Text style={[styles.cursor, { color: palette.textMuted }]}>
-          cursor {event.cursor}
+          {t('cursor') + ' '}
+          {event.cursor}
         </Text>
       )}
     </View>

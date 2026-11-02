@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
 import type { ReactNode } from 'react';
 import {
   ActivityIndicator,
@@ -38,6 +39,7 @@ export function ChatComposer({
   readonly accessory?: ReactNode;
   readonly children?: ReactNode;
 }) {
+  const { t } = useLanguage();
   const palette = usePalette();
   return (
     <View
@@ -48,8 +50,8 @@ export function ChatComposer({
     >
       <View style={styles.entry}>
         <TextInput
-          accessibilityLabel={inputLabel}
-          placeholder={placeholder}
+          accessibilityLabel={t(inputLabel)}
+          placeholder={t(placeholder)}
           placeholderTextColor={palette.textMuted}
           multiline
           scrollEnabled
@@ -61,7 +63,7 @@ export function ChatComposer({
         />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={sendLabel}
+          accessibilityLabel={t(sendLabel)}
           accessibilityState={{ disabled: !canSend, busy }}
           disabled={!canSend}
           onPress={onSend}

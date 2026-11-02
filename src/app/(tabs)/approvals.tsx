@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -21,6 +23,8 @@ export function ApprovalContent({
 }: {
   readonly sessionId?: string;
 }) {
+  const { t } = useLanguage();
+
   const { snapshot, busyAction, decideApproval } = useMobile();
   const palette = usePalette();
   const [observedAt] = useState(() => Date.now());
@@ -43,7 +47,7 @@ export function ApprovalContent({
       );
     } catch (error) {
       Alert.alert(
-        'Decision not recorded',
+        t('Decision not recorded'),
         error instanceof Error ? error.message : 'unknown_error',
       );
     }
@@ -61,10 +65,10 @@ export function ApprovalContent({
           accessibilityRole="header"
           style={[styles.title, { color: palette.text }]}
         >
-          Approvals
+          {t('Approvals')}
         </Text>
         <Text style={[styles.detail, { color: palette.textMuted }]}>
-          Exact, revision-bound decisions from your authorized sessions.
+          {t('Exact, revision-bound decisions from your authorized sessions.')}
         </Text>
       </View>
       {approvals.length === 0 && (
@@ -75,16 +79,16 @@ export function ApprovalContent({
           ]}
         >
           <Text style={[styles.cardTitle, { color: palette.text }]}>
-            You’re caught up
+            {t('You’re caught up')}
           </Text>
           <Text style={[styles.detail, { color: palette.textMuted }]}>
-            No bounded approvals are pending for this device.
+            {t('No bounded approvals are pending for this device.')}
           </Text>
         </View>
       )}
       {!actionAllowed && approvals.length > 0 && (
         <Text style={[styles.detail, { color: palette.textMuted }]}>
-          Approval decisions are read only for the current connection.
+          {t('Approval decisions are read only for the current connection.')}
         </Text>
       )}
       {approvals.map((approval) => (
@@ -105,7 +109,8 @@ export function ApprovalContent({
             {approval.impact}
           </Text>
           <Text style={[styles.meta, { color: palette.textMuted }]}>
-            revision {approval.target.revision} · {approval.requester}
+            {t('revision') + ' '}
+            {approval.target.revision} · {approval.requester}
           </Text>
           <View style={styles.actions}>
             {(['deny', 'grant'] as const).map((decision) => (

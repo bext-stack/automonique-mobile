@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { Receipt } from '@/core/types';
 import { usePalette } from '@/theme/palette';
 
 export function ReceiptCard({ receipt }: { readonly receipt: Receipt }) {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   return (
     <View
@@ -25,7 +29,8 @@ export function ReceiptCard({ receipt }: { readonly receipt: Receipt }) {
         </Text>
       </View>
       <Text style={[styles.meta, { color: palette.textMuted }]}>
-        revision {receipt.revision}
+        {t('revision') + ' '}
+        {receipt.revision}
       </Text>
       <Text
         style={[styles.meta, { color: palette.textMuted }]}

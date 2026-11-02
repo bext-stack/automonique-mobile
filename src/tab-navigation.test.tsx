@@ -5,6 +5,14 @@ import type { PropsWithChildren } from 'react';
 
 import OperatorTabs from './app/(tabs)/_layout';
 
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  __esModule: true,
+  default: {
+    getItem: jest.fn(async () => null),
+    setItem: jest.fn(async () => undefined),
+  },
+}));
+
 jest.mock('@/providers/mobile-provider', () => ({
   useMobile: () => ({ snapshot: { approvals: [{ id: 'approval-1' }] } }),
 }));

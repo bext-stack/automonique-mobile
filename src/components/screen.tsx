@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import {
   useRef,
   useState,
@@ -43,6 +45,8 @@ export function Screen({
   bottomInset = false,
   contentContainerStyle,
 }: ScreenProps) {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   const frameRef = useRef<View>(null);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
@@ -79,7 +83,7 @@ export function Screen({
           <ScrollView
             ref={scrollRef}
             accessibilityLabel={
-              followTail ? 'Conversation messages' : undefined
+              followTail ? t('Conversation messages') : undefined
             }
             onContentSizeChange={
               followTail
@@ -122,7 +126,7 @@ export function Screen({
         {followTail && showLatest && (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Jump to latest message"
+            accessibilityLabel={t('Jump to latest message')}
             onPress={goToLatest}
             style={{
               alignSelf: 'center',
@@ -136,7 +140,9 @@ export function Screen({
               backgroundColor: palette.surface,
             }}
           >
-            <Text style={{ color: palette.text }}>↓ Latest messages</Text>
+            <Text style={{ color: palette.text }}>
+              {t('↓ Latest messages')}
+            </Text>
           </Pressable>
         )}
         {footer && (

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { LanguageProvider, useLanguage } from '@/i18n/language';
+
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 
@@ -12,6 +14,8 @@ import { admitsOperationalNavigation } from '@/core/navigation-policy';
 import { usePalette } from '@/theme/palette';
 
 export function Navigation() {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   const reducedMotion = useReducedMotion();
   const { state } = useMobileLifecycle();
@@ -32,21 +36,24 @@ export function Navigation() {
       >
         <Stack.Protected guard={operational}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="task" options={{ title: 'New conversation' }} />
+          <Stack.Screen
+            name="task"
+            options={{ title: t('New conversation') }}
+          />
           <Stack.Screen
             name="session/[id]"
-            options={{ title: 'Conversation' }}
+            options={{ title: t('Conversation') }}
           />
           <Stack.Screen
             name="workspace/[server]/[workspace]/index"
-            options={{ title: 'Workspace' }}
+            options={{ title: t('Workspace') }}
           />
           <Stack.Screen
             name="workspace/[server]/[workspace]/session/[session]"
-            options={{ title: 'Retained session' }}
+            options={{ title: t('Retained session') }}
           />
         </Stack.Protected>
-        <Stack.Screen name="settings" options={{ title: 'Connection' }} />
+        <Stack.Screen name="settings" options={{ title: t('Connection') }} />
       </Stack>
     </>
   );
@@ -54,8 +61,10 @@ export function Navigation() {
 
 export default function RootLayout() {
   return (
-    <ProductionMobileProvider>
-      <Navigation />
-    </ProductionMobileProvider>
+    <LanguageProvider>
+      <ProductionMobileProvider>
+        <Navigation />
+      </ProductionMobileProvider>
+    </LanguageProvider>
   );
 }

@@ -262,3 +262,22 @@ Live-server acceptance remains an external gate. Terminal
 relay, attachments, uploads, and background mutation remain separate
 risk-reviewed work. See
 [workspace-companion-threat-model.md](workspace-companion-threat-model.md).
+
+## Interface languages
+
+English and French are available from a compact Language row at the bottom
+of the conversation menu and in Connection settings. The row opens a dedicated
+chooser that marks the current selection. The selection is stored locally for the app and restored on launch;
+changing language does not remount the mobile provider or clear an unsent draft.
+The UI defaults to English when no valid saved selection exists. A failed save
+keeps the current selection and shows an error.
+
+UI copy lives in `src/i18n/fr.json`, accessed with `useLanguage().t`. Translate
+application labels and status copy explicitly. Do not translate conversation
+bodies, project content, session IDs, authorization values or protocol fields.
+Unknown technical/server messages fall back to their original text. Dictation
+uses the selected interface language, while remaining on-device.
+
+The dashboard begins with connection status and a single row of four tappable
+metrics, then attention items and three compact recent sessions. It avoids a
+duplicate page heading and distinguishes cached counts from a live all-clear.

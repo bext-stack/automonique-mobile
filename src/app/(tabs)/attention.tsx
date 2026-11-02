@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { Link } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -69,6 +71,8 @@ function authoritativeRow(node: AuthoritativeAttentionNode): AttentionRow {
 }
 
 export default function AttentionScreen() {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   const { snapshot } = useMobile();
   const { state: lifecycleState } = useMobileLifecycle();
@@ -186,10 +190,12 @@ export default function AttentionScreen() {
           accessibilityRole="header"
           style={[styles.title, { color: palette.text }]}
         >
-          Attention
+          {t('Attention')}
         </Text>
         <Text style={[styles.detail, { color: palette.textMuted }]}>
-          Typed review and nested-agent state from current delegated projects.
+          {t(
+            'Typed review and nested-agent state from current delegated projects.',
+          )}
         </Text>
       </View>
       {status.phase !== 'live' && (
@@ -197,8 +203,9 @@ export default function AttentionScreen() {
           accessibilityLiveRegion="polite"
           style={[styles.warning, { color: palette.warning }]}
         >
-          Cached attention is read only. Refresh the exact server grant before
-          acting.
+          {t(
+            'Cached attention is read only. Refresh the exact server grant before acting.',
+          )}
         </Text>
       )}
       <View
@@ -209,24 +216,28 @@ export default function AttentionScreen() {
       >
         <View style={{ flex: 1, gap: 3 }}>
           <Text style={[styles.cardTitle, { color: palette.text }]}>
-            Local attention notifications
+            {t('Local attention notifications')}
           </Text>
           <Text style={[styles.detail, { color: palette.textMuted }]}>
             {notificationPermission === 'granted'
-              ? 'Granted. Background Needs You notifications carry only exact, revalidated review or retained-session lookup coordinates.'
+              ? t(
+                  'Granted. Background Needs You notifications carry only exact, revalidated review or retained-session lookup coordinates.',
+                )
               : notificationPermission === 'denied'
-                ? 'Unavailable. Change notification permission in device settings if desired.'
-                : 'Permission is requested only from this explicit button.'}
+                ? t(
+                    'Unavailable. Change notification permission in device settings if desired.',
+                  )
+                : t('Permission is requested only from this explicit button.')}
           </Text>
           <Text style={[styles.detail, { color: palette.textMuted }]}>
-            OS background push, EAS delivery, and physical-device admission are
-            unavailable. Local scheduling cannot receive new attention after the
-            app is suspended.
+            {t(
+              'OS background push, EAS delivery, and physical-device admission are unavailable. Local scheduling cannot receive new attention after the app is suspended.',
+            )}
           </Text>
         </View>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Enable local attention notifications"
+          accessibilityLabel={t('Enable local attention notifications')}
           accessibilityState={{
             disabled: notificationPermission !== 'undetermined',
           }}
@@ -241,7 +252,7 @@ export default function AttentionScreen() {
           ]}
         >
           <Text style={{ color: palette.accent, fontWeight: '800' }}>
-            {notificationPermission === 'granted' ? 'Enabled' : 'Enable'}
+            {notificationPermission === 'granted' ? t('Enabled') : t('Enable')}
           </Text>
         </Pressable>
       </View>
@@ -256,7 +267,7 @@ export default function AttentionScreen() {
             accessibilityLabel={`${labels[row.state]}. ${row.title}. ${row.relationship}. ${row.unread} unread. ${workspace.title}. Server ${serverDiscriminator}.`}
             accessibilityHint={
               href === null
-                ? 'No exact current navigation coordinate is available.'
+                ? t('No exact current navigation coordinate is available.')
                 : `Opens the ${destination}.`
             }
             accessibilityState={{ disabled: href === null }}
@@ -293,10 +304,11 @@ export default function AttentionScreen() {
               {row.relationship}
             </Text>
             <Text style={[styles.meta, { color: palette.textMuted }]}>
-              {serverDiscriminator} · {workspace.title} · {row.semanticKey} ·
-              source revision {row.revision ?? 'not applicable'} ·{' '}
+              {serverDiscriminator} · {workspace.title} · {row.semanticKey}{' '}
+              {' ' + t('· source revision') + ' '}
+              {row.revision ?? 'not applicable'} ·{' '}
               {row.authoritative
-                ? 'authoritative attention source'
+                ? t('authoritative attention source')
                 : `derived from review revision ${detail.review?.revision ?? 'unavailable'}`}
             </Text>
           </Pressable>
@@ -321,7 +333,9 @@ export default function AttentionScreen() {
           style={[styles.warning, { color: palette.warning }]}
         >
           {partialBoards === 1
-            ? 'One workspace is showing a partial attention board: at least one source is refused or unavailable.'
+            ? t(
+                'One workspace is showing a partial attention board: at least one source is refused or unavailable.',
+              )
             : `${partialBoards} workspaces are showing a partial attention board: at least one source is refused or unavailable.`}
         </Text>
       )}
@@ -333,10 +347,12 @@ export default function AttentionScreen() {
           ]}
         >
           <Text style={[styles.cardTitle, { color: palette.text }]}>
-            No bounded attention records
+            {t('No bounded attention records')}
           </Text>
           <Text style={[styles.detail, { color: palette.textMuted }]}>
-            The current delegated workspace inventory has no review attention.
+            {t(
+              'The current delegated workspace inventory has no review attention.',
+            )}
           </Text>
         </View>
       )}

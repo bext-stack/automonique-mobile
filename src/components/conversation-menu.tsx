@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
+
+import { LanguagePicker } from './language-picker';
+import { useLanguage } from '@/i18n/language';
 import { Link } from 'expo-router';
 import { useState } from 'react';
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
@@ -7,6 +10,8 @@ import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
 
 export function ConversationMenu() {
+  const { t } = useLanguage();
+
   const [open, setOpen] = useState(false);
   const { snapshot } = useMobile();
   const palette = usePalette();
@@ -15,7 +20,7 @@ export function ConversationMenu() {
     <>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Open conversation history"
+        accessibilityLabel={t('Open conversation history')}
         onPress={() => setOpen(true)}
         style={row}
       >
@@ -49,15 +54,15 @@ export function ConversationMenu() {
                 accessibilityRole="header"
                 style={{ fontSize: 22, fontWeight: '700', color: palette.text }}
               >
-                Conversations
+                {t('Conversations')}
               </Text>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Close conversation history"
+                accessibilityLabel={t('Close conversation history')}
                 onPress={() => setOpen(false)}
                 style={row}
               >
-                <Text style={{ color: palette.text }}>Close</Text>
+                <Text style={{ color: palette.text }}>{t('Close')}</Text>
               </Pressable>
             </View>
             <Link href="/task" asChild>
@@ -67,7 +72,7 @@ export function ConversationMenu() {
                 style={row}
               >
                 <Text style={{ color: palette.accent, fontWeight: '700' }}>
-                  ＋ New conversation
+                  {t('＋ New conversation')}
                 </Text>
               </Pressable>
             </Link>
@@ -104,8 +109,8 @@ export function ConversationMenu() {
                     </Text>
                     <Text style={{ color: palette.textMuted, fontSize: 12 }}>
                       {session.attachable
-                        ? session.state
-                        : 'Saved conversation'}
+                        ? t(session.state)
+                        : t('Saved conversation')}
                     </Text>
                   </Pressable>
                 </Link>
@@ -125,14 +130,15 @@ export function ConversationMenu() {
                   onPress={() => setOpen(false)}
                   style={row}
                 >
-                  <Text style={{ color: palette.text }}>{label}</Text>
+                  <Text style={{ color: palette.text }}>{t(label)}</Text>
                 </Pressable>
               </Link>
             ))}
+            <LanguagePicker />
           </SafeAreaView>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Dismiss conversation history"
+            accessibilityLabel={t('Dismiss conversation history')}
             style={{ flex: 1 }}
             onPress={() => setOpen(false)}
           />

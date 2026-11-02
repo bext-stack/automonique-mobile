@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 
-import { Link } from 'expo-router';
+import { useLanguage } from '@/i18n/language';
+
+import { Link, type Href } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ConnectionBanner } from '@/components/connection-banner';
@@ -11,28 +13,35 @@ import { usePalette } from '@/theme/palette';
 function Metric({
   label,
   value,
+  href,
 }: {
   readonly label: string;
   readonly value: number;
+  readonly href: Href;
 }) {
+  const { t } = useLanguage();
   const palette = usePalette();
   return (
-    <View
-      accessibilityLabel={`${label}: ${value}`}
-      style={[
-        styles.metric,
-        { backgroundColor: palette.surface, borderColor: palette.border },
-      ]}
-    >
-      <Text style={[styles.metricValue, { color: palette.text }]}>{value}</Text>
-      <Text style={[styles.metricLabel, { color: palette.textMuted }]}>
-        {label}
-      </Text>
-    </View>
+    <Link href={href} asChild>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${t(label)}: ${value}`}
+        style={styles.metric}
+      >
+        <Text style={[styles.metricValue, { color: palette.text }]}>
+          {value}
+        </Text>
+        <Text style={[styles.metricLabel, { color: palette.textMuted }]}>
+          {t(label)}
+        </Text>
+      </Pressable>
+    </Link>
   );
 }
 
 export default function OverviewScreen() {
+  const { t, language } = useLanguage();
+
   const { snapshot } = useMobile();
   const palette = usePalette();
   const running = snapshot.sessions.filter(
@@ -49,36 +58,34 @@ export default function OverviewScreen() {
     (session) => session.state === 'lost' && session.attachable,
   );
   const attentionCount =
-    snapshot.approvals.length +
-    unsettled.length +
-    lost.length +
-    (snapshot.connection.phase === 'live' ? 0 : 1);
+    snapshot.approvals.length + unsettled.length + lost.length;
 
   return (
     <Screen showConnectionBanner={false}>
-      <View style={styles.hero}>
-        <Text style={[styles.eyebrow, { color: palette.accent }]}>
-          OPERATOR
-        </Text>
-        <Text
-          accessibilityRole="header"
-          style={[styles.title, { color: palette.text }]}
-        >
-          Your Automonique
-        </Text>
-        <Text style={[styles.copy, { color: palette.textMuted }]}>
-          A scoped view of the work and decisions this phone is authorized to
-          access.
-        </Text>
-      </View>
+      <ConnectionBanner compact />
 
-      <ConnectionBanner />
-
-      <View style={styles.metrics}>
-        <Metric label="Active" value={active.length} />
-        <Metric label="Running" value={running.length} />
-        <Metric label="Approvals" value={snapshot.approvals.length} />
-        <Metric label="Receipts" value={unsettled.length} />
+      <View
+        style={[
+          styles.metrics,
+          { backgroundColor: palette.surface, borderColor: palette.border },
+        ]}
+      >
+        <Metric label="Active" value={active.length} href="/(tabs)/sessions" />
+        <Metric
+          label="Running"
+          value={running.length}
+          href="/(tabs)/sessions"
+        />
+        <Metric
+          label="Approvals"
+          value={snapshot.approvals.length}
+          href="/(tabs)/approvals"
+        />
+        <Metric
+          label="Receipts"
+          value={unsettled.length}
+          href="/(tabs)/activity"
+        />
       </View>
 
       <View
@@ -94,12 +101,22 @@ export default function OverviewScreen() {
         <View style={styles.attentionHeading}>
           <View style={styles.grow}>
             <Text style={[styles.sectionTitle, { color: palette.text }]}>
-              Needs attention
+              {attentionCount > 0
+                ? t('Needs attention')
+                : snapshot.connection.phase === 'live'
+                  ? t('You’re caught up')
+                  : t('Saved status')}
             </Text>
             <Text style={[styles.copy, { color: palette.textMuted }]}>
               {attentionCount === 0
-                ? 'No pending decisions, uncertain commands, or lost sessions.'
-                : `${attentionCount} item${attentionCount === 1 ? '' : 's'} to review.`}
+                ? snapshot.connection.phase === 'live'
+                  ? t(
+                      'No pending decisions, uncertain commands, or lost sessions.',
+                    )
+                  : t('Reconnect to update these counts.')
+                : language === 'fr'
+                  ? `${attentionCount} élément${attentionCount === 1 ? '' : 's'} à vérifier.`
+                  : `${attentionCount} item${attentionCount === 1 ? '' : 's'} to review.`}
             </Text>
           </View>
           <Text style={[styles.attentionCount, { color: palette.text }]}>
@@ -117,7 +134,8 @@ export default function OverviewScreen() {
               ])}
             >
               <Text style={[styles.rowTitle, { color: palette.text }]}>
-                Review {snapshot.approvals.length} pending approval
+                {t('Review') + ' '}
+                {snapshot.approvals.length} {' ' + t('pending approval')}
                 {snapshot.approvals.length === 1 ? '' : 's'}
               </Text>
               <Text style={[styles.arrow, { color: palette.text }]}>›</Text>
@@ -134,7 +152,8 @@ export default function OverviewScreen() {
               ])}
             >
               <Text style={[styles.rowTitle, { color: palette.text }]}>
-                Reconcile {unsettled.length} uncertain command
+                {t('Reconcile') + ' '}
+                {unsettled.length} {' ' + t('uncertain command')}
                 {unsettled.length === 1 ? '' : 's'}
               </Text>
               <Text style={[styles.arrow, { color: palette.text }]}>›</Text>
@@ -151,7 +170,8 @@ export default function OverviewScreen() {
               ])}
             >
               <Text style={[styles.rowTitle, { color: palette.text }]}>
-                Inspect {lost.length} unavailable session
+                {t('Inspect') + ' '}
+                {lost.length} {' ' + t('unavailable session')}
                 {lost.length === 1 ? '' : 's'}
               </Text>
               <Text style={[styles.arrow, { color: palette.text }]}>›</Text>
@@ -162,7 +182,7 @@ export default function OverviewScreen() {
 
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: palette.text }]}>
-          Recent sessions
+          {t('Recent sessions')}
         </Text>
         {snapshot.sessions.slice(0, 3).map((session) => (
           <Link
@@ -184,14 +204,18 @@ export default function OverviewScreen() {
               ])}
             >
               <View style={styles.grow}>
-                <Text style={[styles.rowTitle, { color: palette.text }]}>
+                <Text
+                  numberOfLines={1}
+                  style={[styles.rowTitle, { color: palette.text }]}
+                >
                   {session.title}
                 </Text>
                 <Text style={[styles.meta, { color: palette.textMuted }]}>
-                  {session.run !== null && session.state === 'active'
-                    ? 'Run in progress'
-                    : 'No active run'}{' '}
-                  · {session.state}
+                  {!session.attachable
+                    ? t('Saved conversation')
+                    : session.run !== null && session.state === 'active'
+                      ? t('Run in progress')
+                      : t(session.state)}
                 </Text>
               </View>
               <Text style={[styles.arrow, { color: palette.textMuted }]}>
@@ -202,7 +226,7 @@ export default function OverviewScreen() {
         ))}
         {snapshot.sessions.length === 0 && (
           <Text style={[styles.copy, { color: palette.textMuted }]}>
-            This credential has no session scope yet.
+            {t('This credential has no session scope yet.')}
           </Text>
         )}
         {snapshot.sessions.length > 3 && (
@@ -215,7 +239,7 @@ export default function OverviewScreen() {
               ])}
             >
               <Text style={{ color: palette.text, fontWeight: '800' }}>
-                View all sessions
+                {t('View all sessions')}
               </Text>
             </Pressable>
           </Link>
@@ -226,26 +250,28 @@ export default function OverviewScreen() {
 }
 
 const styles = StyleSheet.create({
-  hero: { gap: 4 },
-  eyebrow: { fontSize: 11, letterSpacing: 1.4, fontWeight: '900' },
-  title: { fontSize: 32, lineHeight: 38, fontWeight: '800' },
-  copy: { fontSize: 14, lineHeight: 21 },
-  metrics: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  metric: {
-    width: '48%',
-    flexGrow: 1,
+  copy: { fontSize: 12, lineHeight: 18 },
+  metrics: {
+    flexDirection: 'row',
     borderWidth: 1,
     borderRadius: 16,
-    padding: 14,
+    paddingVertical: 12,
   },
-  metricValue: { fontSize: 27, lineHeight: 31, fontWeight: '900' },
-  metricLabel: { fontSize: 12, fontWeight: '700' },
-  attention: { borderWidth: 1, borderRadius: 18, padding: 15, gap: 10 },
+  metric: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 3,
+  },
+  metricValue: { fontSize: 24, lineHeight: 28, fontWeight: '700' },
+  metricLabel: { fontSize: 11, fontWeight: '500', textAlign: 'center' },
+  attention: { borderWidth: 1, borderRadius: 18, padding: 12, gap: 8 },
   attentionHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  attentionCount: { fontSize: 30, fontWeight: '900' },
+  attentionCount: { fontSize: 24, fontWeight: '700' },
   grow: { flex: 1, gap: 3 },
   section: { gap: 10 },
-  sectionTitle: { fontSize: 19, lineHeight: 24, fontWeight: '800' },
+  sectionTitle: { fontSize: 16, lineHeight: 22, fontWeight: '700' },
   rowLink: {
     minHeight: 48,
     borderWidth: 1,
@@ -258,10 +284,10 @@ const styles = StyleSheet.create({
   rowTitle: { flex: 1, fontSize: 14, lineHeight: 19, fontWeight: '700' },
   arrow: { fontSize: 24, lineHeight: 28 },
   sessionRow: {
-    minHeight: 68,
+    minHeight: 60,
     borderWidth: 1,
     borderRadius: 14,
-    padding: 13,
+    padding: 10,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,

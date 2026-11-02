@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { ConversationMenu } from '@/components/conversation-menu';
 import { Tabs } from 'expo-router';
 import { Image, View, type ColorValue } from 'react-native';
@@ -47,6 +49,8 @@ function TabIcon({
 }
 
 export default function OperatorTabs() {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   const { snapshot } = useMobile();
   return (
@@ -81,9 +85,9 @@ export default function OperatorTabs() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Monique',
-          tabBarLabel: 'Chat',
-          tabBarAccessibilityLabel: 'Chat with Monique',
+          title: t('Monique'),
+          tabBarLabel: t('Chat'),
+          tabBarAccessibilityLabel: t('Chat with Monique'),
           tabBarIcon: ({ color, focused }) => (
             <TabIcon focused={focused} color={color} name="index" />
           ),
@@ -92,7 +96,8 @@ export default function OperatorTabs() {
       <Tabs.Screen
         name="overview"
         options={{
-          title: 'Dashboard',
+          title: t('Dashboard'),
+          tabBarLabel: t('Overview'),
           tabBarIcon: ({ color, focused }) => (
             <TabIcon focused={focused} color={color} name="overview" />
           ),
@@ -101,8 +106,8 @@ export default function OperatorTabs() {
       <Tabs.Screen
         name="work"
         options={{
-          title: 'Work',
-          tabBarAccessibilityLabel: 'Slack and ticket queue',
+          title: t('Work'),
+          tabBarAccessibilityLabel: t('Slack and ticket queue'),
           tabBarIcon: ({ color, focused }) => (
             <TabIcon focused={focused} color={color} name="work" />
           ),
@@ -111,15 +116,15 @@ export default function OperatorTabs() {
       <Tabs.Screen
         name="sessions"
         options={{
-          title: 'Sessions',
+          title: t('Sessions'),
           href: null,
         }}
       />
       <Tabs.Screen
         name="workspaces"
         options={{
-          title: 'Projects',
-          tabBarAccessibilityLabel: 'Projects and workspaces',
+          title: t('Projects'),
+          tabBarAccessibilityLabel: t('Projects and workspaces'),
           tabBarIcon: ({ color, focused }) => (
             <TabIcon focused={focused} color={color} name="workspaces" />
           ),
@@ -128,15 +133,15 @@ export default function OperatorTabs() {
       <Tabs.Screen
         name="attention"
         options={{
-          title: 'Attention',
+          title: t('Attention'),
           href: null,
-          tabBarAccessibilityLabel: 'Workspace review attention',
+          tabBarAccessibilityLabel: t('Workspace review attention'),
         }}
       />
       <Tabs.Screen
         name="approvals"
         options={{
-          title: 'Approvals',
+          title: t('Approvals'),
           ...(snapshot.approvals.length > 0
             ? { tabBarBadge: snapshot.approvals.length }
             : {}),
@@ -148,14 +153,14 @@ export default function OperatorTabs() {
       <Tabs.Screen
         name="activity"
         options={{
-          title: 'Activity',
+          title: t('Activity'),
           href: null,
         }}
       />
       <Tabs.Screen
         name="server"
         options={{
-          title: 'Server',
+          title: t('Server'),
           href: null,
         }}
       />

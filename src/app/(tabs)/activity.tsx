@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -25,6 +27,8 @@ function eventSummary(event: SessionEvent): string {
 }
 
 export default function ActivityScreen() {
+  const { t } = useLanguage();
+
   const { snapshot } = useMobile();
   const palette = usePalette();
   const [filter, setFilter] = useState<ActivityFilter>('all');
@@ -56,11 +60,12 @@ export default function ActivityScreen() {
           accessibilityRole="header"
           style={[styles.title, { color: palette.text }]}
         >
-          Activity
+          {t('Activity')}
         </Text>
         <Text style={[styles.copy, { color: palette.textMuted }]}>
-          Sanitized session events and durable command outcomes from this
-          device’s bounded projection.
+          {t(
+            'Sanitized session events and durable command outcomes from this device’s bounded projection.',
+          )}
         </Text>
       </View>
 
@@ -98,7 +103,7 @@ export default function ActivityScreen() {
       {showReceipts && snapshot.receipts.length > 0 && (
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: palette.text }]}>
-            Command receipts
+            {t('Command receipts')}
           </Text>
           {[...snapshot.receipts].reverse().map((receipt) => (
             <ReceiptCard
@@ -112,7 +117,7 @@ export default function ActivityScreen() {
       {showEvents && events.length > 0 && (
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: palette.text }]}>
-            Session timeline
+            {t('Session timeline')}
           </Text>
           {events.map(({ event, sessionId }) => (
             <View
@@ -164,11 +169,12 @@ export default function ActivityScreen() {
           ]}
         >
           <Text style={[styles.sectionTitle, { color: palette.text }]}>
-            No activity yet
+            {t('No activity yet')}
           </Text>
           <Text style={[styles.copy, { color: palette.textMuted }]}>
-            Activity appears after an authorized session is attached or a
-            command produces a receipt.
+            {t(
+              'Activity appears after an authorized session is attached or a command produces a receipt.',
+            )}
           </Text>
         </View>
       )}

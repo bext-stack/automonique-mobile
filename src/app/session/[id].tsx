@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
@@ -30,6 +32,8 @@ function draftKey(id: string, scope: string | null): string {
 }
 
 export default function SessionScreen() {
+  const { t, language } = useLanguage();
+
   const params = useLocalSearchParams<{
     id: string;
     scope_server?: string;
@@ -204,8 +208,10 @@ export default function SessionScreen() {
       <Screen bottomInset>
         <Text style={{ color: palette.text }}>
           {scopeRequested
-            ? 'The exact scoped session is no longer current. Return to the workspace and refresh before continuing.'
-            : 'Session is not present in the bounded projection.'}
+            ? t(
+                'The exact scoped session is no longer current. Return to the workspace and refresh before continuing.',
+              )
+            : t('Session is not present in the bounded projection.')}
         </Text>
       </Screen>
     );
@@ -240,7 +246,7 @@ export default function SessionScreen() {
       }
     } catch (error) {
       Alert.alert(
-        'Follow-up not sent',
+        t('Follow-up not sent'),
         error instanceof Error ? error.message : 'unknown_error',
       );
     }
@@ -274,7 +280,7 @@ export default function SessionScreen() {
         contextualStrings: ['Automonique', 'Monique'],
         continuous: false,
         interimResults: true,
-        lang: Intl.DateTimeFormat().resolvedOptions().locale || 'en-US',
+        lang: language === 'fr' ? 'fr-FR' : 'en-US',
         maxAlternatives: 1,
         requiresOnDeviceRecognition: true,
       });
@@ -293,7 +299,7 @@ export default function SessionScreen() {
       );
     } catch (error) {
       Alert.alert(
-        'Run not stopped',
+        t('Run not stopped'),
         error instanceof Error ? error.message : 'unknown_error',
       );
     }
@@ -309,8 +315,8 @@ export default function SessionScreen() {
       maxLength={followUpLimit}
       placeholder={
         followUpAllowed
-          ? 'Message Monique…'
-          : 'Replies unavailable — check connection'
+          ? t('Message Monique…')
+          : t('Replies unavailable — check connection')
       }
       canSend={
         followUpAllowed && !dictating && !!draft.trim() && draftWithinLimit
@@ -321,7 +327,7 @@ export default function SessionScreen() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
-            dictating ? 'Stop voice dictation' : 'Start voice dictation'
+            dictating ? t('Stop voice dictation') : t('Start voice dictation')
           }
           accessibilityState={{ disabled: !followUpAllowed }}
           disabled={!followUpAllowed}
@@ -340,7 +346,7 @@ export default function SessionScreen() {
               fontWeight: '800',
             }}
           >
-            {dictating ? '■ Stop listening' : '◉ Voice'}
+            {dictating ? t('■ Stop listening') : t('◉ Voice')}
           </Text>
         </Pressable>
       }
@@ -350,7 +356,7 @@ export default function SessionScreen() {
           accessibilityLiveRegion="polite"
           style={[styles.voiceStatus, { color: palette.textMuted }]}
         >
-          {dictationMessage}
+          {t(dictationMessage)}
         </Text>
       )}
       {draftBytes > followUpLimit * 0.8 && (
@@ -363,8 +369,8 @@ export default function SessionScreen() {
             },
           ]}
         >
-          {draftBytes} / {followUpLimit} bytes
-          {draftWithinLimit ? '' : ' · too long'}
+          {draftBytes} / {followUpLimit} {' ' + t('bytes')}
+          {draftWithinLimit ? '' : t(' · too long')}
         </Text>
       )}
       {session.run && session.state === 'active' && (
@@ -380,7 +386,7 @@ export default function SessionScreen() {
           ]}
         >
           <Text style={{ color: palette.danger, fontWeight: '800' }}>
-            Stop response
+            {t('Stop response')}
           </Text>
         </Pressable>
       )}
@@ -403,7 +409,7 @@ export default function SessionScreen() {
           style={{ minHeight: 44, justifyContent: 'center' }}
         >
           <Text style={{ color: palette.textMuted }}>
-            {details ? 'Hide details' : 'Conversation details'}
+            {details ? t('Hide details') : t('Conversation details')}
           </Text>
         </Pressable>
         {details && (
@@ -414,10 +420,13 @@ export default function SessionScreen() {
               {session.target.coordinate.kind}/{session.target.coordinate.id}
             </Text>
             <Text style={[styles.meta, { color: palette.textMuted }]}>
-              revision {session.target.revision} · cursor {session.lastCursor}
+              {t('revision') + ' '}
+              {session.target.revision} {' ' + t('· cursor') + ' '}
+              {session.lastCursor}
             </Text>
             <Text style={[styles.meta, { color: palette.textMuted }]}>
-              run {session.run?.coordinate.id ?? 'none'}
+              {t('run') + ' '}
+              {session.run?.coordinate.id ?? 'none'}
             </Text>
           </View>
         )}
@@ -428,14 +437,14 @@ export default function SessionScreen() {
         style={{ color: palette.textMuted }}
       >
         {!session.attachable
-          ? 'Conversation saved'
+          ? t('Conversation saved')
           : session.state === 'active'
-            ? 'Monique is working…'
+            ? t('Monique is working…')
             : session.state === 'lost'
-              ? 'Run status unavailable. Check Details before retrying.'
+              ? t('Run status unavailable. Check Details before retrying.')
               : session.state === 'waiting'
-                ? 'Waiting for a decision'
-                : 'Conversation saved'}
+                ? t('Waiting for a decision')
+                : t('Conversation saved')}
       </Text>
       <View style={styles.timeline}>
         {events.filter((event) => event.kind === 'message').length === 0 && (
@@ -447,8 +456,8 @@ export default function SessionScreen() {
             }}
           >
             {session.state === 'active'
-              ? 'Monique is preparing a response…'
-              : 'No messages available yet.'}
+              ? t('Monique is preparing a response…')
+              : t('No messages available yet.')}
           </Text>
         )}
         {events
@@ -470,7 +479,7 @@ export default function SessionScreen() {
             accessibilityRole="header"
             style={[styles.section, { color: palette.text }]}
           >
-            Durable receipts
+            {t('Durable receipts')}
           </Text>
           {receipts.map((receipt) => (
             <ReceiptCard

@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
 
-export function ConnectionBanner() {
+export function ConnectionBanner({
+  compact = false,
+}: {
+  readonly compact?: boolean;
+}) {
+  const { t } = useLanguage();
+
   const { snapshot, busyAction, projectionReady, refreshProjection } =
     useMobile();
   const palette = usePalette();
@@ -15,10 +23,19 @@ export function ConnectionBanner() {
     <View
       style={[
         styles.banner,
+        compact &&
+          !stale && {
+            borderWidth: 0,
+            backgroundColor: 'transparent',
+            paddingVertical: 2,
+            paddingHorizontal: 0,
+          },
         {
           backgroundColor: stale
             ? palette.warningSurface
-            : palette.surfaceMuted,
+            : compact
+              ? 'transparent'
+              : palette.surfaceMuted,
           borderColor: stale ? palette.warning : palette.border,
         },
       ]}
@@ -32,7 +49,7 @@ export function ConnectionBanner() {
       <View
         accessible
         accessibilityRole="summary"
-        accessibilityLabel={`Connection: ${snapshot.connection.label}`}
+        accessibilityLabel={`Connection: ${t(snapshot.connection.label)}`}
         style={styles.copy}
       >
         <Text
@@ -40,26 +57,26 @@ export function ConnectionBanner() {
           style={[styles.status, { color: palette.text }]}
         >
           {snapshot.connection.phase === 'reconnecting'
-            ? 'Refreshing'
+            ? t('Refreshing')
             : stale
-              ? 'Not up to date · read only'
+              ? t('Not up to date · read only')
               : snapshot.connection.synthetic
-                ? 'Live · synthetic'
-                : 'Live'}
+                ? t('Live · synthetic')
+                : t('Live')}
         </Text>
         {stale && (
           <Text
             numberOfLines={stale ? undefined : 1}
             style={[styles.label, { color: palette.textMuted }]}
           >
-            {snapshot.connection.label}
+            {t(snapshot.connection.label)}
           </Text>
         )}
       </View>
       {stale && projectionReady && (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Reconnect and refresh projection"
+          accessibilityLabel={t('Reconnect and refresh projection')}
           accessibilityState={{ disabled: busyAction !== null }}
           disabled={busyAction !== null}
           onPress={() => void refreshProjection()}
@@ -68,7 +85,9 @@ export function ConnectionBanner() {
             { borderColor: palette.warning, opacity: busyAction ? 0.5 : 1 },
           ]}
         >
-          <Text style={[styles.retryText, { color: palette.text }]}>Retry</Text>
+          <Text style={[styles.retryText, { color: palette.text }]}>
+            {t('Retry')}
+          </Text>
         </Pressable>
       )}
     </View>

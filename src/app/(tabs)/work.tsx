@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
+
+import { useLanguage } from '@/i18n/language';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -30,6 +32,8 @@ export default function WorkScreen() {
   );
 }
 function WorkContent() {
+  const { t } = useLanguage();
+
   const { workGateway, storageScope, snapshot, projectionReady } = useMobile();
   const palette = usePalette();
   const [channel, setChannel] = useState<{ name: string; text: string } | null>(
@@ -167,21 +171,23 @@ function WorkContent() {
   ];
   return (
     <Screen>
-      <Text style={[styles.title, textStyle]}>Slack and work queue</Text>
+      <Text style={[styles.title, textStyle]}>{t('Slack and work queue')}</Text>
       {!workGateway ? (
         <Text style={textStyle}>
-          Pair this phone with “Read Slack and manage tickets” enabled in the
-          dashboard. Existing phone permissions stay unchanged.
+          {t(
+            'Pair this phone with “Read Slack and manage tickets” enabled in the dashboard. Existing phone permissions stay unchanged.',
+          )}
         </Text>
       ) : (
         <>
           <Text style={{ color: palette.textMuted }}>
-            Tickets belong to the selected server’s Manage instance. Approval
-            releases work for execution.
+            {t(
+              'Tickets belong to the selected server’s Manage instance. Approval releases work for execution.',
+            )}
           </Text>
           {
             <WorkButton
-              label={'Refresh channel and queue'}
+              label={t('Refresh channel and queue')}
               onPress={() => {
                 void reload(lifetime.current.signal);
               }}
@@ -190,23 +196,24 @@ function WorkContent() {
           }
           {!allowed && (
             <Text style={textStyle}>
-              Reconnect to read Slack and manage work.
+              {t('Reconnect to read Slack and manage work.')}
             </Text>
           )}
           {!!message && (
             <Text accessibilityLiveRegion="polite" style={textStyle}>
-              {message}
+              {message && t(message)}
             </Text>
           )}
           {pending && (
             <View style={[styles.card, { borderColor: palette.border }]}>
               <Text style={textStyle}>
-                An earlier request needs confirmation. New queue actions are
-                paused.
+                {t(
+                  'An earlier request needs confirmation. New queue actions are paused.',
+                )}
               </Text>
               {
                 <WorkButton
-                  label={'Retry same request'}
+                  label={t('Retry same request')}
                   onPress={() => {
                     void run(true);
                   }}
@@ -216,10 +223,10 @@ function WorkContent() {
             </View>
           )}
           <Text style={[styles.heading, textStyle]}>
-            {channel ? `#${channel.name}` : 'Slack channel'}
+            {channel ? `#${channel.name}` : t('Slack channel')}
           </Text>
           <Text style={{ color: palette.textMuted }}>
-            Recent messages · refresh for updates
+            {t('Recent messages · refresh for updates')}
           </Text>
           {!!channelError && <Text style={textStyle}>{channelError}</Text>}
           {channel && (
@@ -227,13 +234,17 @@ function WorkContent() {
               {channel.text || 'No recent messages.'}
             </Text>
           )}
-          <Text style={[styles.heading, textStyle]}>Add a GitHub ticket</Text>
+          <Text style={[styles.heading, textStyle]}>
+            {t('Add a GitHub ticket')}
+          </Text>
           <Text style={{ color: palette.textMuted }}>
-            Creates a pending gate. Approve it separately to release work.
+            {t(
+              'Creates a pending gate. Approve it separately to release work.',
+            )}
           </Text>
           <TextInput
-            accessibilityLabel="GitHub issue URL"
-            placeholder="https://github.com/owner/repo/issues/123"
+            accessibilityLabel={t('GitHub issue URL')}
+            placeholder={t('https://github.com/owner/repo/issues/123')}
             placeholderTextColor={palette.textMuted}
             value={issue}
             onChangeText={setIssue}
@@ -244,7 +255,7 @@ function WorkContent() {
           />
           {
             <WorkButton
-              label={'Review ticket submission'}
+              label={t('Review ticket submission')}
               onPress={() =>
                 setConfirm({ action: 'dispatch', issue_url: issue.trim() })
               }
@@ -256,19 +267,19 @@ function WorkContent() {
               }
             />
           }
-          <Text style={[styles.heading, textStyle]}>Ticket queue</Text>
+          <Text style={[styles.heading, textStyle]}>{t('Ticket queue')}</Text>
           {!queueLoaded && allowed && (
-            <Text style={textStyle}>Loading queue…</Text>
+            <Text style={textStyle}>{t('Loading queue…')}</Text>
           )}
           {!!queueError && <Text style={textStyle}>{queueError}</Text>}
           {allowed && queueLoaded && !queueError && tickets.length === 0 && (
             <Text style={textStyle}>
-              No tickets in the latest queue response.
+              {t('No tickets in the latest queue response.')}
             </Text>
           )}
           {hasMore && (
             <Text style={{ color: palette.textMuted }}>
-              Showing the 50 most recently updated tickets.
+              {t('Showing the 50 most recently updated tickets.')}
             </Text>
           )}
           {tickets.map((ticket) => (
@@ -283,11 +294,12 @@ function WorkContent() {
                 {ticket.job_status.replaceAll('_', ' ')}
               </Text>
               <Text style={{ color: palette.textMuted }}>
-                Updated {ticket.updated_at}
+                {t('Updated') + ' '}
+                {ticket.updated_at}
               </Text>
               {
                 <WorkButton
-                  label={'Open GitHub issue'}
+                  label={t('Open GitHub issue')}
                   onPress={() => {
                     void Linking.openURL(ticket.issue_url).catch(() =>
                       setMessage('Could not open GitHub.'),
@@ -300,7 +312,7 @@ function WorkContent() {
                 <View style={styles.row}>
                   {
                     <WorkButton
-                      label={'Approve ticket'}
+                      label={t('Approve ticket')}
                       onPress={() =>
                         setConfirm({
                           action: 'decide',
@@ -315,7 +327,7 @@ function WorkContent() {
                   }
                   {
                     <WorkButton
-                      label={'Reject ticket'}
+                      label={t('Reject ticket')}
                       onPress={() => {
                         setReason('');
                         setConfirm({
@@ -353,9 +365,9 @@ function WorkContent() {
                   ]}
                 >
                   <Text style={[styles.heading, textStyle]}>
-                    Confirm{' '}
+                    {t('Confirm')}{' '}
                     {confirm.action === 'dispatch'
-                      ? 'ticket submission'
+                      ? t('ticket submission')
                       : confirm.decision}
                   </Text>
                   <Text selectable style={textStyle}>
@@ -368,19 +380,19 @@ function WorkContent() {
                   {confirm.action === 'decide' &&
                     confirm.decision === 'approve' && (
                       <Text style={textStyle}>
-                        This releases the pending ticket for execution.
+                        {t('This releases the pending ticket for execution.')}
                       </Text>
                     )}
                   {confirm.action === 'decide' &&
                     confirm.decision === 'reject' && (
                       <TextInput
-                        accessibilityLabel="Reason for rejecting ticket"
+                        accessibilityLabel={t('Reason for rejecting ticket')}
                         value={reason}
                         onChangeText={(value) => {
                           setReason(value);
                           setConfirm({ ...confirm, reason: value });
                         }}
-                        placeholder="Reason for rejection"
+                        placeholder={t('Reason for rejection')}
                         placeholderTextColor={palette.textMuted}
                         style={inputStyle}
                         multiline
@@ -389,7 +401,7 @@ function WorkContent() {
                     )}
                   {
                     <WorkButton
-                      label={'Confirm action'}
+                      label={t('Confirm action')}
                       onPress={() => {
                         void run(false);
                       }}
@@ -404,7 +416,7 @@ function WorkContent() {
                   }
                   {
                     <WorkButton
-                      label={'Back'}
+                      label={t('Back')}
                       onPress={() => setConfirm(null)}
                       disabled={busy}
                     />
@@ -463,6 +475,7 @@ function WorkButton({
   readonly onPress: () => void;
   readonly disabled: boolean;
 }) {
+  const { t } = useLanguage();
   const palette = usePalette();
   return (
     <Pressable
@@ -475,7 +488,9 @@ function WorkButton({
         { borderColor: palette.border, opacity: off ? 0.45 : 1 },
       ]}
     >
-      <Text style={{ color: palette.accent, fontWeight: '700' }}>{label}</Text>
+      <Text style={{ color: palette.accent, fontWeight: '700' }}>
+        {t(label)}
+      </Text>
     </Pressable>
   );
 }

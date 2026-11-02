@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
+import { useLanguage } from '@/i18n/language';
+
 import { Link, useLocalSearchParams } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -76,6 +78,8 @@ function AnchoredDraftEditor({
     cancelled: () => void,
   ) => void;
 }) {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   const [text, setText] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -141,7 +145,7 @@ function AnchoredDraftEditor({
             setText(value);
           }
         }}
-        placeholder="Add a line-anchored comment…"
+        placeholder={t('Add a line-anchored comment…')}
         placeholderTextColor={palette.textMuted}
         style={[
           styles.reviewDraft,
@@ -156,12 +160,12 @@ function AnchoredDraftEditor({
       <View style={styles.draftFooter}>
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
           {saveState === 'persisted'
-            ? 'Drafted locally · not sent'
+            ? t('Drafted locally · not sent')
             : saveState === 'saving'
-              ? 'Saving local draft · not ready to send'
-              : 'Local draft persistence failed · not ready to send'}{' '}
+              ? t('Saving local draft · not ready to send')
+              : t('Local draft persistence failed · not ready to send')}{' '}
           · {new TextEncoder().encode(text).byteLength}/{MAX_REVIEW_DRAFT_BYTES}{' '}
-          bytes
+          {t('bytes')}
         </Text>
         <Pressable
           accessibilityRole="button"
@@ -192,7 +196,7 @@ function AnchoredDraftEditor({
           ]}
         >
           <Text style={{ color: palette.accent, fontWeight: '800' }}>
-            {busy ? 'Recording…' : 'Add comment'}
+            {busy ? t('Recording…') : t('Add comment')}
           </Text>
         </Pressable>
       </View>
@@ -283,6 +287,8 @@ function ReviewControlSurface({
   readonly selectedHunk: string | undefined;
   readonly selectedCheck: string | undefined;
 }) {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   const {
     status,
@@ -715,10 +721,12 @@ function ReviewControlSurface({
   if (renderSemantics === null) {
     return (
       <Text
-        accessibilityLabel="Review render semantics unavailable"
+        accessibilityLabel={t('Review render semantics unavailable')}
         style={[styles.subtitle, { color: palette.warning }]}
       >
-        Review unavailable: the server projection is not semantically coherent.
+        {t(
+          'Review unavailable: the server projection is not semantically coherent.',
+        )}
       </Text>
     );
   }
@@ -726,17 +734,18 @@ function ReviewControlSurface({
     <View style={styles.reviewSurface}>
       <View style={styles.reviewSummary}>
         <Text style={[styles.value, { color: palette.text }]}>
-          {renderSemantics.attention.semantic_key} · {review.unread} unread
+          {renderSemantics.attention.semantic_key} · {review.unread}{' '}
+          {' ' + t('unread')}
         </Text>
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          {renderSemantics.attention.reason_key ?? 'No attention reason'} ·
-          source revision{' '}
+          {renderSemantics.attention.reason_key ?? 'No attention reason'}{' '}
+          {' ' + t('· source revision')}{' '}
           {renderSemantics.attention.source_revision?.toString() ??
             'not applicable'}
         </Text>
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
           {renderSemantics.review.semantic_key} ·{' '}
-          {renderSemantics.review.freshness_key} · source revision{' '}
+          {renderSemantics.review.freshness_key} {' ' + t('· source revision')}{' '}
           {renderSemantics.review.source_revision.toString()}
         </Text>
         {renderSemantics.checks.map((check) => (
@@ -744,18 +753,20 @@ function ReviewControlSurface({
             key={check.id}
             style={[styles.subtitle, { color: palette.textMuted }]}
           >
-            {check.semantic_key} · {check.freshness_key} · source revision{' '}
-            {check.source_revision.toString()}
+            {check.semantic_key} · {check.freshness_key}{' '}
+            {' ' + t('· source revision')} {check.source_revision.toString()}
           </Text>
         ))}
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
           {renderSemantics.pull_request.semantic_key} ·{' '}
-          {renderSemantics.pull_request.freshness_key} · source revision{' '}
+          {renderSemantics.pull_request.freshness_key}{' '}
+          {' ' + t('· source revision')}{' '}
           {renderSemantics.pull_request.source_revision.toString()}
         </Text>
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
           {renderSemantics.delivery.semantic_key} ·{' '}
-          {renderSemantics.delivery.freshness_key} · source revision{' '}
+          {renderSemantics.delivery.freshness_key}{' '}
+          {' ' + t('· source revision')}{' '}
           {renderSemantics.delivery.source_revision.toString()}
         </Text>
       </View>
@@ -774,12 +785,14 @@ function ReviewControlSurface({
             {file.path}
           </Text>
           <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-            {file.change} · {file.worktree} · conflict {file.conflict}
+            {file.change} · {file.worktree} {' ' + t('· conflict') + ' '}
+            {file.conflict}
           </Text>
           <Text style={[styles.subtitle, { color: palette.textMuted }]}>
             {renderSemantics.previews.find((preview) => preview.id === file.id)
               ?.semantic_key ?? 'Preview semantics unavailable'}{' '}
-            · source revision {renderSemantics.source_revision.toString()}
+            {t('· source revision') + ' '}
+            {renderSemantics.source_revision.toString()}
           </Text>
           {file.hunks.map((hunk) => {
             const preview = safeHunkPreview(hunk.preview, file.sanitized);
@@ -829,8 +842,9 @@ function ReviewControlSurface({
                 </Text>
                 {preview === null ? (
                   <Text style={[styles.subtitle, { color: palette.warning }]}>
-                    Preview withheld: the server did not mark this content
-                    sanitized.
+                    {t(
+                      'Preview withheld: the server did not mark this content sanitized.',
+                    )}
                   </Text>
                 ) : (
                   <Text
@@ -881,7 +895,7 @@ function ReviewControlSurface({
                   />
                 ) : (
                   <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-                    Loading exact-revision draft…
+                    {t('Loading exact-revision draft…')}
                   </Text>
                 )}
               </View>
@@ -913,7 +927,7 @@ function ReviewControlSurface({
           ]}
         >
           <Text style={{ color: palette.accent, fontWeight: '800' }}>
-            Approve review
+            {t('Approve review')}
           </Text>
         </Pressable>
         <Pressable
@@ -953,74 +967,84 @@ function ReviewControlSurface({
           ]}
         >
           <Text style={{ color: palette.accent, fontWeight: '800' }}>
-            Batch send {batchTargetLabel} to agent
+            {t('Batch send') + ' '}
+            {batchTargetLabel} {' ' + t('to agent')}
           </Text>
         </Pressable>
       </View>
       {pending !== null && (
         <View
-          accessibilityLabel="Exact review action confirmation"
+          accessibilityLabel={t('Exact review action confirmation')}
           style={[styles.confirmation, { borderColor: palette.warning }]}
         >
           <Text style={{ color: palette.text, fontWeight: '900' }}>
-            Confirm exact review action
+            {t('Confirm exact review action')}
           </Text>
           <Text style={[styles.subtitle, { color: palette.textMuted }]}>
             {pending.summary}
           </Text>
           <Text style={[styles.meta, { color: palette.textMuted }]}>
-            Workspace {workspace.id} · workspace revision {workspace.revision} ·
-            review revision {review.revision} · action{' '}
+            {t('Workspace') + ' '}
+            {workspace.id} {' ' + t('· workspace revision') + ' '}
+            {workspace.revision} {' ' + t('· review revision') + ' '}
+            {review.revision} {' ' + t('· action')}{' '}
             {pending.action.kind.replaceAll('_', ' ')}
           </Text>
           <Text style={[styles.meta, { color: palette.textMuted }]}>
-            Receipt key {pending.idempotencyKey} · state {pending.phase}
+            {t('Receipt key') + ' '}
+            {pending.idempotencyKey} {' ' + t('· state') + ' '}
+            {pending.phase}
             {pending.outcome === null ? '' : ` · outcome ${pending.outcome}`}
           </Text>
           {pending.action.kind === 'rerun_check' &&
             pending.rerunPreview !== null && (
-              <View accessibilityLabel="Exact check rerun preview">
+              <View accessibilityLabel={t('Exact check rerun preview')}>
                 <Text style={[styles.meta, { color: palette.text }]}>
-                  Server-issued inert preview
+                  {t('Server-issued inert preview')}
                 </Text>
                 <Text style={[styles.meta, { color: palette.textMuted }]}>
-                  Check {pending.action.payload.check_id} · check revision{' '}
-                  {pending.action.payload.expected_check_revision.toString()} ·
-                  CI authority {pending.rerunPreview.authority.id}
+                  {t('Check') + ' '}
+                  {pending.action.payload.check_id}{' '}
+                  {' ' + t('· check revision')}{' '}
+                  {pending.action.payload.expected_check_revision.toString()}{' '}
+                  {' ' + t('· CI authority') + ' '}
+                  {pending.rerunPreview.authority.id}
                 </Text>
               </View>
             )}
           {pending.pullRequestPreview !== null && (
-            <View accessibilityLabel="Exact pull request preview">
+            <View accessibilityLabel={t('Exact pull request preview')}>
               <Text style={[styles.meta, { color: palette.text }]}>
-                Server-issued inert preview
+                {t('Server-issued inert preview')}
               </Text>
               <Text style={[styles.meta, { color: palette.textMuted }]}>
-                Pull request{' '}
+                {t('Pull request')}{' '}
                 {pending.pullRequestPreview.pullRequestId ?? 'not yet created'}{' '}
-                · pull-request authority{' '}
+                {t('· pull-request authority')}{' '}
                 {pending.pullRequestPreview.authority.id}
               </Text>
               {pending.pullRequestPreview.expectedHeadRevision !== null && (
                 <Text style={[styles.meta, { color: palette.warning }]}>
-                  Merging exactly head{' '}
-                  {pending.pullRequestPreview.expectedHeadRevision} · server
-                  readiness {pending.pullRequestPreview.readiness ?? 'unknown'}
+                  {t('Merging exactly head')}{' '}
+                  {pending.pullRequestPreview.expectedHeadRevision}{' '}
+                  {' ' + t('· server readiness') + ' '}
+                  {pending.pullRequestPreview.readiness ?? 'unknown'}
                 </Text>
               )}
             </View>
           )}
           {pending.action.kind === 'batch_send_comments_to_agent' && (
-            <View accessibilityLabel="Exact batch review targets">
+            <View accessibilityLabel={t('Exact batch review targets')}>
               <Text style={[styles.meta, { color: palette.text }]}>
-                Exact persisted targets
+                {t('Exact persisted targets')}
               </Text>
               {pending.action.payload.comments.map((target) => (
                 <Text
                   key={target.comment_id}
                   style={[styles.meta, { color: palette.textMuted }]}
                 >
-                  Comment {target.comment_id} · revision{' '}
+                  {t('Comment') + ' '}
+                  {target.comment_id} {' ' + t('· revision')}{' '}
                   {target.expected_comment_revision.toString()}
                 </Text>
               ))}
@@ -1030,35 +1054,37 @@ function ReviewControlSurface({
             {pending.phase === 'confirm' && (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Confirm exact review action"
+                accessibilityLabel={t('Confirm exact review action')}
                 accessibilityState={{ disabled: confirmationBusy }}
                 disabled={confirmationBusy}
                 onPress={() => void confirmPending()}
                 style={[styles.reviewAction, { borderColor: palette.warning }]}
               >
                 <Text style={{ color: palette.warning, fontWeight: '900' }}>
-                  {confirmationBusy ? 'Submitting…' : 'Confirm'}
+                  {confirmationBusy ? t('Submitting…') : t('Confirm')}
                 </Text>
               </Pressable>
             )}
             {pending.phase === 'reconcile' && (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Reconcile exact review receipt"
+                accessibilityLabel={t('Reconcile exact review receipt')}
                 accessibilityState={{ disabled: confirmationBusy }}
                 disabled={confirmationBusy}
                 onPress={() => void reconcilePending()}
                 style={[styles.reviewAction, { borderColor: palette.warning }]}
               >
                 <Text style={{ color: palette.warning, fontWeight: '900' }}>
-                  {confirmationBusy ? 'Reconciling…' : 'Reconcile receipt'}
+                  {confirmationBusy
+                    ? t('Reconciling…')
+                    : t('Reconcile receipt')}
                 </Text>
               </Pressable>
             )}
             {pending.phase === 'cleanup' && (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Retry completed review local cleanup"
+                accessibilityLabel={t('Retry completed review local cleanup')}
                 accessibilityState={{ disabled: confirmationBusy }}
                 disabled={confirmationBusy}
                 onPress={() => {
@@ -1072,8 +1098,8 @@ function ReviewControlSurface({
               >
                 <Text style={{ color: palette.warning, fontWeight: '900' }}>
                   {confirmationBusy
-                    ? 'Cleaning local draft…'
-                    : 'Retry local cleanup'}
+                    ? t('Cleaning local draft…')
+                    : t('Retry local cleanup')}
                 </Text>
               </Pressable>
             )}
@@ -1081,8 +1107,8 @@ function ReviewControlSurface({
               accessibilityRole="button"
               accessibilityLabel={
                 pending.phase === 'terminal'
-                  ? 'Dismiss terminal review receipt'
-                  : 'Cancel review action'
+                  ? t('Dismiss terminal review receipt')
+                  : t('Cancel review action')
               }
               accessibilityState={{
                 disabled:
@@ -1100,10 +1126,10 @@ function ReviewControlSurface({
             >
               <Text style={{ color: palette.textMuted, fontWeight: '800' }}>
                 {pending.phase === 'terminal'
-                  ? 'Dismiss result'
+                  ? t('Dismiss result')
                   : pending.phase === 'cleanup'
-                    ? 'Completed · cleanup required'
-                    : 'Cancel'}
+                    ? t('Completed · cleanup required')
+                    : t('Cancel')}
               </Text>
             </Pressable>
           </View>
@@ -1114,24 +1140,26 @@ function ReviewControlSurface({
           accessibilityLiveRegion="assertive"
           style={{ color: palette.danger }}
         >
-          Review action refused: {reviewError.replaceAll('_', ' ')}
+          {t('Review action refused:') + ' '}
+          {reviewError.replaceAll('_', ' ')}
         </Text>
       )}
       {(scopedReceiptHandles.length > 0 || scopedReceipts.length > 0) && (
         <View
-          accessibilityLabel="Durable review receipts"
+          accessibilityLabel={t('Durable review receipts')}
           style={[styles.confirmation, { borderColor: palette.border }]}
         >
           <Text style={{ color: palette.text, fontWeight: '900' }}>
-            Durable review receipts
+            {t('Durable review receipts')}
           </Text>
           {scopedReceiptHandles.map((handle) => (
             <Text
               key={handle.idempotency_key}
               style={[styles.meta, { color: palette.warning }]}
             >
-              {handle.action_kind.replaceAll('_', ' ')} · pending exact receipt
-              · {handle.idempotency_key}
+              {handle.action_kind.replaceAll('_', ' ')}{' '}
+              {' ' + t('· pending exact receipt ·') + ' '}
+              {handle.idempotency_key}
             </Text>
           ))}
           {scopedReceipts.map(({ actionKind, receipt }) => (
@@ -1139,26 +1167,24 @@ function ReviewControlSurface({
               key={receipt.idempotency_key}
               style={[styles.meta, { color: palette.textMuted }]}
             >
-              {actionKind.replaceAll('_', ' ')} · {receipt.outcome} · actor{' '}
-              {receipt.actor} · {receipt.reconciliation} ·{' '}
+              {actionKind.replaceAll('_', ' ')} · {receipt.outcome}{' '}
+              {' ' + t('· actor')} {receipt.actor} · {receipt.reconciliation} ·{' '}
               {receipt.idempotency_key}
             </Text>
           ))}
         </View>
       )}
       <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-        Draft state is explicit: local drafts are not sent to an agent. Git
-        stage, unstage, and commit remain unavailable. Persisted comments can be
-        sent only through the exact retained-agent actions above. Check reruns
-        and pull-request actions appear only for a capability the server minted
-        for this delegation, one family at a time; tapping one fetches an inert
-        exact preview before confirmation.
+        {t(
+          'Draft state is explicit: local drafts are not sent to an agent. Git stage, unstage, and commit remain unavailable. Persisted comments can be sent only through the exact retained-agent actions above. Check reruns and pull-request actions appear only for a capability the server minted for this delegation, one family at a time; tapping one fetches an inert exact preview before confirmation.',
+        )}
       </Text>
       {snapshot.comments.map((comment) => (
         <View key={comment.id} style={styles.commentRow}>
           <Text style={{ color: palette.text }}>{comment.body}</Text>
           <Text style={[styles.meta, { color: palette.textMuted }]}>
-            {comment.actor} · revision {comment.revision.toString()} ·{' '}
+            {comment.actor} {' ' + t('· revision') + ' '}
+            {comment.revision.toString()} ·{' '}
             {comment.agent_state.replaceAll('_', ' ')}
           </Text>
           {(() => {
@@ -1195,7 +1221,7 @@ function ReviewControlSurface({
                 ]}
               >
                 <Text style={{ color: palette.accent, fontWeight: '800' }}>
-                  Send exact comment to agent
+                  {t('Send exact comment to agent')}
                 </Text>
               </Pressable>
             );
@@ -1231,8 +1257,9 @@ function ReviewControlSurface({
             ]}
           >
             <Text style={{ color: palette.textMuted }}>
-              Check {check.id}: {check.state} ·{' '}
-              {check.required ? 'required' : 'optional'} · revision{' '}
+              {t('Check') + ' '}
+              {check.id}: {check.state} ·{' '}
+              {check.required ? 'required' : 'optional'} {' ' + t('· revision')}{' '}
               {check.freshness.observed_revision.toString()}
             </Text>
             <Pressable
@@ -1250,33 +1277,37 @@ function ReviewControlSurface({
               ]}
             >
               <Text style={{ color: palette.accent, fontWeight: '800' }}>
-                {confirmationBusy ? 'Loading preview…' : 'Preview exact rerun'}
+                {confirmationBusy
+                  ? t('Loading preview…')
+                  : t('Preview exact rerun')}
               </Text>
             </Pressable>
           </View>
         );
       })}
       <Text style={{ color: palette.textMuted }}>
-        Pull request: {snapshot.pull_request.id ?? 'not reported'} ·{' '}
+        {t('Pull request:') + ' '}
+        {snapshot.pull_request.id ?? 'not reported'} ·{' '}
         {snapshot.pull_request.state} · {snapshot.pull_request.readiness}
       </Text>
       {pullRequestGrants === null ? (
         <Text
-          accessibilityLabel="No pull request controls are available"
+          accessibilityLabel={t('No pull request controls are available')}
           style={[styles.subtitle, { color: palette.textMuted }]}
         >
-          No pull-request control is offered: the server has not granted this
-          delegation a pull-request capability at this revision.
+          {t(
+            'No pull-request control is offered: the server has not granted this delegation a pull-request capability at this revision.',
+          )}
         </Text>
       ) : (
         <View
-          accessibilityLabel="Earned pull request controls"
+          accessibilityLabel={t('Earned pull request controls')}
           style={styles.pullRequestControls}
         >
           {(pullRequestGrants.open_pull_request !== null ||
             pullRequestGrants.update_pull_request !== null) && (
             <TextInput
-              accessibilityLabel="Pull request title"
+              accessibilityLabel={t('Pull request title')}
               editable={!reviewBusy && !confirmationBusy && pending === null}
               onChangeText={(value) => {
                 if (
@@ -1286,7 +1317,7 @@ function ReviewControlSurface({
                   setPullRequestTitle(value);
                 }
               }}
-              placeholder="Pull request title…"
+              placeholder={t('Pull request title…')}
               placeholderTextColor={palette.textMuted}
               style={[
                 styles.pullRequestTitle,
@@ -1345,10 +1376,10 @@ function ReviewControlSurface({
                       fontWeight: '800',
                     }}
                   >
-                    {label}
+                    {t(label)}
                   </Text>
                   <Text style={[styles.meta, { color: palette.textMuted }]}>
-                    pull-request revision{' '}
+                    {t('pull-request revision')}{' '}
                     {grant.expectedPullRequestRevision.toString()}
                     {grant.pullRequestId === null
                       ? ''
@@ -1379,12 +1410,14 @@ function DestinationControl({
     readonly params: Readonly<Record<string, string>>;
   };
 }) {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   const button = (
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ disabled: !enabled }}
-      accessibilityLabel={`${destinationTitle(destination)}${enabled ? '' : ', unavailable without a separate current grant'}`}
+      accessibilityLabel={`${destinationTitle(destination)}${enabled ? '' : t(', unavailable without a separate current grant')}`}
       disabled={!enabled}
       style={{
         alignItems: 'center',
@@ -1424,6 +1457,7 @@ function Section({
   readonly title: string;
   readonly children: ReactNode;
 }) {
+  const { t } = useLanguage();
   const palette = usePalette();
   return (
     <View
@@ -1436,7 +1470,7 @@ function Section({
         accessibilityRole="header"
         style={[styles.sectionTitle, { color: palette.text }]}
       >
-        {title}
+        {t(title)}
       </Text>
       {children}
     </View>
@@ -1450,6 +1484,8 @@ function WorkspaceDraftEditor({
   readonly server: ScopedServerProfile;
   readonly workspace: CompanionWorkspace;
 }) {
+  const { t } = useLanguage();
+
   const palette = usePalette();
   const {
     catalog,
@@ -1624,7 +1660,7 @@ function WorkspaceDraftEditor({
   return (
     <Section title="Task context draft">
       <TextInput
-        accessibilityLabel="Workspace task context draft"
+        accessibilityLabel={t('Workspace task context draft')}
         multiline
         onChangeText={(value) => {
           if (
@@ -1633,7 +1669,9 @@ function WorkspaceDraftEditor({
           )
             setDraft(value);
         }}
-        placeholder="Keep notes for a later desktop create or resume action…"
+        placeholder={t(
+          'Keep notes for a later desktop create or resume action…',
+        )}
         placeholderTextColor={palette.textMuted}
         style={[
           styles.draft,
@@ -1647,16 +1685,19 @@ function WorkspaceDraftEditor({
       />
       <Text style={[styles.subtitle, { color: palette.textMuted }]}>
         {new TextEncoder().encode(draft).byteLength} /{' '}
-        {MAX_WORKSPACE_DRAFT_BYTES} bytes · stored locally for this exact
-        authorization and workspace revision
+        {MAX_WORKSPACE_DRAFT_BYTES}{' '}
+        {' ' +
+          t(
+            'bytes · stored locally for this exact authorization and workspace revision',
+          )}
       </Text>
       <View style={styles.mutations}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
             live
-              ? 'Create attempt from exact external task'
-              : 'Create from task, unavailable: selected server is not live'
+              ? t('Create attempt from exact external task')
+              : t('Create from task, unavailable: selected server is not live')
           }
           disabled={!live || workspaceMutationBusy}
           onPress={() => void prepare('create_attempt')}
@@ -1670,15 +1711,15 @@ function WorkspaceDraftEditor({
           ]}
         >
           <Text style={{ color: palette.text, fontWeight: '800' }}>
-            Create from task
+            {t('Create from task')}
           </Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
             live && workspace.attempt !== null
-              ? 'Resume exact workspace attempt'
-              : 'Resume workspace, unavailable: no exact live attempt'
+              ? t('Resume exact workspace attempt')
+              : t('Resume workspace, unavailable: no exact live attempt')
           }
           disabled={
             !live || workspace.attempt === null || workspaceMutationBusy
@@ -1695,14 +1736,15 @@ function WorkspaceDraftEditor({
           ]}
         >
           <Text style={{ color: palette.text, fontWeight: '800' }}>
-            Resume workspace
+            {t('Resume workspace')}
           </Text>
         </Pressable>
       </View>
       {!live && (
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          Unavailable until this exact selected server and workspace revision
-          are live. No offline mutation is queued.
+          {t(
+            'Unavailable until this exact selected server and workspace revision are live. No offline mutation is queued.',
+          )}
         </Text>
       )}
       {prepared !== null &&
@@ -1752,7 +1794,7 @@ function WorkspaceDraftEditor({
             ]}
           >
             <Text style={{ color: palette.text, fontWeight: '800' }}>
-              Reconcile pending workspace change
+              {t('Reconcile pending workspace change')}
             </Text>
           </Pressable>
         ))}
@@ -1761,6 +1803,8 @@ function WorkspaceDraftEditor({
 }
 
 export default function WorkspaceDetailScreen() {
+  const { t } = useLanguage();
+
   const params = useLocalSearchParams<{
     server: string;
     workspace: string;
@@ -1803,11 +1847,12 @@ export default function WorkspaceDetailScreen() {
           accessibilityRole="header"
           style={[styles.title, { color: palette.text }]}
         >
-          Workspace unavailable
+          {t('Workspace unavailable')}
         </Text>
         <Text style={{ color: palette.textMuted }}>
-          The exact server, workspace, and revision are not present in the
-          admitted catalog.
+          {t(
+            'The exact server, workspace, and revision are not present in the admitted catalog.',
+          )}
         </Text>
       </Screen>
     );
@@ -1869,10 +1914,11 @@ export default function WorkspaceDetailScreen() {
           {workspace.title}
         </Text>
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          {server.label} · revision {workspace.revision} ·{' '}
+          {server.label} {' ' + t('· revision') + ' '}
+          {workspace.revision} ·{' '}
           {server.authorization === 'active'
-            ? 'current grant'
-            : 'cached read only'}
+            ? t('current grant')
+            : t('cached read only')}
         </Text>
       </View>
 
@@ -1882,16 +1928,17 @@ export default function WorkspaceDetailScreen() {
             ?.label ?? 'Unknown project'}
         </Text>
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          Host:{' '}
+          {t('Host:')}{' '}
           {server.hosts.find((host) => host.id === workspace.hostId)?.label ??
             'Unknown host'}
         </Text>
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          Repository:{' '}
+          {t('Repository:')}{' '}
           {workspace.repository?.label ?? 'not reported by Platform v2'}
         </Text>
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          Branch: {workspace.branch?.label ?? 'not reported by Platform v2'}
+          {t('Branch:') + ' '}
+          {workspace.branch?.label ?? 'not reported by Platform v2'}
         </Text>
       </Section>
 
@@ -1899,7 +1946,7 @@ export default function WorkspaceDetailScreen() {
         <Section title="External work item">
           {workspace.externalWorkItem === null ? (
             <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-              No typed external work item was reported.
+              {t('No typed external work item was reported.')}
             </Text>
           ) : (
             <>
@@ -1911,7 +1958,8 @@ export default function WorkspaceDetailScreen() {
                 {workspace.externalWorkItem.title}
               </Text>
               <Text style={[styles.statusValue, { color: palette.text }]}>
-                External work status: {workspace.externalWorkItem.status}
+                {t('External work status:') + ' '}
+                {workspace.externalWorkItem.status}
               </Text>
             </>
           )}
@@ -1921,17 +1969,17 @@ export default function WorkspaceDetailScreen() {
             {workspace.orchestrationStatus}
           </Text>
           <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-            Attempt:{' '}
+            {t('Attempt:')}{' '}
             {workspace.attempt === null
-              ? 'not reported'
+              ? t('not reported')
               : `${workspace.attempt.state} · revision ${workspace.attempt.revision}`}
           </Text>
           <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-            Freshness: {workspace.freshness.state} ·{' '}
-            {workspace.freshness.observedAt}
+            {t('Freshness:') + ' '}
+            {workspace.freshness.state} · {workspace.freshness.observedAt}
           </Text>
           <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-            {workspace.unreadAttention} unread attention
+            {workspace.unreadAttention} {' ' + t('unread attention')}
           </Text>
         </Section>
       </View>
@@ -1995,10 +2043,11 @@ export default function WorkspaceDetailScreen() {
                 {session.title}
               </Text>
               <Text style={{ color: palette.textMuted, fontSize: 12 }}>
-                {session.state} · revision {session.revision}
+                {session.state} {' ' + t('· revision') + ' '}
+                {session.revision}
                 {retained !== undefined
                   ? ''
-                  : ' · not in retained mobile projection'}
+                  : t(' · not in retained mobile projection')}
               </Text>
             </Pressable>
           );
@@ -2019,7 +2068,7 @@ export default function WorkspaceDetailScreen() {
         })}
         {workspace.sessions.length === 0 && (
           <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-            No typed retained-session relation was reported.
+            {t('No typed retained-session relation was reported.')}
           </Text>
         )}
       </Section>
@@ -2047,8 +2096,9 @@ export default function WorkspaceDetailScreen() {
           ))}
         </View>
         <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-          Files, preview, source control, and terminal are independent grants.
-          Terminal relay is not granted by the current mobile v2 contract.
+          {t(
+            'Files, preview, source control, and terminal are independent grants. Terminal relay is not granted by the current mobile v2 contract.',
+          )}
         </Text>
       </Section>
 
@@ -2056,8 +2106,9 @@ export default function WorkspaceDetailScreen() {
         <Section title={destinationTitle(destination)}>
           {!destinationAdmitted || !liveDetail ? (
             <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-              This destination is unavailable for the exact current workspace
-              grant and revision.
+              {t(
+                'This destination is unavailable for the exact current workspace grant and revision.',
+              )}
             </Text>
           ) : destination === 'files' ? (
             detail.review?.files.length ? (
@@ -2073,13 +2124,13 @@ export default function WorkspaceDetailScreen() {
               ))
             ) : (
               <Text style={{ color: palette.textMuted }}>
-                No changed files reported.
+                {t('No changed files reported.')}
               </Text>
             )
           ) : destination === 'preview' ? (
             renderSemantics === null ? (
               <Text style={{ color: palette.warning }}>
-                Preview semantics unavailable.
+                {t('Preview semantics unavailable.')}
               </Text>
             ) : (
               detail.review?.files
@@ -2090,7 +2141,8 @@ export default function WorkspaceDetailScreen() {
                   );
                   return preview === undefined ? null : (
                     <Text key={file.id} style={{ color: palette.text }}>
-                      {file.path} · {preview.semantic_key} · source revision{' '}
+                      {file.path} · {preview.semantic_key}{' '}
+                      {' ' + t('· source revision')}{' '}
                       {preview.source_revision.toString()}
                     </Text>
                   );
@@ -2099,16 +2151,18 @@ export default function WorkspaceDetailScreen() {
           ) : destination === 'source_control' ? (
             renderSemantics === null ? (
               <Text style={{ color: palette.warning }}>
-                Source-control semantics unavailable.
+                {t('Source-control semantics unavailable.')}
               </Text>
             ) : (
               <>
                 <Text style={{ color: palette.text }}>
-                  Pull request: {detail.review?.pullRequestId ?? 'not reported'}
+                  {t('Pull request:') + ' '}
+                  {detail.review?.pullRequestId ?? 'not reported'}
                 </Text>
                 <Text style={{ color: palette.textMuted }}>
                   {renderSemantics.pull_request.semantic_key} ·{' '}
-                  {renderSemantics.pull_request.freshness_key} · source revision{' '}
+                  {renderSemantics.pull_request.freshness_key}{' '}
+                  {' ' + t('· source revision')}{' '}
                   {renderSemantics.pull_request.source_revision.toString()}
                 </Text>
                 <Text style={{ color: palette.textMuted }}>
@@ -2149,14 +2203,15 @@ export default function WorkspaceDetailScreen() {
                 />
               ) : (
                 <Text style={[styles.subtitle, { color: palette.textMuted }]}>
-                  The exact review revision, file, or hunk is no longer current.
-                  Refresh before reviewing or commenting.
+                  {t(
+                    'The exact review revision, file, or hunk is no longer current. Refresh before reviewing or commenting.',
+                  )}
                 </Text>
               );
             })()
           ) : (
             <Text style={{ color: palette.textMuted }}>
-              No terminal relay authority is present.
+              {t('No terminal relay authority is present.')}
             </Text>
           )}
         </Section>
