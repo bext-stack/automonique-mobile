@@ -205,6 +205,12 @@ Remaining tracked work is grouped in the
       reviewable text follow-up draft and never persists audio.
 - [ ] Evaluate audio-message uploads and other attachments only after the base
       authority and privacy contracts are stable.
+- [x] Add persona agents and live voice calls behind the `call_agent` grant:
+      agents list, call screen, ticketed call socket and native call audio
+      with background running.
+- [ ] Verify a live call on Android and iOS devices: echo cancellation,
+      barge-in, background audio, the Android foreground-service notification,
+      Bluetooth routing and a revoked credential ending the call.
 - [ ] Consider widgets and a multi-server cockpit as separate products.
 - [ ] Treat profiles/models/tools administration and app-store publication as
       separately authorized initiatives.

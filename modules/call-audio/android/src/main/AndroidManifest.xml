@@ -1,0 +1,15 @@
+<!-- SPDX-License-Identifier: Elastic-2.0 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+  <application>
+    <!-- Keeps an operator-started call alive while the app is in the
+         background. Not exported: only this app can start or stop it. -->
+    <service
+      android:name=".CallForegroundService"
+      android:exported="false"
+      android:foregroundServiceType="microphone" />
+  </application>
+</manifest>

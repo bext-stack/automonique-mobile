@@ -153,3 +153,26 @@ Keep the existing ban on Expo Camera / ML Kit dependencies and the Maven
 license gate. The app-local module must be autolinked into a fresh native build;
 a JavaScript-only update cannot enable it in an older installed APK. Physical
 camera acceptance on Android and supported iOS hardware is still required.
+
+## Live calls with persona agents
+
+On 12 November 2026 the owner chose live, hands-free voice calls with
+persistent agents over the earlier position that the microphone only fills a
+reviewable draft. Three first-slice non-goals change, each narrowly:
+
+- **Audio leaves the device, during a call only.** Frames go to the paired
+  server over the call socket and from there to the server's speech provider.
+  Dictation is unchanged: it stays on-device and still only fills a draft.
+- **A spoken utterance is sent without review, as a follow-up only.** The
+  server delivers it through the same follow-up contract a typed message uses,
+  bound to the session's current revision. There is no spoken approval,
+  denial or stop; those keep their on-screen confirmation.
+- **Call audio runs in the background.** Nothing else does. There is still no
+  offline queue, background mutation or automatic reconnect.
+
+The phone never holds agent authority. `call_agent` lets it list registered
+agents, open an agent's single long-lived session and request a single-use
+call ticket; registering agents and editing personas stay on the server. The
+ticket, not the credential, is what the call socket sees, so no bearer token
+is sent on a WebSocket. The call engine admits only the paired HTTPS origin
+and a path under `/api/mobile/`.
