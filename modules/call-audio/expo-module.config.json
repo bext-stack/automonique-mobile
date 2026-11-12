@@ -1,0 +1,5 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": { "modules": ["CallAudioModule"] },
+  "android": { "modules": ["dev.bext.callaudio.CallAudioModule"] }
+}

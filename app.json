@@ -16,13 +16,20 @@
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": false,
           "NSAllowsLocalNetworking": false
-        }
+        },
+        "UIBackgroundModes": ["audio"]
       }
     },
     "android": {
       "package": "dev.bext.automonique",
-      "permissions": ["android.permission.CAMERA"],
-      "versionCode": 11,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE"
+      ],
+      "versionCode": 12,
       "adaptiveIcon": {
         "backgroundColor": "#0B3529",
         "foregroundImage": "./assets/images/automonique-mark.png"
@@ -52,14 +59,14 @@
         "expo-image-picker",
         {
           "cameraPermission": "Allow Automonique to scan a one-time server pairing QR code on this device.",
-          "microphonePermission": "Allow Automonique to turn your voice into a reviewable text follow-up.",
+          "microphonePermission": "Allow Automonique to use your voice: as a text follow-up you review, or streamed to your paired server during a live call with an agent.",
           "photosPermission": false
         }
       ],
       [
         "expo-speech-recognition",
         {
-          "microphonePermission": "Allow Automonique to turn your voice into a reviewable text follow-up.",
+          "microphonePermission": "Allow Automonique to use your voice: as a text follow-up you review, or streamed to your paired server during a live call with an agent.",
           "speechRecognitionPermission": "Allow Automonique to transcribe speech into a reviewable text follow-up."
         }
       ],

@@ -119,6 +119,7 @@ export function ConversationMenu() {
             {(
               [
                 ['/(tabs)/sessions', 'All conversations'],
+                ['/agents', 'Agents'],
                 ['/(tabs)/attention', 'Needs attention'],
                 ['/(tabs)/activity', 'Activity'],
                 ['/(tabs)/server', 'Server & settings'],

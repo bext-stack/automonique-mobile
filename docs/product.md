@@ -158,6 +158,8 @@ operations. App-store publication requires a separate decision.
 - Audio-message uploads, attachments, widgets, a multi-server cockpit, or
   model/profile/tool administration. On-device voice dictation is only an
   editable input method for the existing text follow-up contract.
+  Live calls with persona agents are the one later exception for audio; see
+  "Calls with persona agents" below.
 - Production deployment, signed store binaries, or app-store publication.
 
 ## Read-only workspace companion expansion
@@ -262,6 +264,28 @@ Live-server acceptance remains an external gate. Terminal
 relay, attachments, uploads, and background mutation remain separate
 risk-reviewed work. See
 [workspace-companion-threat-model.md](workspace-companion-threat-model.md).
+
+## Calls with persona agents
+
+With the `call_agent` grant, the conversation menu offers Agents: the
+persistent agents registered on the paired server, each with a persona and a
+scope (the whole installation, one tenant, or one site). The phone lists them
+and shows who each one is; it cannot register, edit or retire one.
+
+Calling an agent opens that agent's single long-lived conversation, then a
+live voice call on it. The operator speaks, sees the transcript, hears the
+agent, and may interrupt it. The call continues with the screen off or the
+app in the background, behind the system's microphone indicator and, on
+Android, an ongoing notification. Leaving the call screen, losing the
+connection or a revoked credential ends the call; it never reconnects by
+itself.
+
+Speech is delivered to the agent as an ordinary follow-up. An approval is
+never granted by voice. Audio and transcripts are kept in memory for the
+length of the call only; the written conversation remains on the server and
+is reachable from the call screen. Hands-on device evidence for call audio,
+echo cancellation and background behaviour is a release gate, not inferred
+from automated checks.
 
 ## Interface languages
 

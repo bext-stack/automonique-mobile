@@ -66,6 +66,11 @@ locally derived attention reminders and does not use remote push. Unknown
 package versions, pristine source digests, or hardened outputs fail closed; the
 aggregate license gate remains unchanged.
 
+`expo-notifications` is pinned to the exact version whose native sources the
+hardening script has reviewed, and is listed in `expo.install.exclude` so the
+Expo version check does not ask for a newer patch. Moving it requires
+re-deriving and reviewing the hardening digests in the same change.
+
 The build/test graph also pins the downstream `braces` depth-guard patch
 documented in `vendor/braces-hardening.md`. Installation and security checks
 verify its archive/source hashes and nesting regressions; the npm audit gate
@@ -111,7 +116,7 @@ Before publishing a preview:
    image, Node, npm, Java, Gradle, Android SDK/build-tools, NDK, and EAS CLI
    versions as applicable.
 3. Name the artifact
-   `automonique-mobile-0.1.0-preview.12.apk` and compute its SHA-256 digest. The
+   `automonique-mobile-0.1.0-preview.13.apk` and compute its SHA-256 digest. The
    APK must be the exact artifact produced by the recorded build; do not
    rebuild or re-sign it for upload.
 4. Inspect the packaged effective manifest with `apkanalyzer`, Android Studio

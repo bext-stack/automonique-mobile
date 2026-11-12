@@ -67,3 +67,5 @@ Audio-message uploads, attachments, widgets, a multi-server cockpit,
 model/profile/tool administration, direct provider access, background mutation
 execution, and app-store publication. On-device dictation remains an editable
 input method for the existing text follow-up contract, not a new server action.
+Live voice calls with persona agents were taken out of this list by an owner
+decision on 12 November 2026; see [decisions.md](decisions.md).

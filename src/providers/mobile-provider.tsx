@@ -42,6 +42,7 @@ import {
 interface MobileContextValue {
   readonly taskGateway: MobileAutomoniqueGateway['tasks'] | null;
   readonly workGateway: MobileAutomoniqueGateway['work'] | null;
+  readonly agentsGateway: MobileAutomoniqueGateway['agents'] | null;
   readonly snapshot: MobileSnapshot;
   readonly storageScope: string | null;
   readonly busyAction: string | null;
@@ -628,6 +629,7 @@ export function MobileProvider({
         snapshot,
         taskGateway: gateway.tasks ?? null,
         workGateway: gateway.work ?? null,
+        agentsGateway: gateway.agents ?? null,
         storageScope: storageScope ?? null,
         busyAction,
         projectionReady: cacheReady,

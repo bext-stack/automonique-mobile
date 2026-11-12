@@ -53,13 +53,18 @@ assert.equal(
   'Android release configuration must explicitly deny cleartext traffic',
 );
 
+// The microphone has exactly two uses: on-device dictation into a draft the
+// operator reviews, and audio streamed to the paired server during a call the
+// operator started. The permission text must say both and nothing else.
+const MICROPHONE_PURPOSE =
+  'Allow Automonique to use your voice: as a text follow-up you review, or streamed to your paired server during a live call with an agent.';
 const imagePickerPlugin = app.plugins?.find(
   (plugin) => Array.isArray(plugin) && plugin[0] === 'expo-image-picker',
 );
 assert.equal(
   imagePickerPlugin?.[1]?.microphonePermission,
-  'Allow Automonique to turn your voice into a reviewable text follow-up.',
-  'the shared microphone permission must describe reviewable voice dictation',
+  MICROPHONE_PURPOSE,
+  'the shared microphone permission must describe dictation and live calls',
 );
 assert.equal(
   imagePickerPlugin?.[1]?.photosPermission,
@@ -85,6 +90,28 @@ assert.equal(
   'speech permission must describe editable text transcription',
 );
 
+assert.equal(
+  speechPlugin?.[1]?.microphonePermission,
+  MICROPHONE_PURPOSE,
+  'both microphone permission strings must state the same purpose',
+);
+assert.deepEqual(
+  app.ios?.infoPlist?.UIBackgroundModes,
+  ['audio'],
+  'iOS may run in the background for call audio only',
+);
+assert.deepEqual(
+  [...(app.android?.permissions ?? [])].sort(),
+  [
+    'android.permission.CAMERA',
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_MICROPHONE',
+    'android.permission.MODIFY_AUDIO_SETTINGS',
+    'android.permission.RECORD_AUDIO',
+  ],
+  'Android permissions are limited to QR scanning and live call audio',
+);
+
 assert.match(
   eas.cli?.version ?? '',
   /^\d+\.\d+\.\d+$/,
@@ -107,7 +134,7 @@ assert.equal(simulator.android?.image, 'ubuntu-26.04-jdk-17-ndk-r27b-sdk-57');
 assert.equal(simulator.ios?.simulator, true);
 assert.equal(simulator.ios?.withoutCredentials, true);
 assert.equal(simulator.ios?.image, 'macos-tahoe-26.5-xcode-26.6');
-assert.equal(app.android?.versionCode, 11);
+assert.equal(app.android?.versionCode, 12);
 assert.equal(app.ios?.buildNumber, '1');
 assert.equal(
   Object.hasOwn(eas.build ?? {}, 'production'),
@@ -165,6 +192,15 @@ try {
       /PairingScannerModule/,
       `${platform} must register the scanner bridge`,
     );
+    const callAudio = JSON.parse(autolinking.stdout).modules.find(
+      (module) => module.packageName === 'call-audio',
+    );
+    assert.ok(callAudio, `${platform} must link the native call audio module`);
+    assert.match(
+      JSON.stringify(callAudio),
+      /CallAudioModule/,
+      `${platform} must register the call audio bridge`,
+    );
   }
 
   const expoCli = join(installedModules, 'expo', 'bin', 'cli');
@@ -213,6 +249,16 @@ try {
     'generated Android release must not remove the dictation permission',
   );
 
+  assert.match(
+    androidManifest,
+    /android:name="android\.permission\.FOREGROUND_SERVICE_MICROPHONE"/,
+    'generated Android release must declare the call foreground service type',
+  );
+  assert.doesNotMatch(
+    androidManifest,
+    /FOREGROUND_SERVICE_(?!MICROPHONE)[A-Z_]+"/,
+    'generated Android release must not declare any other foreground service type',
+  );
   const iosInfo = readFileSync(
     join(workspace, 'ios', 'Automonique', 'Info.plist'),
     'utf8',
@@ -241,6 +287,11 @@ try {
     iosInfo,
     /NSMicrophoneUsageDescription/,
     'generated iOS app must declare microphone use for dictation',
+  );
+  assert.match(
+    iosInfo,
+    /<key>UIBackgroundModes<\/key>\s*<array>\s*<string>audio<\/string>\s*<\/array>/,
+    'generated iOS app must run in the background for call audio only',
   );
   assert.match(
     iosInfo,

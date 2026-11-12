@@ -40,6 +40,8 @@ export function Navigation() {
             name="task"
             options={{ title: t('New conversation') }}
           />
+          <Stack.Screen name="agents" options={{ title: t('Agents') }} />
+          <Stack.Screen name="agent/[id]" options={{ title: t('Call') }} />
           <Stack.Screen
             name="session/[id]"
             options={{ title: t('Conversation') }}
