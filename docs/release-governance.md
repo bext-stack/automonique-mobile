@@ -66,6 +66,11 @@ locally derived attention reminders and does not use remote push. Unknown
 package versions, pristine source digests, or hardened outputs fail closed; the
 aggregate license gate remains unchanged.
 
+`expo-notifications` is pinned to the exact version whose native sources the
+hardening script has reviewed, and is listed in `expo.install.exclude` so the
+Expo version check does not ask for a newer patch. Moving it requires
+re-deriving and reviewing the hardening digests in the same change.
+
 The build/test graph also pins the downstream `braces` depth-guard patch
 documented in `vendor/braces-hardening.md`. Installation and security checks
 verify its archive/source hashes and nesting regressions; the npm audit gate
