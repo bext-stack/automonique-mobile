@@ -676,7 +676,8 @@ export function createAuthorizedHttpsGateway(
   let gateway = create(options.authorization);
   const canStart = options.authorization.actions.includes('start_task');
   const canManage = options.authorization.actions.includes('manage_work');
-  if (!canStart && !canManage) return gateway;
+  const canCall = options.authorization.actions.includes('call_agent');
+  if (!canStart && !canManage && !canCall) return gateway;
   let lifecycle: MobileLifecycleClient | null = null;
   async function mobileClient(signal?: AbortSignal) {
     lifecycle ??= await MobileLifecycleClient.discover(
@@ -701,6 +702,35 @@ export function createAuthorizedHttpsGateway(
           },
         }
       : {}),
+    ...(canCall
+      ? {
+          agents: {
+            async list(
+              request: import('@automonique/sdk').MobileAgentsRequest,
+              signal?: AbortSignal,
+            ) {
+              const client = await mobileClient(signal);
+              return client.agents(await options.token(), request, signal);
+            },
+            async open(agentId: string, signal?: AbortSignal) {
+              const client = await mobileClient(signal);
+              return client.openAgentSession(
+                await options.token(),
+                { action: 'open', agent_id: agentId },
+                signal,
+              );
+            },
+            async callTicket(agentId: string, signal?: AbortSignal) {
+              const client = await mobileClient(signal);
+              return client.agentCallTicket(
+                await options.token(),
+                { action: 'call', agent_id: agentId },
+                signal,
+              );
+            },
+          },
+        }
+      : {}),
     ...(canStart
       ? {
           tasks: {
@@ -715,7 +745,7 @@ export function createAuthorizedHttpsGateway(
         }
       : {}),
     async bootstrap(signal) {
-      if (!canStart) return gateway.bootstrap(signal);
+      if (!canStart && !canCall) return gateway.bootstrap(signal);
       const client = await mobileClient(signal);
       const authorization = await client.authorization(
         await options.token(),

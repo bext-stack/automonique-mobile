@@ -38,7 +38,8 @@ export type MobileAction =
   | 'stop_run'
   | 'start_task'
   | 'manage_work'
-  | 'all_sessions';
+  | 'all_sessions'
+  | 'call_agent';
 
 export interface ConnectionStatus {
   readonly phase: ConnectionPhase;
@@ -185,7 +186,29 @@ export interface MobileTaskGateway {
   ): Promise<import('@automonique/sdk').MobileTaskView>;
 }
 
+/**
+ * Persistent persona agents this phone may call. Present only when the
+ * server granted `call_agent`; there is no agent administration here.
+ */
+export interface MobileAgentsGateway {
+  list(
+    request: import('@automonique/sdk').MobileAgentsRequest,
+    signal?: AbortSignal,
+  ): Promise<import('@automonique/sdk').MobileAgentsView>;
+  /** Open the agent's one long-lived session; never starts a second one. */
+  open(
+    agentId: string,
+    signal?: AbortSignal,
+  ): Promise<import('@automonique/sdk').MobileAgentSessionView>;
+  /** A single-use ticket for a live call on that session. Never persisted. */
+  callTicket(
+    agentId: string,
+    signal?: AbortSignal,
+  ): Promise<import('@automonique/sdk').MobileAgentCallTicket>;
+}
+
 export interface MobileAutomoniqueGateway {
+  readonly agents?: MobileAgentsGateway;
   readonly tasks?: MobileTaskGateway;
   readonly work?: {
     request(
