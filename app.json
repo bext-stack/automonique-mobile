@@ -29,7 +29,7 @@
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_MICROPHONE"
       ],
-      "versionCode": 11,
+      "versionCode": 12,
       "adaptiveIcon": {
         "backgroundColor": "#0B3529",
         "foregroundImage": "./assets/images/automonique-mark.png"
