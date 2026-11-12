@@ -16,11 +16,7 @@
  */
 
 export type AgentCallPhase =
-  | 'connecting'
-  | 'listening'
-  | 'thinking'
-  | 'speaking'
-  | 'ended';
+  'connecting' | 'listening' | 'thinking' | 'speaking' | 'ended';
 
 export interface AgentCallLine {
   readonly role: 'operator' | 'agent';
@@ -121,9 +117,7 @@ export function startAgentCall(options: AgentCallOptions): AgentCallHandle {
   let state = INITIAL_AGENT_CALL_STATE;
   let ready = false;
   let finished = false;
-  const socket = options.openSocket(
-    agentCallUrl(options.origin, options.path),
-  );
+  const socket = options.openSocket(agentCallUrl(options.origin, options.path));
   socket.binaryType = 'arraybuffer';
 
   function publish(next: Partial<AgentCallState>) {

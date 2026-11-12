@@ -101,7 +101,11 @@ describe('startAgentCall', () => {
     expect(call.socket.url).toBe('wss://ops.example.test/api/mobile/call');
     call.socket.onopen?.();
     expect(call.socket.sent).toEqual([
-      JSON.stringify({ type: 'hello', ticket: 'ab'.repeat(32), language: 'fr' }),
+      JSON.stringify({
+        type: 'hello',
+        ticket: 'ab'.repeat(32),
+        language: 'fr',
+      }),
     ]);
     expect(call.capturing()).toBe(false);
     // Audio before `ready` is never played.
