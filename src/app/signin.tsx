@@ -28,7 +28,13 @@ import { usePalette } from '@/theme/palette';
 export default function SignInReturnScreen() {
   const { t } = useLanguage();
   const palette = usePalette();
-  const { pair } = useMobileLifecycle();
+  const lifecycle = useMobileLifecycle();
+  // Read at the moment of use: the server list may still be loading when the
+  // link opens this screen.
+  const latest = useRef(lifecycle);
+  useEffect(() => {
+    latest.current = lifecycle;
+  }, [lifecycle]);
   const params = useLocalSearchParams<{ grant?: string }>();
   const started = useRef(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -49,13 +55,21 @@ export default function SignInReturnScreen() {
           grant,
           controller.signal,
         );
-        let offer;
+        let offer: ReturnType<typeof decodePairingOfferText>;
         try {
           offer = decodePairingOfferText(text);
           // The offer must be for the server the person chose to sign in to.
           if (offer.origin !== attempt.origin) {
             throw new Error('mobile_server_identity_mismatch');
           }
+          // A phone holds one connection per server. Signing in again is how
+          // a person renews it, so the earlier connection gives way.
+          const { servers, revokeServer, pair } = latest.current;
+          const existing = servers.find(
+            ({ state }) =>
+              state.profile?.serverIdentity === offer.server_identity,
+          );
+          if (existing !== undefined) await revokeServer(existing.slotId);
           await pair(offer);
         } catch (error) {
           setFailure(describePairingError(error));
@@ -68,7 +82,7 @@ export default function SignInReturnScreen() {
     })();
     // The redemption is single-use: it must finish even if this screen is
     // re-rendered, so it is not aborted on cleanup.
-  }, [pair, params.grant]);
+  }, [params.grant]);
 
   return (
     <Screen>
