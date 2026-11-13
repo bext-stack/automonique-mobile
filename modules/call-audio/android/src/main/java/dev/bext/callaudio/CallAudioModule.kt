@@ -43,9 +43,9 @@ class CallAudioModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("CallAudio")
-    Events("onFrame")
+    Events("onFrame", "onHangUp")
 
-    AsyncFunction("startAsync") { start() }
+    AsyncFunction("startAsync") { name: String? -> start(name) }
     Function("play") { pcmBase64: String ->
       if (running && playback.size < MAX_QUEUED_CHUNKS) {
         playback.offer(Base64.decode(pcmBase64, Base64.NO_WRAP))
@@ -63,7 +63,7 @@ class CallAudioModule : Module() {
     OnDestroy { stop() }
   }
 
-  private fun start() {
+  private fun start(name: String?) {
     if (running) return
     val minimum =
       AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -119,7 +119,12 @@ class CallAudioModule : Module() {
     @Suppress("DEPRECATION")
     manager.isSpeakerphoneOn = true
 
-    val service = Intent(context, CallForegroundService::class.java)
+    // The system notification's hang-up button ends the call from JavaScript,
+    // which owns the connection.
+    CallForegroundService.hangUpRequested = { sendEvent("onHangUp", emptyMap<String, Any>()) }
+    val service =
+      Intent(context, CallForegroundService::class.java)
+        .putExtra(CallForegroundService.EXTRA_NAME, name)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       context.startForegroundService(service)
     } else {
@@ -167,6 +172,7 @@ class CallAudioModule : Module() {
   private fun stop() {
     if (!running && record == null) return
     running = false
+    CallForegroundService.hangUpRequested = null
     playbackThread?.interrupt()
     captureThread?.join(500)
     playbackThread?.join(500)

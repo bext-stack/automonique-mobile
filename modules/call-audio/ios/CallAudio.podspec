@@ -10,6 +10,6 @@ Pod::Spec.new do |s|
   s.source = { :git => 'https://github.com/bext-stack/automonique-mobile.git' }
   s.static_framework = true
   s.dependency 'ExpoModulesCore'
-  s.frameworks = 'AVFoundation'
+  s.frameworks = 'AVFoundation', 'CallKit'
   s.source_files = '*.swift'
 end

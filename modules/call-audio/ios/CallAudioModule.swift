@@ -13,6 +13,20 @@ public final class CallAudioModule: Module {
   private var converter: AVAudioConverter?
   private var pending = Data()
   private var running = false
+  /// Whether a call was requested and not yet stopped.
+  private var wanted = false
+  private lazy var system: CallKitBridge = {
+    let bridge = CallKitBridge()
+    bridge.onAudioActive = { [weak self] in
+      guard let self, self.wanted else { return }
+      try? self.startEngine()
+    }
+    bridge.onEnded = { [weak self] in
+      guard let self, self.wanted else { return }
+      self.sendEvent("onHangUp", [:])
+    }
+    return bridge
+  }()
 
   private static let sampleRate: Double = 16_000
   /// 100 ms of 16-bit mono audio.
@@ -25,14 +39,17 @@ public final class CallAudioModule: Module {
 
   public func definition() -> ModuleDefinition {
     Name("CallAudio")
-    Events("onFrame")
+    Events("onFrame", "onHangUp")
 
     AsyncFunction("requestPermissionAsync") { (promise: Promise) in
       AVAudioSession.sharedInstance().requestRecordPermission { granted in
         promise.resolve(granted)
       }
     }
-    AsyncFunction("startAsync") { try self.start() }
+    // On the main queue, where the system delivers its call events too.
+    AsyncFunction("startAsync") { (name: String?) in
+      try self.start(name: name)
+    }.runOnQueue(.main)
     Function("play") { (pcmBase64: String) in
       guard self.running, let data = Data(base64Encoded: pcmBase64) else { return }
       self.schedule(data)
@@ -42,18 +59,35 @@ public final class CallAudioModule: Module {
       self.player.stop()
       self.player.play()
     }
-    AsyncFunction("stopAsync") { self.stop() }
+    AsyncFunction("stopAsync") { self.stop() }.runOnQueue(.main)
     OnDestroy { self.stop() }
   }
 
-  private func start() throws {
-    if running { return }
+  /// Begin a call. The system is asked to present it; audio starts when the
+  /// system activates the session, or at once when it declines to.
+  private func start(name: String?) throws {
+    if wanted { return }
+    wanted = true
     let session = AVAudioSession.sharedInstance()
-    try session.setCategory(
-      .playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
-    try session.setPreferredSampleRate(Self.sampleRate)
-    try session.setActive(true)
+    do {
+      try session.setCategory(
+        .playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+      try session.setPreferredSampleRate(Self.sampleRate)
+    } catch {
+      wanted = false
+      throw error
+    }
+    let label = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    system.start(name: label.isEmpty ? "Automonique" : String(label.prefix(80))) { [weak self] in
+      // No system call screen: run the call as plain background audio.
+      guard let self, self.wanted else { return }
+      try? AVAudioSession.sharedInstance().setActive(true)
+      try? self.startEngine()
+    }
+  }
 
+  private func startEngine() throws {
+    if running { return }
     let input = engine.inputNode
     try input.setVoiceProcessingEnabled(true)
     let inputFormat = input.outputFormat(forBus: 0)
@@ -118,6 +152,9 @@ public final class CallAudioModule: Module {
   }
 
   private func stop() {
+    guard wanted || running else { return }
+    wanted = false
+    system.end()
     guard running else { return }
     running = false
     engine.inputNode.removeTap(onBus: 0)
