@@ -27,6 +27,7 @@ const ACTIONS: readonly MobileAction[] = [
   'start_task',
   'manage_work',
   'all_sessions',
+  'call_agent',
 ];
 
 function record(value: unknown): Record<string, unknown> {

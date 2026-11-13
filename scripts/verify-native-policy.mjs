@@ -143,7 +143,7 @@ assert.equal(device.node, '24.19.0');
 assert.equal(device.ios?.image, 'macos-tahoe-26.5-xcode-26.6');
 assert.equal(device.android, undefined, 'device builds are iOS only');
 assert.equal(Object.hasOwn(eas, 'submit'), false, 'no store submission');
-assert.equal(app.android?.versionCode, 13);
+assert.equal(app.android?.versionCode, 14);
 assert.equal(app.ios?.buildNumber, '1');
 assert.equal(
   Object.hasOwn(eas.build ?? {}, 'production'),

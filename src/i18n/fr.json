@@ -552,6 +552,7 @@
   "This sign-in took too long. Start again from the connection screen.": "Cette connexion a pris trop de temps. Recommencez depuis l’écran de connexion.",
   "This phone is already connected to this server. Remove that connection in the connection screen, then try again.": "Ce téléphone est déjà connecté à ce serveur. Supprimez cette connexion dans l’écran de connexion, puis recommencez.",
   "This phone has reached its limit of connected servers. Remove one in the connection screen, then try again.": "Ce téléphone a atteint sa limite de serveurs connectés. Supprimez-en un dans l’écran de connexion, puis recommencez.",
+  "Call an agent": "Appeler un agent",
   "The server did not accept this sign-in. It may have expired or already been used. Start again from the connection screen.": "Le serveur n’a pas accepté cette connexion. Elle a peut-être expiré ou déjà été utilisée. Recommencez depuis l’écran de connexion.",
   "The server could not be reached. Check your internet connection, then start again.": "Le serveur est injoignable. Vérifiez votre connexion internet, puis recommencez.",
   "The sign-in could not be completed. Start again from the connection screen.": "La connexion n’a pas pu aboutir. Recommencez depuis l’écran de connexion."

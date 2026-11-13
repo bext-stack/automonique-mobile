@@ -3,8 +3,8 @@
 import { useLanguage } from '@/i18n/language';
 
 import { ConversationMenu } from '@/components/conversation-menu';
-import { Tabs } from 'expo-router';
-import { Image, View, type ColorValue } from 'react-native';
+import { Tabs, router } from 'expo-router';
+import { Image, Pressable, Text, View, type ColorValue } from 'react-native';
 
 import { useMobile } from '@/providers/mobile-provider';
 import { usePalette } from '@/theme/palette';
@@ -48,6 +48,33 @@ function TabIcon({
   );
 }
 
+/** Shown on every tab when this phone may call agents. */
+function CallAgentsButton() {
+  const { t } = useLanguage();
+  const palette = usePalette();
+  const { agentsGateway } = useMobile();
+  if (!agentsGateway) return null;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={t('Call an agent')}
+      onPress={() => router.push('/agents')}
+      style={{
+        backgroundColor: palette.accent,
+        borderRadius: 18,
+        justifyContent: 'center',
+        marginRight: 12,
+        minHeight: 36,
+        paddingHorizontal: 16,
+      }}
+    >
+      <Text style={{ color: palette.accentText, fontWeight: '800' }}>
+        {t('Call')}
+      </Text>
+    </Pressable>
+  );
+}
+
 export default function OperatorTabs() {
   const { t } = useLanguage();
 
@@ -61,6 +88,7 @@ export default function OperatorTabs() {
         headerShadowVisible: false,
         tabBarHideOnKeyboard: true,
         headerLeft: () => <ConversationMenu />,
+        headerRight: () => <CallAgentsButton />,
         sceneStyle: { backgroundColor: palette.background },
         tabBarActiveTintColor: palette.accent,
         tabBarInactiveTintColor: palette.textMuted,
