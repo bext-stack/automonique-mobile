@@ -119,7 +119,10 @@ export default function AgentCallScreen() {
         path: ticket.path,
         ticket: ticket.ticket,
         language,
-        audio: createCallAudio(),
+        audio: createCallAudio({
+          name: params.name ?? agentId,
+          onHangUp: () => handle.current?.hangUp(),
+        }),
         // React Native's WebSocket carries the paired origin's TLS policy.
         openSocket: (url) => new WebSocket(url) as unknown as CallSocket,
         onState: (state) => {
@@ -143,6 +146,19 @@ export default function AgentCallScreen() {
   }, [agentId, agentsGateway, origin, attempt]);
 
   const ended = setup.step === 'failed' || call.phase === 'ended';
+  const inCall = setup.step === 'in_call' && !ended;
+  // Seconds on the call, as a phone shows them. Stops with the call.
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!inCall) return;
+    const started = Date.now();
+    const timer = setInterval(
+      () => setSeconds(Math.floor((Date.now() - started) / 1000)),
+      1000,
+    );
+    return () => clearInterval(timer);
+  }, [inCall, attempt]);
+  const duration = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
   const reason = setup.step === 'failed' ? setup.reason : call.endReason;
   const status =
     setup.step === 'preparing'
@@ -165,10 +181,12 @@ export default function AgentCallScreen() {
           style={[styles.status, { color: palette.accent }]}
         >
           {t(status)}
+          {setup.step === 'in_call' && seconds > 0 ? ` · ${duration}` : ''}
         </Text>
         {ended && reason !== null && (
           <Text accessibilityRole="alert" style={{ color: palette.textMuted }}>
             {t(REASON_LABEL[reason] ?? 'The call was interrupted.')}
+            {reason in REASON_LABEL ? '' : ` (${reason})`}
           </Text>
         )}
         {!ended && (
@@ -244,6 +262,7 @@ export default function AgentCallScreen() {
             accessibilityRole="button"
             onPress={() => {
               setSetup({ step: 'preparing' });
+              setSeconds(0);
               setAttempt((value) => value + 1);
             }}
             style={[styles.button, { backgroundColor: palette.accent }]}

@@ -177,6 +177,16 @@ ticket, not the credential, is what the call socket sees, so no bearer token
 is sent on a WebSocket. The call engine admits only the paired HTTPS origin
 and a path under `/api/mobile/`.
 
+On 13 November 2026 the owner asked for a call to look and behave like a phone
+call: stay up while other apps are in front, and show on the lock screen who
+is called, for how long, with a button to hang up. The call is therefore
+presented to the system, through CallKit on iOS and a call-style ongoing
+notification on Android. This reverses the earlier choice to keep the agent's
+name out of the call notification. The system is given the agent's name and
+the call's duration, never what is said, and calls are kept out of the iOS
+Phone app's recents. Hanging up from the system's card ends the call exactly
+as the in-app button does.
+
 ## Signing in with an account
 
 On 13 November 2026 the owner asked for account sign-in beside QR pairing, so
