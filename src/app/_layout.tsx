@@ -56,6 +56,7 @@ export function Navigation() {
           />
         </Stack.Protected>
         <Stack.Screen name="settings" options={{ title: t('Connection') }} />
+        <Stack.Screen name="signin" options={{ title: t('Sign in') }} />
       </Stack>
     </>
   );

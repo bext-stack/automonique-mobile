@@ -8,6 +8,7 @@ import { Link } from 'expo-router';
 import { MobileHttpsOrigin, type MobilePairingOffer } from '@automonique/sdk';
 import { useEffect, useRef, useState } from 'react';
 import {
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -18,6 +19,12 @@ import {
 
 import { PairingScanner } from '@/components/pairing-scanner';
 import { Screen } from '@/components/screen';
+import {
+  beginAccountSignIn,
+  holdAccountSignIn,
+  inspectAccountSignIn,
+  type AccountSignInOption,
+} from '@/core/account-signin';
 import { MAX_ENDPOINT_BYTES, normalizeEndpoint } from '@/core/network-policy';
 import {
   assertPairingOfferCurrent,
@@ -93,6 +100,8 @@ export default function SettingsScreen() {
   const [scannerVisible, setScannerVisible] = useState(false);
   const [scannerGeneration, setScannerGeneration] = useState(0);
   const [addingServer, setAddingServer] = useState(false);
+  const [accountSignIn, setAccountSignIn] =
+    useState<AccountSignInOption | null>(null);
   const [serverCheck, setServerCheck] = useState<ServerCheck>({
     phase: 'idle',
   });
@@ -140,6 +149,7 @@ export default function SettingsScreen() {
     const controller = new AbortController();
     checkController.current = controller;
     setServerCheck({ phase: 'checking' });
+    setAccountSignIn(null);
     try {
       const server = await inspectAutomoniqueServer(
         endpoint,
@@ -151,8 +161,16 @@ export default function SettingsScreen() {
       await AsyncStorage.setItem(ENDPOINT_DRAFT_KEY, server.origin).catch(
         () => undefined,
       );
+      const option = await inspectAccountSignIn(
+        server.origin,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      setAccountSignIn(option);
       setMessage(
-        'Server verified. Create a one-time mobile invite on that server, then scan or paste it below.',
+        option === null
+          ? 'Server verified. Create a one-time mobile invite on that server, then scan or paste it below.'
+          : 'Server verified. Sign in with your account, or use a one-time invite below.',
       );
     } catch (error) {
       if (controller.signal.aborted) return;
@@ -198,6 +216,24 @@ export default function SettingsScreen() {
     } finally {
       pairingInFlight.current = false;
       setPendingOffer(null);
+      setLifecycleBusy(false);
+    }
+  }
+
+  async function signInWithAccount() {
+    if (serverCheck.phase !== 'compatible' || pairingInFlight.current) return;
+    setLifecycleBusy(true);
+    try {
+      const attempt = await beginAccountSignIn(serverCheck.server.origin);
+      holdAccountSignIn(attempt);
+      await Linking.openURL(attempt.url);
+      setMessage(
+        'Finish signing in in your browser. It will bring you back to this app.',
+      );
+    } catch {
+      holdAccountSignIn(null);
+      setMessage('The browser could not be opened for sign-in.');
+    } finally {
       setLifecycleBusy(false);
     }
   }
@@ -547,6 +583,18 @@ export default function SettingsScreen() {
                   {serverCheck.server.serverIdentity}
                 </Text>
               </View>
+            )}
+            {serverCheck.phase === 'compatible' && accountSignIn !== null && (
+              <Pressable
+                accessibilityRole="button"
+                disabled={lifecycleBusy}
+                onPress={() => void signInWithAccount()}
+                style={[styles.button, { backgroundColor: palette.accent }]}
+              >
+                <Text style={{ color: palette.accentText, fontWeight: '800' }}>
+                  {t('Sign in with your account')} · {accountSignIn.provider}
+                </Text>
+              </Pressable>
             )}
             {serverCheck.phase === 'failed' && (
               <View

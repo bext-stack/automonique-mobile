@@ -8,6 +8,21 @@ Android preview on `automonique.fr` under the procedure below; the iOS Simulator
 artifact remains evidence-only. There is intentionally no `production` EAS
 profile or submit configuration.
 
+## Owner device builds for iOS
+
+The `device` profile produces a signed iOS build for the owner's own registered
+iPhone through EAS internal (ad hoc) distribution. It exists so native behaviour
+that the Simulator cannot exercise, live call audio first of all, can be checked
+on real hardware. It is test evidence only: it is not a store release, is not
+published, and is installable only on devices registered in the owner's Apple
+Developer account. Signing credentials are EAS-managed remote credentials
+created by the owner's interactive Apple login; none are stored in this
+repository. The profile pins the same Node.js and iOS image as `simulator`.
+
+```sh
+npx --yes eas-cli@22.4.0 build --platform ios --profile device
+```
+
 ## Reproducible native evidence
 
 The `simulator` profile locks the EAS CLI, Node.js, Android image, iOS image,
@@ -116,7 +131,7 @@ Before publishing a preview:
    image, Node, npm, Java, Gradle, Android SDK/build-tools, NDK, and EAS CLI
    versions as applicable.
 3. Name the artifact
-   `automonique-mobile-0.1.0-preview.13.apk` and compute its SHA-256 digest. The
+   `automonique-mobile-0.1.0-preview.14.apk` and compute its SHA-256 digest. The
    APK must be the exact artifact produced by the recorded build; do not
    rebuild or re-sign it for upload.
 4. Inspect the packaged effective manifest with `apkanalyzer`, Android Studio
