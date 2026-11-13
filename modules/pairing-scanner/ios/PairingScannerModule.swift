@@ -11,26 +11,31 @@ public class PairingScannerModule: Module {
     Name("PairingScanner")
 
     AsyncFunction("scanAsync") { (promise: Promise) in
-      guard self.session == nil else {
-        promise.reject("ERR_SCANNER_BUSY", "The scanner is already open.")
-        return
+      // The function runs on the main queue; state the isolation for the compiler.
+      MainActor.assumeIsolated {
+        guard self.session == nil else {
+          promise.reject("ERR_SCANNER_BUSY", "The scanner is already open.")
+          return
+        }
+        guard DataScannerViewController.isSupported,
+              DataScannerViewController.isAvailable,
+              let presenter = self.appContext?.utilities?.currentViewController() else {
+          promise.reject("ERR_SCANNER_UNAVAILABLE", "Live scanning is unavailable on this device.")
+          return
+        }
+        let session = PairingScanSession { [weak self] value in
+          self?.session = nil
+          promise.resolve(value)
+        }
+        self.session = session
+        session.present(from: presenter)
       }
-      guard DataScannerViewController.isSupported,
-            DataScannerViewController.isAvailable,
-            let presenter = self.appContext?.utilities?.currentViewController() else {
-        promise.reject("ERR_SCANNER_UNAVAILABLE", "Live scanning is unavailable on this device.")
-        return
-      }
-      let session = PairingScanSession { [weak self] value in
-        self?.session = nil
-        promise.resolve(value)
-      }
-      self.session = session
-      session.present(from: presenter)
     }.runOnQueue(.main)
 
     AsyncFunction("dismissAsync") {
-      self.session?.finish(nil)
+      MainActor.assumeIsolated {
+        self.session?.finish(nil)
+      }
     }.runOnQueue(.main)
 
     OnAppEntersBackground {
