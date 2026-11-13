@@ -176,3 +176,28 @@ call ticket; registering agents and editing personas stay on the server. The
 ticket, not the credential, is what the call socket sees, so no bearer token
 is sent on a WebSocket. The call engine admits only the paired HTTPS origin
 and a path under `/api/mobile/`.
+
+## Signing in with an account
+
+On 13 November 2026 the owner asked for account sign-in beside QR pairing, so
+a phone gains or changes access without an operator creating an invite each
+time. The first slice is deliberately narrow:
+
+- **Sign-in is a second way to an invite, not a second credential.** The
+  server runs the account flow and answers with the same one-time pairing
+  offer a QR code carries. Exchange, refresh, revocation and secure storage
+  are unchanged, and QR pairing still works.
+- **The app holds no account token.** It opens the paired server's
+  `/api/mobile/signin/start` in the system browser and never sees the
+  provider's code or ID token. Which accounts are admitted is the server
+  operator's list.
+- **The return link alone is worth nothing.** `automonique://signin` is a
+  custom scheme another app could claim, so it carries a single-use grant
+  that is redeemed only with a verifier generated for this attempt and kept
+  in memory. The server saw only its SHA-256 digest. A cold start loses the
+  verifier and the person starts again.
+- **The offer must be for the chosen server.** The app refuses an offer whose
+  origin differs from the server it opened the browser for.
+
+Non-goals for this slice: per-account tenant or site scoping, showing the
+signed-in account in the app, and signing in to the dashboard itself.
