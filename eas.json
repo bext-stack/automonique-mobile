@@ -20,6 +20,15 @@
         "simulator": true,
         "withoutCredentials": true
       }
+    },
+    "device": {
+      "node": "24.19.0",
+      "distribution": "internal",
+      "environment": "preview",
+      "autoIncrement": false,
+      "ios": {
+        "image": "macos-tahoe-26.5-xcode-26.6"
+      }
     }
   }
 }

@@ -134,6 +134,15 @@ assert.equal(simulator.android?.image, 'ubuntu-26.04-jdk-17-ndk-r27b-sdk-57');
 assert.equal(simulator.ios?.simulator, true);
 assert.equal(simulator.ios?.withoutCredentials, true);
 assert.equal(simulator.ios?.image, 'macos-tahoe-26.5-xcode-26.6');
+const device = eas.build?.device;
+assert.ok(device, 'the owner device build profile is required');
+assert.equal(device.distribution, 'internal');
+assert.equal(device.autoIncrement, false);
+assert.equal(device.developmentClient, undefined);
+assert.equal(device.node, '24.19.0');
+assert.equal(device.ios?.image, 'macos-tahoe-26.5-xcode-26.6');
+assert.equal(device.android, undefined, 'device builds are iOS only');
+assert.equal(Object.hasOwn(eas, 'submit'), false, 'no store submission');
 assert.equal(app.android?.versionCode, 12);
 assert.equal(app.ios?.buildNumber, '1');
 assert.equal(

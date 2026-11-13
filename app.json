@@ -17,7 +17,8 @@
           "NSAllowsArbitraryLoads": false,
           "NSAllowsLocalNetworking": false
         },
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": ["audio"],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -82,6 +83,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "a7d14386-eaf3-4daa-ac13-e91389a93fb8"
+      }
+    },
+    "owner": "webdesign29"
   }
 }
