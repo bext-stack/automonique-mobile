@@ -13,6 +13,8 @@ const IDENTITY = `sha256:${'a'.repeat(64)}`;
 test.each([
   ['mobile_pairing_expired', 'expired'],
   ['mobile_pairing_invalid', 'no longer available'],
+  ['credential_registry_duplicate', 'already connected'],
+  ['credential_registry_full', 'limit of connected servers'],
   ['mobile_server_identity_mismatch', 'identity does not match'],
   ['mobile_protocol_unsupported', 'not compatible'],
   ['response_stream_unavailable', 'latest app version'],

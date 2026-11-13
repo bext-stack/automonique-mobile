@@ -25,13 +25,35 @@ import { usePalette } from '@/theme/palette';
  * (`automonique://signin?grant=…`). It redeems the grant for a pairing offer
  * and connects, exactly as a scanned invite would.
  */
+/** The error's category and, when it wraps another, that one's too. */
+function errorCategory(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  const own =
+    'category' in error && typeof error.category === 'string'
+      ? error.category
+      : error.message;
+  const cause = error.cause instanceof Error ? error.cause.message : '';
+  return [own, cause]
+    .filter((part) => part !== '')
+    .join(' · ')
+    .slice(0, 160);
+}
+
 export default function SignInReturnScreen() {
   const { t } = useLanguage();
   const palette = usePalette();
-  const { pair } = useMobileLifecycle();
+  const lifecycle = useMobileLifecycle();
+  // Read at the moment of use: the server list may still be loading when the
+  // link opens this screen.
+  const latest = useRef(lifecycle);
+  useEffect(() => {
+    latest.current = lifecycle;
+  }, [lifecycle]);
   const params = useLocalSearchParams<{ grant?: string }>();
   const started = useRef(false);
   const [failure, setFailure] = useState<string | null>(null);
+  // The technical category, shown under the message so a report names it.
+  const [detail, setDetail] = useState<string | null>(null);
 
   useEffect(() => {
     if (started.current) return;
@@ -49,26 +71,36 @@ export default function SignInReturnScreen() {
           grant,
           controller.signal,
         );
-        let offer;
+        let offer: ReturnType<typeof decodePairingOfferText>;
         try {
           offer = decodePairingOfferText(text);
           // The offer must be for the server the person chose to sign in to.
           if (offer.origin !== attempt.origin) {
             throw new Error('mobile_server_identity_mismatch');
           }
+          // A phone holds one connection per server. Signing in again is how
+          // a person renews it, so the earlier connection gives way.
+          const { servers, revokeServer, pair } = latest.current;
+          const existing = servers.find(
+            ({ state }) =>
+              state.profile?.serverIdentity === offer.server_identity,
+          );
+          if (existing !== undefined) await revokeServer(existing.slotId);
           await pair(offer);
         } catch (error) {
+          setDetail(errorCategory(error));
           setFailure(describePairingError(error));
           return;
         }
         router.replace('/(tabs)');
       } catch (error) {
+        setDetail(errorCategory(error));
         setFailure(describeAccountSignInError(error));
       }
     })();
     // The redemption is single-use: it must finish even if this screen is
     // re-rendered, so it is not aborted on cleanup.
-  }, [pair, params.grant]);
+  }, [params.grant]);
 
   return (
     <Screen>
@@ -90,6 +122,11 @@ export default function SignInReturnScreen() {
           >
             {t(failure)}
           </Text>
+          {detail === null ? null : (
+            <Text selectable style={[styles.detail, { color: palette.text }]}>
+              {detail}
+            </Text>
+          )}
           <Pressable
             accessibilityRole="button"
             onPress={() => router.replace('/settings')}
@@ -107,6 +144,7 @@ export default function SignInReturnScreen() {
 
 const styles = StyleSheet.create({
   copy: { fontSize: 16, lineHeight: 23, marginVertical: 16 },
+  detail: { fontSize: 13, marginBottom: 16, opacity: 0.7 },
   button: {
     alignItems: 'center',
     borderRadius: 12,

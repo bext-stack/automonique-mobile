@@ -67,6 +67,10 @@ export function describePairingError(error: unknown): string {
     case 'cache_control_mismatch':
     case 'response_url_mismatch':
       return 'The server answered with an unexpected response. Ask your administrator to check the mobile API and reverse proxy.';
+    case 'credential_registry_duplicate':
+      return 'This phone is already connected to this server. Remove that connection in the connection screen, then try again.';
+    case 'credential_registry_full':
+      return 'This phone has reached its limit of connected servers. Remove one in the connection screen, then try again.';
     case 'secure_store_unavailable':
       return 'This device could not store the connection securely. Restart the app and create a new invite before trying again.';
     case 'mobile_auth_invalid_body':
