@@ -21,6 +21,7 @@ function crypto(now = 1_000): AccountSignInDependencies {
     sha256: async (text) =>
       new Uint8Array(createHash('sha256').update(text).digest()),
     now: () => now,
+    wait: async () => undefined,
   };
 }
 
@@ -108,6 +109,37 @@ test('a refused, unreachable or stale redemption fails with a category', async (
     }),
   ).rejects.toThrow('account_signin_expired');
   expect(fetcher).not.toHaveBeenCalled();
+});
+
+test('a redemption that failed to send is sent again', async () => {
+  const attempt = await beginAccountSignIn(ORIGIN, crypto());
+  let calls = 0;
+  const fetcher = jest.fn(async () => {
+    calls += 1;
+    if (calls < 3) throw new TypeError('Network request failed');
+    return new Response('{"offer":true}', { status: 201 });
+  }) as never;
+  const waits: number[] = [];
+  await expect(
+    redeemAccountSignIn(attempt, GRANT, undefined, {
+      ...crypto(),
+      fetcher,
+      wait: async (milliseconds) => {
+        waits.push(milliseconds);
+      },
+    }),
+  ).resolves.toBe('{"offer":true}');
+  expect(calls).toBe(3);
+  expect(waits).toEqual([400, 1200]);
+});
+
+test('a refused redemption is not sent again', async () => {
+  const attempt = await beginAccountSignIn(ORIGIN, crypto());
+  const fetcher = reply(400, '{"error":"mobile_signin_grant_invalid"}');
+  await expect(
+    redeemAccountSignIn(attempt, GRANT, undefined, { ...crypto(), fetcher }),
+  ).rejects.toThrow('account_signin_refused');
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
 test('a return link is honoured once and only when well formed', async () => {
