@@ -25,6 +25,20 @@ import { usePalette } from '@/theme/palette';
  * (`automonique://signin?grant=…`). It redeems the grant for a pairing offer
  * and connects, exactly as a scanned invite would.
  */
+/** The error's category and, when it wraps another, that one's too. */
+function errorCategory(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  const own =
+    'category' in error && typeof error.category === 'string'
+      ? error.category
+      : error.message;
+  const cause = error.cause instanceof Error ? error.cause.message : '';
+  return [own, cause]
+    .filter((part) => part !== '')
+    .join(' · ')
+    .slice(0, 160);
+}
+
 export default function SignInReturnScreen() {
   const { t } = useLanguage();
   const palette = usePalette();
@@ -38,6 +52,8 @@ export default function SignInReturnScreen() {
   const params = useLocalSearchParams<{ grant?: string }>();
   const started = useRef(false);
   const [failure, setFailure] = useState<string | null>(null);
+  // The technical category, shown under the message so a report names it.
+  const [detail, setDetail] = useState<string | null>(null);
 
   useEffect(() => {
     if (started.current) return;
@@ -72,11 +88,13 @@ export default function SignInReturnScreen() {
           if (existing !== undefined) await revokeServer(existing.slotId);
           await pair(offer);
         } catch (error) {
+          setDetail(errorCategory(error));
           setFailure(describePairingError(error));
           return;
         }
         router.replace('/(tabs)');
       } catch (error) {
+        setDetail(errorCategory(error));
         setFailure(describeAccountSignInError(error));
       }
     })();
@@ -104,6 +122,11 @@ export default function SignInReturnScreen() {
           >
             {t(failure)}
           </Text>
+          {detail === null ? null : (
+            <Text selectable style={[styles.detail, { color: palette.text }]}>
+              {detail}
+            </Text>
+          )}
           <Pressable
             accessibilityRole="button"
             onPress={() => router.replace('/settings')}
@@ -121,6 +144,7 @@ export default function SignInReturnScreen() {
 
 const styles = StyleSheet.create({
   copy: { fontSize: 16, lineHeight: 23, marginVertical: 16 },
+  detail: { fontSize: 13, marginBottom: 16, opacity: 0.7 },
   button: {
     alignItems: 'center',
     borderRadius: 12,
