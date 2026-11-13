@@ -38,6 +38,18 @@ export interface AccountSignInDependencies {
   readonly randomBytes?: (count: number) => Uint8Array;
   readonly sha256?: (text: string) => Promise<Uint8Array>;
   readonly now?: () => number;
+  readonly wait?: (milliseconds: number) => Promise<void>;
+}
+
+/**
+ * Pauses before sending the redemption again. The app has just come back from
+ * the browser: the connection it held before may be dead, and the first
+ * request on it then fails without ever leaving the phone.
+ */
+const REDEEM_RETRY_DELAYS_MS = [400, 1200, 2500];
+
+function defaultWait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function base64Url(bytes: Uint8Array): string {
@@ -148,9 +160,8 @@ export async function redeemAccountSignIn(
   if ((dependencies.now ?? Date.now)() - attempt.startedAt > ATTEMPT_TTL_MS) {
     throw new Error('account_signin_expired');
   }
-  let response: Response;
-  try {
-    response = await (dependencies.fetcher ?? httpFetch)(
+  const send = () =>
+    (dependencies.fetcher ?? httpFetch)(
       `${attempt.origin}${SIGN_IN_PATH}/redeem`,
       {
         method: 'POST',
@@ -160,8 +171,20 @@ export async function redeemAccountSignIn(
         signal: signal ?? null,
       },
     );
-  } catch (error) {
-    throw new Error('account_signin_unreachable', { cause: error });
+  let response: Response | undefined;
+  // A request that failed to send is repeated. If one did reach the server
+  // and only its answer was lost, the grant is spent and the repeat is
+  // refused, which is the safe outcome.
+  for (let tries = 0; response === undefined; tries += 1) {
+    try {
+      response = await send();
+    } catch (error) {
+      const delay = REDEEM_RETRY_DELAYS_MS[tries];
+      if (delay === undefined || signal?.aborted === true) {
+        throw new Error('account_signin_unreachable', { cause: error });
+      }
+      await (dependencies.wait ?? defaultWait)(delay);
+    }
   }
   if (response.status !== 201) throw new Error('account_signin_refused');
   return boundedText(response);
